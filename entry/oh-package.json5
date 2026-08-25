@@ -1,0 +1,9 @@
+{
+  "name": "entry",
+  "version": "1.0.0",
+  "description": "Pilihos application entry module",
+  "main": "Index.ets",
+  "author": "Pilihos",
+  "license": "Apache-2.0",
+  "dependencies": {}
+}

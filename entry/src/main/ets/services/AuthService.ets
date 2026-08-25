@@ -1,0 +1,385 @@
+﻿import http from '@ohos.net.http';
+import { cryptoFramework } from '@kit.CryptoArchitectureKit';
+import util from '@ohos.util';
+import common from '@ohos.app.ability.common';
+import { preferences } from '@kit.ArkData';
+import huks from '@ohos.security.huks';
+
+export class AuthSession {
+  uid: string = '';
+  name: string = '';
+  face: string = '';
+  cookie: string = '';
+  csrf: string = '';
+  isLogin: boolean = false;
+  dynamicCount: number = 0;
+  followingCount: number = 0;
+  followerCount: number = 0;
+  sign: string = '';
+  level: number = 0;
+  ipLocation: string = '';
+}
+
+export class AuthQrCode {
+  authCode: string = '';
+  url: string = '';
+  expiresIn: number = 180;
+}
+
+export class AuthPollResult {
+  code: number = -1;
+  message: string = '';
+  session: AuthSession | null = null;
+}
+
+class AuthParam {
+  key: string = '';
+  value: string = '';
+
+  constructor(key: string, value: string) {
+    this.key = key;
+    this.value = value;
+  }
+}
+
+class AuthHeaders {
+  cookie: string = '';
+  referer: string = '';
+  contentType: string = '';
+}
+
+export class AuthService {
+  private static readonly passportBase: string = 'https://passport.bilibili.com';
+  private static readonly apiBase: string = 'https://api.bilibili.com';
+  private static readonly appKey: string = 'dfca71928277209b';
+  private static readonly appSecret: string = 'b5475a8825547a4fc26c7d518eaaa02e';
+  private static readonly secureKeyAlias: string = 'pilihos.auth.session';
+  private static session: AuthSession | null = null;
+  private static credentialPreferences: preferences.Preferences | null = null;
+
+  static currentSession(): AuthSession | null {
+    return AuthService.session;
+  }
+
+  static async restoreSession(context: common.UIAbilityContext): Promise<AuthSession | null> {
+    try {
+      await AuthService.ensureCredentialPreferences(context);
+      if (AuthService.credentialPreferences === null) return null;
+      const encryptedCookie: string =
+        AuthService.credentialPreferences.getSync('cookie_cipher', '') as string;
+      if (encryptedCookie === '') return null;
+      const cookie: string = await AuthService.decryptCookie(encryptedCookie);
+      if (cookie === '') return null;
+      return await AuthService.validateCookie(cookie, context);
+    } catch (error) {
+      console.error('Pilihos stored auth restore failed: ' + String(error));
+      if (AuthService.credentialPreferences !== null) {
+        AuthService.credentialPreferences.deleteSync('cookie_cipher');
+        AuthService.credentialPreferences.flushSync();
+      }
+      AuthService.session = null;
+      return null;
+    }
+  }
+
+  private static async ensureCredentialPreferences(context?: common.UIAbilityContext): Promise<void> {
+    if (AuthService.credentialPreferences !== null || context === undefined) return;
+    AuthService.credentialPreferences = await preferences.getPreferences(context, 'pilihos_auth');
+  }
+
+  private static async persistCookie(cookie: string, context?: common.UIAbilityContext): Promise<void> {
+    await AuthService.ensureCredentialPreferences(context);
+    if (AuthService.credentialPreferences === null || cookie === '') return;
+    try {
+      const encryptedCookie: string = await AuthService.encryptCookie(cookie);
+      AuthService.credentialPreferences.putSync('cookie_cipher', encryptedCookie);
+      AuthService.credentialPreferences.flushSync();
+    } catch (error) {
+      console.error('Pilihos secure auth persistence failed: ' + String(error));
+    }
+  }
+
+  private static async ensureSecureKey(): Promise<void> {
+    const exists: boolean = await huks.isKeyItemExist(AuthService.secureKeyAlias, {});
+    if (exists) return;
+    await huks.generateKeyItem(AuthService.secureKeyAlias, {
+      properties: [
+        { tag: huks.HuksTag.HUKS_TAG_ALGORITHM, value: huks.HuksKeyAlg.HUKS_ALG_AES },
+        { tag: huks.HuksTag.HUKS_TAG_PURPOSE,
+          value: huks.HuksKeyPurpose.HUKS_KEY_PURPOSE_ENCRYPT | huks.HuksKeyPurpose.HUKS_KEY_PURPOSE_DECRYPT },
+        { tag: huks.HuksTag.HUKS_TAG_KEY_SIZE, value: huks.HuksKeySize.HUKS_AES_KEY_SIZE_256 },
+        { tag: huks.HuksTag.HUKS_TAG_BLOCK_MODE, value: huks.HuksCipherMode.HUKS_MODE_GCM },
+        { tag: huks.HuksTag.HUKS_TAG_DIGEST, value: huks.HuksKeyDigest.HUKS_DIGEST_NONE }
+      ]
+    });
+  }
+
+  private static async encryptCookie(cookie: string): Promise<string> {
+    await AuthService.ensureSecureKey();
+    const nonce: Uint8Array = cryptoFramework.createRandom().generateRandomSync(12).data;
+    const encoder = new util.TextEncoder();
+    const session = await huks.initSession(AuthService.secureKeyAlias, {
+      properties: [
+        { tag: huks.HuksTag.HUKS_TAG_PURPOSE, value: huks.HuksKeyPurpose.HUKS_KEY_PURPOSE_ENCRYPT },
+        { tag: huks.HuksTag.HUKS_TAG_NONCE, value: nonce }
+      ]
+    });
+    const input: Uint8Array = encoder.encodeInto(cookie);
+    const updated = await huks.updateSession(session.handle, { inData: input });
+    const finished = await huks.finishSession(session.handle, { inData: new Uint8Array(0) });
+    const ciphertext: Uint8Array = AuthService.concatBytes(updated.outData ?? new Uint8Array(0),
+      finished.outData ?? new Uint8Array(0));
+    return new util.Base64Helper().encodeToStringSync(AuthService.concatBytes(nonce, ciphertext));
+  }
+
+  private static async decryptCookie(encrypted: string): Promise<string> {
+    await AuthService.ensureSecureKey();
+    const bytes: Uint8Array = new util.Base64Helper().decodeSync(encrypted);
+    if (bytes.length <= 12) return '';
+    const nonce: Uint8Array = bytes.slice(0, 12);
+    const ciphertext: Uint8Array = bytes.slice(12);
+    const session = await huks.initSession(AuthService.secureKeyAlias, {
+      properties: [
+        { tag: huks.HuksTag.HUKS_TAG_PURPOSE, value: huks.HuksKeyPurpose.HUKS_KEY_PURPOSE_DECRYPT },
+        { tag: huks.HuksTag.HUKS_TAG_NONCE, value: nonce }
+      ]
+    });
+    const updated = await huks.updateSession(session.handle, { inData: ciphertext });
+    const finished = await huks.finishSession(session.handle, { inData: new Uint8Array(0) });
+    const plaintext: Uint8Array = AuthService.concatBytes(updated.outData ?? new Uint8Array(0),
+      finished.outData ?? new Uint8Array(0));
+    return new util.TextDecoder().decodeToString(plaintext);
+  }
+
+  private static concatBytes(left: Uint8Array, right: Uint8Array): Uint8Array {
+    const result = new Uint8Array(left.length + right.length);
+    result.set(left, 0);
+    result.set(right, left.length);
+    return result;
+  }
+
+  static async requestQrCode(): Promise<AuthQrCode> {
+    const params: AuthParam[] = [];
+    params.push(new AuthParam('local_id', '0'));
+    params.push(new AuthParam('platform', 'android'));
+    params.push(new AuthParam('mobi_app', 'android_hd'));
+    const query: string = await AuthService.signedQuery(params);
+    const body: Record<string, Object> = await AuthService.requestJson(
+      `${AuthService.passportBase}/x/passport-tv-login/qrcode/auth_code?${query}`,
+      http.RequestMethod.POST,
+      new AuthHeaders()
+    );
+    const code: number = Number(body['code'] ?? -1);
+    if (code !== 0) {
+      throw new Error(String(body['message'] ?? '获取二维码失败'));
+    }
+    const data: Record<string, Object> = (body['data'] ?? {}) as Record<string, Object>;
+    const result: AuthQrCode = new AuthQrCode();
+    result.authCode = String(data['auth_code'] ?? '');
+    result.url = String(data['url'] ?? '');
+    if (result.authCode === '' || result.url === '') {
+      throw new Error('二维码接口返回内容不完整');
+    }
+    return result;
+  }
+
+  static async pollQrCode(authCode: string, context?: common.UIAbilityContext): Promise<AuthPollResult> {
+    const params: AuthParam[] = [];
+    params.push(new AuthParam('auth_code', authCode));
+    params.push(new AuthParam('local_id', '0'));
+    const query: string = await AuthService.signedQuery(params);
+    const body: Record<string, Object> = await AuthService.requestJson(
+      `${AuthService.passportBase}/x/passport-tv-login/qrcode/poll?${query}`,
+      http.RequestMethod.POST,
+      new AuthHeaders()
+    );
+    const result: AuthPollResult = new AuthPollResult();
+    result.code = Number(body['code'] ?? -1);
+    result.message = String(body['message'] ?? '');
+    if (result.code !== 0) return result;
+
+    const data: Record<string, Object> = (body['data'] ?? {}) as Record<string, Object>;
+    const cookieInfo: Record<string, Object> = (data['cookie_info'] ?? {}) as Record<string, Object>;
+    const cookies: Object[] = (cookieInfo['cookies'] ?? []) as Object[];
+    const cookie: string = AuthService.cookieListToString(cookies);
+    if (cookie === '') {
+      result.message = '扫码成功，但没有返回登录凭证';
+      return result;
+    }
+    result.session = await AuthService.validateCookie(cookie, context);
+    return result;
+  }
+
+  static async validateCookie(cookieText: string, context?: common.UIAbilityContext): Promise<AuthSession> {
+    const cookie: string = AuthService.normalizeCookie(cookieText);
+    if (cookie === '') throw new Error('Cookie 为空');
+    const headers: AuthHeaders = new AuthHeaders();
+    headers.cookie = cookie;
+    headers.referer = 'https://www.bilibili.com/';
+    const body: Record<string, Object> = await AuthService.requestJson(
+      `${AuthService.apiBase}/x/web-interface/nav`,
+      http.RequestMethod.GET,
+      headers
+    );
+    const code: number = Number(body['code'] ?? -1);
+    const data: Record<string, Object> = (body['data'] ?? {}) as Record<string, Object>;
+    if (code !== 0 || data['isLogin'] !== true) {
+      throw new Error(String(body['message'] ?? 'Cookie 无效或已过期'));
+    }
+    const session: AuthSession = new AuthSession();
+    session.uid = String(data['mid'] ?? '');
+    session.name = String(data['uname'] ?? '');
+    session.face = String(data['face'] ?? '');
+    session.cookie = cookie;
+    session.csrf = AuthService.findCookie(cookie, 'bili_jct');
+    session.isLogin = true;
+    await AuthService.loadUserStats(session, headers);
+    await AuthService.loadUserProfile(session, headers);
+    AuthService.session = session;
+    await AuthService.persistCookie(cookie, context);
+    return session;
+  }
+
+  private static async loadUserProfile(session: AuthSession, headers: AuthHeaders): Promise<void> {
+    try {
+      const body: Record<string, Object> = await AuthService.requestJson(
+        AuthService.apiBase + '/x/space/myinfo',
+        http.RequestMethod.GET,
+        headers
+      );
+      if (Number(body['code'] ?? -1) !== 0) return;
+      const data: Record<string, Object> = (body['data'] ?? {}) as Record<string, Object>;
+      session.sign = String(data['sign'] ?? '');
+      session.ipLocation = String(data['ip_location'] ?? '');
+      const levelInfo: Record<string, Object> = (data['level_info'] ?? {}) as Record<string, Object>;
+      session.level = Number(data['level'] ?? levelInfo['current_level'] ?? 0);
+    } catch (error) {
+      console.error('Pilihos user profile request failed: ' + String(error));
+    }
+  }
+
+  private static async loadUserStats(session: AuthSession, headers: AuthHeaders): Promise<void> {
+    try {
+      const body: Record<string, Object> = await AuthService.requestJson(
+        `${AuthService.apiBase}/x/web-interface/nav/stat`,
+        http.RequestMethod.GET,
+        headers
+      );
+      if (Number(body['code'] ?? -1) !== 0) return;
+      const data: Record<string, Object> = (body['data'] ?? {}) as Record<string, Object>;
+      session.dynamicCount = Number(data['dynamic_count'] ?? 0);
+      session.followingCount = Number(data['following'] ?? 0);
+      session.followerCount = Number(data['follower'] ?? 0);
+    } catch (error) {
+      console.error(`Pilihos user stats request failed: ${String(error)}`);
+    }
+  }
+  static async logout(): Promise<void> {
+    const session: AuthSession | null = AuthService.session;
+    if (session !== null && session.cookie !== '') {
+      try {
+        const headers: AuthHeaders = new AuthHeaders();
+        headers.cookie = session.cookie;
+        headers.contentType = 'application/x-www-form-urlencoded';
+        await AuthService.requestJson(
+          `${AuthService.passportBase}/login/exit/v2`,
+          http.RequestMethod.POST,
+          headers,
+          `biliCSRF=${encodeURIComponent(session.csrf)}`
+        );
+      } catch (error) {
+        console.error(`Pilihos logout request failed: ${String(error)}`);
+      }
+    }
+    AuthService.session = null;
+    if (AuthService.credentialPreferences !== null) {
+      try {
+        AuthService.credentialPreferences.deleteSync('cookie_cipher');
+        AuthService.credentialPreferences.flushSync();
+      } catch (error) {
+        console.error('Pilihos auth persistence clear failed: ' + String(error));
+      }
+    }
+  }
+
+  static normalizeCookie(value: string): string {
+    const parts: string[] = value.split(';');
+    const valid: string[] = [];
+    parts.forEach((part: string): void => {
+      const item: string = part.trim();
+      const separator: number = item.indexOf('=');
+      if (separator > 0) {
+        const name: string = item.substring(0, separator).trim();
+        const cookieValue: string = item.substring(separator + 1).trim();
+        if (name !== '' && cookieValue !== '') valid.push(`${name}=${cookieValue}`);
+      }
+    });
+    return valid.join('; ');
+  }
+
+  private static async md5Hex(value: string): Promise<string> {
+    const md = cryptoFramework.createMd('MD5');
+    const encoder = new util.TextEncoder();
+    await md.update({ data: encoder.encodeInto(value) });
+    const output = await md.digest();
+    let result: string = '';
+    output.data.forEach((item: number): void => {
+      result += item.toString(16).padStart(2, '0');
+    });
+    return result;
+  }
+
+  private static async signedQuery(params: AuthParam[]): Promise<string> {
+    params.push(new AuthParam('appkey', AuthService.appKey));
+    params.push(new AuthParam('ts', `${Math.floor(Date.now() / 1000)}`));
+    params.sort((left: AuthParam, right: AuthParam): number => left.key.localeCompare(right.key));
+    const encoded: string[] = params.map((item: AuthParam): string =>
+      `${encodeURIComponent(item.key)}=${encodeURIComponent(item.value)}`);
+    const query: string = encoded.join('&');
+    const sign: string = await AuthService.md5Hex(query + AuthService.appSecret);
+    return `${query}&sign=${sign}`;
+  }
+  private static findCookie(cookie: string, name: string): string {
+    const prefix: string = `${name}=`;
+    const item: string | undefined = cookie.split('; ').find((part: string): boolean => part.startsWith(prefix));
+    return item === undefined ? '' : item.substring(prefix.length);
+  }
+
+  private static cookieListToString(cookies: Object[]): string {
+    const values: string[] = [];
+    cookies.forEach((raw: Object): void => {
+      const item: Record<string, Object> = raw as Record<string, Object>;
+      const name: string = String(item['name'] ?? '');
+      const value: string = String(item['value'] ?? '');
+      if (name !== '' && value !== '') values.push(`${name}=${value}`);
+    });
+    return values.join('; ');
+  }
+
+  private static async requestJson(
+    url: string,
+    method: http.RequestMethod,
+    header: AuthHeaders,
+    extraData?: string
+  ): Promise<Record<string, Object>> {
+    const request: http.HttpRequest = http.createHttp();
+    try {
+      const requestHeaders: Record<string, string> = {};
+      requestHeaders['User-Agent'] = 'Pilihos/1.0.0';
+      if (header.cookie !== '') requestHeaders['Cookie'] = header.cookie;
+      if (header.referer !== '') requestHeaders['Referer'] = header.referer;
+      if (header.contentType !== '') requestHeaders['Content-Type'] = header.contentType;
+      const options: http.HttpRequestOptions = {
+        method: method,
+        header: requestHeaders,
+        connectTimeout: 10000,
+        readTimeout: 15000
+      };
+      if (extraData !== undefined) options.extraData = extraData;
+      const response: http.HttpResponse = await request.request(url, options);
+      return JSON.parse(response.result as string) as Record<string, Object>;
+    } finally {
+      request.destroy();
+    }
+  }
+}

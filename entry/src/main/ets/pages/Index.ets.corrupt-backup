@@ -1,0 +1,1431 @@
+﻿import { VideoPlayerService } from '../services/VideoPlayerService';
+import { VideoItem } from '../models/VideoItem';
+import { VideoDetailService } from '../services/VideoDetailService';
+import { RecommendationService } from '../services/RecommendationService';
+import { PlaybackService } from '../services/PlaybackService';
+import { WbiService } from '../services/WbiService';
+import { AuthService, AuthSession, AuthPollResult, AuthQrCode } from '../services/AuthService';
+import common from '@ohos.app.ability.common';
+import window from '@ohos.window';
+import { BusinessError } from '@kit.BasicServicesKit';
+import { picker } from '@kit.CoreFileKit';
+import { preferences } from '@kit.ArkData';
+
+@Entry
+@Component
+struct Index {
+  @State showVertical: boolean = false;
+  @State landscapePlayback: boolean = false;
+  @State currentIndex: number = 0;
+  @State draggingDown: boolean = false;
+  @State loading: boolean = false;
+  @State loadingMore: boolean = false;
+  private page: number = 0;
+  private lastLoadTriggerLength: number = -1;
+  @State loadError: string = '';
+  @State activeTab: number = 1;
+  @State searchExpanded: boolean = false;
+  @State searchText: string = '';
+  @State loginVisible: boolean = false;
+  @State loginMode: number = 0;
+  @State loginAccount: string = '';
+  @State loginPassword: string = '';
+  @State loginSmsCode: string = '';
+  @State loginCookie: string = '';
+  @State loginShowPassword: boolean = false;
+  @State loginNotice: string = '';
+  @State authSession: AuthSession | null = null;
+  @State loginQrUrl: string = '';
+  @State loginQrStatus: string = '';
+  @State loginQrSeconds: number = 0;
+  @State danmakuText: string = '';
+  @State detailExpanded: boolean = false;
+  @State detailLoading: boolean = false;
+  @State detailError: string = '';
+  @State sidebar: number = 0;
+  @State currentUrl: string = '';
+  @State videoMounted: boolean = false;
+  @State surfaceReady: boolean = false;
+  @State playbackStarting: boolean = false;
+  @State playbackReady: boolean = false;
+  @State playbackUrls: string[] = [];
+  @State playbackUrlIndex: number = 0;
+  @State playerError: string = '';
+  @State mineCoverUri: string = '';
+  @State showMineCoverSheet: boolean = false;
+  @State topInset: number = 24;
+  @State bottomInset: number = 8;
+  private context: common.UIAbilityContext = getContext(this) as common.UIAbilityContext;
+  private uiPreferences: preferences.Preferences | null = null;
+  private playerService: VideoPlayerService = new VideoPlayerService();
+  private playbackRequest: number = 0;
+  private detailRequest: number = 0;
+  private qrPolling: boolean = false;
+  private qrAuthCode: string = '';
+  private surfaceController: XComponentController = new XComponentController();
+  private surfaceId: string = '';
+  private hasMoreRecommendations: boolean = true;
+  private static readonly maxRecommendations: number = 30;
+  @State videos: VideoItem[] = Index.placeholderVideos();
+
+  private static placeholderVideos(): VideoItem[] {
+    const result: VideoItem[] = [];
+    for (let index: number = 0; index < 10; index++) {
+      result.push({
+        id: index + 1, aid: 0, bvid: '', cid: 0, title: '', author: '', cover: '',
+        viewCount: 0, danmuCount: 0, likeCount: 0, commentCount: 0,
+        followed: false, duration: 0, playUrl: '', placeholder: true, publishTime: 0, description: '', tags: [], detailLoaded: false
+      });
+    }
+    return result;
+  }
+
+  aboutToAppear(): void {
+    WbiService.warmup();
+    this.authSession = AuthService.currentSession();
+    this.restoreAuthSession();
+    this.loadMineCover();
+    this.loadRecommendations();
+    window.getLastWindow(this.context).then((mainWindow: window.Window): void => {
+      const systemArea: window.AvoidArea = mainWindow.getWindowAvoidArea(window.AvoidAreaType.TYPE_SYSTEM);
+      const navigationArea: window.AvoidArea = mainWindow.getWindowAvoidArea(window.AvoidAreaType.TYPE_NAVIGATION_INDICATOR);
+      this.topInset = px2vp(systemArea.topRect.height);
+      this.bottomInset = px2vp(navigationArea.bottomRect.height);
+      mainWindow.on('avoidAreaChange', (data): void => {
+        if (data.type === window.AvoidAreaType.TYPE_SYSTEM) {
+          this.topInset = px2vp(data.area.topRect.height);
+        } else if (data.type === window.AvoidAreaType.TYPE_NAVIGATION_INDICATOR) {
+          this.bottomInset = px2vp(data.area.bottomRect.height);
+        }
+      });
+    }).catch((error: BusinessError): void => {
+      console.error(`Pilihos avoid area failed: ${error.code} ${error.message}`);
+    });
+  }
+
+  private async loadRecommendations(): Promise<void> {
+    this.loading = true;
+    this.loadError = '';
+    try {
+      const result: VideoItem[] = await RecommendationService.load(0);
+      if (result.length > 0) {
+        this.page = 0;
+        this.videos = result;
+        this.lastLoadTriggerLength = -1;
+        this.hasMoreRecommendations = true;
+      }
+    } catch (error) {
+      this.loadError = '鎺ㄨ崘鍔犺浇澶辫触锛岃妫€鏌ョ綉缁?;
+      console.error(`Pilihos recommendation failed: ${String(error)}`);
+    } finally {
+      this.loading = false;
+    }
+  }
+
+  private async loadVideoDetail(): Promise<void> {
+    const item: VideoItem = this.videos[this.currentIndex];
+    if (item.placeholder || item.detailLoaded) return;
+    const requestId: number = this.detailRequest + 1;
+    this.detailRequest = requestId;
+    this.detailLoading = true;
+    this.detailError = '';
+    try {
+      const updated: VideoItem = await VideoDetailService.load(item);
+      if (requestId !== this.detailRequest || this.videos[this.currentIndex] !== item) return;
+      this.videos = this.videos.map((candidate: VideoItem): VideoItem =>
+        candidate.id === item.id ? updated : candidate);
+    } catch (error) {
+      if (requestId === this.detailRequest) {
+        this.detailError = '瑙嗛璇︽儏鑾峰彇澶辫触';
+        console.error('Pilihos video detail failed: ' + String(error));
+      }
+    } finally {
+      if (requestId === this.detailRequest) this.detailLoading = false;
+    }
+  }
+
+  private async restoreAuthSession(): Promise<void> {
+    const current: AuthSession | null = AuthService.currentSession();
+    const restored: AuthSession | null = await AuthService.restoreSession(this.context);
+    this.authSession = restored ?? current;
+    if (restored === null && current !== null) this.refreshAuthData();
+  }
+
+  private async loadMoreRecommendations(): Promise<void> {
+    if (this.loadingMore || this.loading || !this.hasMoreRecommendations) return;
+    if (this.videos.length >= Index.maxRecommendations) {
+      this.hasMoreRecommendations = false;
+      return;
+    }
+    this.loadingMore = true;
+    try {
+      const next: VideoItem[] = await RecommendationService.load(this.page + 1);
+      if (next.length > 0) {
+        this.page += 1;
+        const existing: Set<string> = new Set<string>(this.videos.map((item: VideoItem): string =>
+          item.bvid !== '' ? item.bvid : `${item.aid}`));
+        const additions: VideoItem[] = next.filter((item: VideoItem): boolean => {
+          const key: string = item.bvid !== '' ? item.bvid : `${item.aid}`;
+          return !existing.has(key);
+        });
+        const remaining: number = Index.maxRecommendations - this.videos.length;
+        this.videos = this.videos.concat(additions.slice(0, remaining));
+        if (this.videos.length >= Index.maxRecommendations || additions.length === 0) {
+          this.hasMoreRecommendations = false;
+        }
+      } else {
+        this.hasMoreRecommendations = false;
+      }
+    } catch (error) {
+      console.error(`Pilihos load more recommendation failed: ${String(error)}`);
+    } finally {
+      this.loadingMore = false;
+    }
+  }
+
+  private openVertical(): void {
+    this.showVertical = true;
+    this.currentIndex = 0;
+    this.prepareCurrentVideo();
+  }
+
+  private async loadMineCover(): Promise<void> {
+    try {
+      this.uiPreferences = await preferences.getPreferences(this.context, 'pilihos_ui');
+      this.mineCoverUri = this.uiPreferences.getSync('mine_cover_uri', '') as string;
+    } catch (error) {
+      console.error('Pilihos cover preference load failed: ' + String(error));
+    }
+  }
+
+  private async chooseMineCover(): Promise<void> {
+    this.showMineCoverSheet = false;
+    try {
+      const photoPicker = new picker.PhotoViewPicker();
+      const result = await photoPicker.select({ maxSelectNumber: 1 });
+      if (result.photoUris && result.photoUris.length > 0) {
+        this.mineCoverUri = result.photoUris[0];
+        if (this.uiPreferences === null) {
+          this.uiPreferences = await preferences.getPreferences(this.context, 'pilihos_ui');
+        }
+        this.uiPreferences.putSync('mine_cover_uri', this.mineCoverUri);
+        this.uiPreferences.flushSync();
+      }
+    } catch (error) {
+      console.error('Pilihos cover picker failed: ' + String(error));
+    }
+  }
+
+  private async openLandscapePlayback(): Promise<void> {
+    this.landscapePlayback = true;
+    this.videoMounted = true;
+    this.playbackReady = false;
+    try {
+      const mainWindow: window.Window = await window.getLastWindow(this.context);
+      await mainWindow.setPreferredOrientation(window.Orientation.LANDSCAPE);
+    } catch (error) {
+      console.error('Pilihos landscape orientation failed: ' + String(error));
+    }
+  }
+
+  private async closeLandscapePlayback(): Promise<void> {
+    this.landscapePlayback = false;
+    try {
+      const mainWindow: window.Window = await window.getLastWindow(this.context);
+      await mainWindow.setPreferredOrientation(window.Orientation.PORTRAIT);
+    } catch (error) {
+      console.error('Pilihos portrait orientation failed: ' + String(error));
+    }
+  }
+
+  private async prepareCurrentVideo(): Promise<void> {
+    const requestId: number = this.playbackRequest + 1;
+    this.playbackRequest = requestId;
+    this.playerError = '';
+    this.currentUrl = '';
+    this.playbackUrls = [];
+    this.playbackUrlIndex = 0;
+    this.videoMounted = false;
+    this.surfaceReady = false;
+    this.surfaceId = '';
+    this.playbackStarting = false;
+    this.playbackReady = false;
+    this.playerService.release();
+    const item: VideoItem = this.videos[this.currentIndex];
+    try {
+      const urls: string[] = item.playUrl !== '' ? [item.playUrl] : await PlaybackService.resolveCandidates(item);
+      if (requestId !== this.playbackRequest || !this.showVertical) return;
+      if (urls.length === 0) throw new Error('娌℃湁鍙敤鐨勮棰戞挱鏀惧湴鍧€');
+      this.playbackUrls = urls;
+      this.playbackUrlIndex = 0;
+      this.currentUrl = urls[0];
+      if (this.videoMounted && this.surfaceReady) {
+        this.startNativePlayback();
+      }
+    } catch (error) {
+      if (requestId !== this.playbackRequest || !this.showVertical) return;
+      this.playerError = `鎾斁鍦板潃鑾峰彇澶辫触: ${String(error)}`;
+      console.error(`Pilihos playback failed: ${String(error)}`);
+    }
+  }
+
+  private formatCount(value: number): string {
+    if (value >= 100000000) return `${(value / 100000000).toFixed(2).replace(/\.00$/, '')}浜縛;
+    if (value >= 1000000) return `${(value / 100000).toFixed(2).replace(/\.00$/, '')}涓嘸;
+    if (value >= 1000) return `${(value / 1000).toFixed(1).replace(/\.0$/, '')}鍗僠;
+    return `${value}`;
+  }
+
+  private formatPublishTime(timestamp: number): string {
+    if (timestamp <= 0) return '';
+    const seconds: number = Math.max(0, Math.floor(Date.now() / 1000) - timestamp);
+    if (seconds < 3600) return `${Math.max(1, Math.floor(seconds / 60))}鍒嗛挓鍓�?
+    if (seconds < 86400) return `${Math.floor(seconds / 3600)}灏忔椂鍓�?
+    if (seconds < 259200) return `${Math.floor(seconds / 86400)}澶╁墠`;
+    const date: Date = new Date(timestamp * 1000);
+    return `${String(date.getFullYear()).substring(2)}/${date.getMonth() + 1}/${date.getDate()}`;
+  }
+
+
+  private formatPublishDate(timestamp: number): string {
+    if (timestamp <= 0) return '发布时间未知';
+    const date: Date = new Date(timestamp * 1000);
+    const month: string = String(date.getMonth() + 1).padStart(2, '0');
+    const day: string = String(date.getDate()).padStart(2, '0');
+    const hour: string = String(date.getHours()).padStart(2, '0');
+    const minute: string = String(date.getMinutes()).padStart(2, '0');
+    return String(date.getFullYear()) + '-' + month + '-' + day + ' ' + hour + ':' + minute;
+  }
+  private async startQrLogin(): Promise<void> {
+    this.qrPolling = false;
+    this.loginQrUrl = '';
+    this.loginQrStatus = '姝ｅ湪鑾峰彇浜岀淮鐮佲€?;
+    this.loginQrSeconds = 0;
+    try {
+      const qrCode: AuthQrCode = await AuthService.requestQrCode();
+      if (!this.loginVisible || this.loginMode !== 2) return;
+      this.qrAuthCode = qrCode.authCode;
+      this.loginQrUrl = qrCode.url;
+      this.loginQrSeconds = qrCode.expiresIn;
+      this.loginQrStatus = '璇蜂娇鐢ㄥ摂鍝╁摂鍝╁鎴风鎵爜';
+      this.pollQrLogin(qrCode.expiresIn);
+    } catch (error) {
+      this.loginQrStatus = `浜岀淮鐮佽幏鍙栧け璐ワ細${String(error)}`;
+    }
+  }
+
+  private async pollQrLogin(expiresIn: number): Promise<void> {
+    if (this.qrPolling) return;
+    this.qrPolling = true;
+    const deadline: number = Date.now() + expiresIn * 1000;
+    while (this.qrPolling && this.loginVisible && this.loginMode === 2 && Date.now() < deadline) {
+      await new Promise<void>((resolve: () => void): void => {
+        setTimeout(resolve, 2000);
+      });
+      if (!this.qrPolling || !this.loginVisible || this.loginMode !== 2) break;
+      try {
+        const result: AuthPollResult = await AuthService.pollQrCode(this.qrAuthCode);
+        this.loginQrSeconds = Math.max(0, Math.floor((deadline - Date.now()) / 1000));
+        if (result.session !== null) {
+          this.authSession = result.session;
+          this.loginNotice = `鐧诲綍鎴愬姛锛屾杩?${result.session.name}`;
+          this.loginQrStatus = '鎵爜鎴愬姛';
+          this.loginVisible = false;
+          this.sidebar = 0;
+          this.qrPolling = false;
+          return;
+        }
+        if (result.code === 86038) {
+          this.loginQrStatus = '浜岀淮鐮佸凡杩囨湡锛岃鍒锋�?;
+          break;
+        }
+        this.loginQrStatus = '绛夊緟鎵爜鎴栫‘璁も€?;
+      } catch (error) {
+        this.loginQrStatus = `浜岀淮鐮佽疆璇㈠け璐ワ細${String(error)}`;
+        break;
+      }
+    }
+    this.qrPolling = false;
+    if (this.loginQrSeconds <= 0 && this.loginQrUrl !== '') this.loginQrStatus = '浜岀淮鐮佸凡杩囨湡锛岃鍒锋�?;
+  }
+
+  private async loginByCookie(): Promise<void> {
+    if (this.loginCookie.trim() === '') {
+      this.loginNotice = '璇风矘璐?Cookie';
+      return;
+    }
+    this.loginNotice = '姝ｅ湪楠岃瘉 Cookie�?;
+    try {
+      const session: AuthSession = await AuthService.validateCookie(this.loginCookie);
+      this.authSession = session;
+      this.loginNotice = `鐧诲綍鎴愬姛锛屾杩?${session.name}`;
+      this.loginCookie = '';
+      this.closeLoginPage();
+    } catch (error) {
+      this.loginNotice = `Cookie 楠岃瘉澶辫触�?{String(error)}`;
+    }
+  }
+
+  private async refreshAuthData(): Promise<void> {
+    const current: AuthSession | null = AuthService.currentSession();
+    if (current === null || current.cookie === '') return;
+    try {
+      this.authSession = await AuthService.validateCookie(current.cookie);
+    } catch (error) {
+      console.error(`Pilihos auth refresh failed: ${String(error)}`);
+    }
+  }
+  private closeLoginPage(): void {
+    this.qrPolling = false;
+    this.loginVisible = false;
+    this.sidebar = 0;
+  }
+  private async logout(): Promise<void> {
+    await AuthService.logout();
+    this.authSession = null;
+    this.loginNotice = '宸查€€鍑虹櫥褰?;
+  }
+  onBackPress(): boolean {
+    if (this.loginVisible) {
+      this.closeLoginPage();
+      return true;
+    }
+    if (this.searchExpanded) {
+      this.searchExpanded = false;
+      return true;
+    }
+    if (this.landscapePlayback) {
+      this.closeLandscapePlayback();
+      return true;
+    }
+    if (!this.showVertical) return false;
+    this.playbackRequest += 1;
+    this.playerService.release();
+    this.currentUrl = '';
+    this.playbackUrls = [];
+    this.playbackUrlIndex = 0;
+    this.videoMounted = false;
+    this.surfaceReady = false;
+    this.surfaceId = '';
+    this.playbackStarting = false;
+    this.playbackReady = false;
+    this.playerError = '';
+    this.showVertical = false;
+    this.closeLandscapePlayback();
+    return true;
+  }
+
+  private tryNextPlaybackUrl(): boolean {
+    const nextIndex: number = this.playbackUrlIndex + 1;
+    if (nextIndex >= this.playbackUrls.length) {
+      return false;
+    }
+    this.playbackUrlIndex = nextIndex;
+    this.currentUrl = this.playbackUrls[nextIndex];
+    this.playbackReady = false;
+    this.playbackStarting = false;
+    console.info(`Pilihos playback retry url ${nextIndex + 1}/${this.playbackUrls.length}`);
+    this.startNativePlayback();
+    return true;
+  }
+
+  private onVideoSurfaceLoad(): void {
+    this.surfaceId = this.surfaceController.getXComponentSurfaceId();
+    this.surfaceReady = this.surfaceId !== '';
+    if (this.surfaceReady && this.videoMounted && this.currentUrl !== '') {
+      this.startNativePlayback();
+    }
+  }
+
+  private async startNativePlayback(): Promise<void> {
+    if (this.currentUrl === '' || !this.surfaceReady || this.surfaceId === '' || this.playbackStarting) {
+      return;
+    }
+    const requestId: number = this.playbackRequest;
+    this.playbackStarting = true;
+    this.playbackReady = false;
+    this.playerError = '';
+    try {
+      await this.playerService.prepare(this.currentUrl, this.surfaceId);
+      if (requestId !== this.playbackRequest || !this.showVertical || !this.videoMounted) return;
+      await this.playerService.play();
+      if (requestId === this.playbackRequest && this.showVertical) {
+        this.playbackReady = true;
+      }
+    } catch (error) {
+      if (requestId !== this.playbackRequest || !this.showVertical) return;
+      if (this.tryNextPlaybackUrl()) return;
+      this.playbackReady = false;
+      this.videoMounted = false;
+      this.playerError = `瑙嗛鎾斁澶辫�? ${String(error)}`;
+      console.error(`Pilihos native playback failed: ${String(error)}`);
+      this.playerService.release();
+    } finally {
+      if (requestId === this.playbackRequest) {
+        this.playbackStarting = false;
+      }
+    }
+  }
+
+  @Builder
+  commentEntry(item: VideoItem) {
+    Row({ space: 3 }) {
+      Text(`璇勮�?${item.commentCount}`).fontSize(13).fontColor(Color.Grey);
+      Text('�?).fontSize(22).fontColor($r('sys.color.comp_focused_primary'));
+    }
+    .padding({ left: 8, right: 8, top: 5, bottom: 5 })
+    .gesture(
+      LongPressGesture({ repeat: false })
+        .onAction(() => { this.draggingDown = true; })
+        .onActionEnd(() => { this.draggingDown = false; })
+    )
+    .gesture(
+      PanGesture()
+        .onActionUpdate((event: GestureEvent) => {
+          if (this.draggingDown && event.offsetY > 72) this.openVertical();
+        })
+        .onActionEnd(() => { this.draggingDown = false; })
+    );
+  }
+
+  @Builder
+  homeCard(item: VideoItem) {
+    Column({ space: 6 }) {
+      Stack() {
+        if (item.placeholder) {
+          Row().width('100%').aspectRatio(1.62).backgroundColor('#E1E6EE');
+        } else if (item.cover !== '') {
+          Image(item.cover).width('100%').aspectRatio(1.62).objectFit(ImageFit.Cover);
+        } else {
+          Row().width('100%').aspectRatio(1.62).backgroundColor('#DCE3EF');
+        }
+      }
+      .borderRadius(10)
+      .clip(true)
+      if (item.placeholder) {
+        Row().width('82%').height(16).backgroundColor('#E1E6EE').borderRadius(4);
+        Row().width('58%').height(16).backgroundColor('#E1E6EE').borderRadius(4);
+      } else {
+        Text(item.title).fontSize(14).maxLines(2).fontWeight(FontWeight.Medium).lineHeight(22);
+      }
+      Row() {
+        if (item.placeholder) {
+          Row().width('35%').height(12).backgroundColor('#E1E6EE').borderRadius(4).layoutWeight(1);
+          Row().width('25%').height(12).backgroundColor('#E1E6EE').borderRadius(4);
+        } else {
+          Text(`�?${this.formatCount(item.viewCount)}`).fontSize(11).fontColor('#8B9199').layoutWeight(1);
+          Text(`�?${this.formatCount(item.danmuCount)}`).fontSize(11).fontColor('#8B9199');
+        }
+      }.width('100%');
+      Row() {
+        if (item.placeholder) {
+          Row().width('45%').height(12).backgroundColor('#E1E6EE').borderRadius(4);
+        } else if (item.followed) {
+          Text('宸插叧娉?).fontSize(10).fontColor('#1677A8').backgroundColor('#E5F3FA')
+            .padding({ left: 5, right: 5, top: 2, bottom: 2 }).borderRadius(4).margin({ right: 4 });
+        }
+        if (!item.placeholder) {
+          Text(`@${item.author}`).fontSize(11).fontColor('#8B9199').layoutWeight(1);
+          Text(this.formatPublishTime(item.publishTime)).fontSize(11).fontColor('#8B9199');
+        }
+      }.width('100%');
+    }
+    .padding({ left: 8, right: 8, top: 8, bottom: 8 })
+    .backgroundColor(Color.White)
+    .borderRadius(12)
+    .height(210)
+    .onClick(() => {
+      if (item.placeholder) {
+        return;
+      }
+      const index: number = this.videos.indexOf(item);
+      if (index >= 0) {
+        this.currentIndex = index;
+        this.showVertical = true;
+        this.detailExpanded = false;
+        this.detailError = '';
+        this.surfaceReady = false;
+        this.surfaceId = '';
+        this.playbackStarting = false;
+        this.playbackReady = false;
+        this.loadVideoDetail();
+        this.prepareCurrentVideo();
+      }
+    });
+  }
+
+  @Builder
+  verticalPlayer() {
+    Stack() {
+      if (this.currentUrl !== '') {
+        Video({ src: this.currentUrl }).width('100%').height('100%').objectFit(ImageFit.Contain).controls(true).autoPlay(false)
+          .onError((): void => {
+            this.playerError = '瑙嗛鎾斁澶辫触锛岃閲嶈�?;
+            this.currentUrl = '';
+            this.videoMounted = false;
+          });
+      } else {
+        Column({ space: 12 }) {
+          Text(this.playerError === '' ? '姝ｅ湪鍔犺浇瑙嗛鈥? : this.playerError)
+            .fontColor(Color.White).fontSize(15).textAlign(TextAlign.Center);
+          Button('閲嶈�?).onClick(() => { this.prepareCurrentVideo(); });
+        }.justifyContent(FlexAlign.Center).width('100%').height('100%');
+      }
+      Column() {
+        Text(`瑙嗛�?${this.currentIndex + 1}/${this.videos.length}`).fontColor(Color.White).fontSize(16);
+        Text(this.videos[this.currentIndex].title).fontColor(Color.White).fontSize(17).maxLines(2).margin({ top: 8 });
+      }.position({ left: 18, right: 60, bottom: 32 });
+      Button('杩斿�?).position({ left: 16, top: 20 }).onClick(() => {
+        this.playerService.release();
+        this.currentUrl = '';
+        this.videoMounted = false;
+        this.showVertical = false;
+      });
+      Text('鍚戜笂婊戝姩鍒囨崲瑙嗛').fontColor(Color.White).fontSize(13).position({ bottom: 30, right: 18 });
+    }
+    .width('100%').height('100%').backgroundColor(Color.Black)
+    .gesture(SwipeGesture({ fingers: 1, direction: SwipeDirection.Vertical })
+      .onAction(() => {
+        this.playerService.pause();
+        this.currentIndex = (this.currentIndex + 1) % this.videos.length;
+        this.currentUrl = '';
+        this.prepareCurrentVideo();
+      }));
+  }
+
+  @Builder
+  detailAction(label: string, iconName: string) {
+    Column({ space: 3 }) {
+      if (iconName === 'dianzan') {
+        Image($r('app.media.dianzan')).width(24).height(24);
+      } else if (iconName === 'diancai') {
+        Image($r('app.media.diancai')).width(24).height(24);
+      } else if (iconName === 'toubi') {
+        Image($r('app.media.toubi')).width(24).height(24);
+      } else if (iconName === 'favorites') {
+        Image($r('app.media.favorites')).width(24).height(24);
+      } else if (iconName === 'watch_later') {
+        Image($r('app.media.watch_later')).width(24).height(24);
+      } else {
+        Image($r('app.media.share')).width(24).height(24);
+      }
+      Text(label).fontSize(12).fontColor('#3E4854');
+    }.layoutWeight(1).alignItems(HorizontalAlign.Center);
+  }
+  @Builder
+  landscapePlayer() {
+    Stack() {
+      if (this.currentUrl !== '') {
+        XComponent({
+          id: 'PilihosLandscapeSurface',
+          type: XComponentType.SURFACE,
+          controller: this.surfaceController
+        }).width('100%').height('100%')
+          .onLoad((): void => {
+            this.onVideoSurfaceLoad();
+          })
+          .onDestroy((): void => {
+            this.surfaceReady = false;
+            this.surfaceId = '';
+          });
+      } else {
+        Column({ space: 12 }) {
+          Text(this.playerError === '' ? '姝ｅ湪鑾峰彇瑙嗛鎾斁鍦板潃鈥? : this.playerError)
+            .fontColor(Color.White).fontSize(15).textAlign(TextAlign.Center);
+          if (this.playerError !== '') {
+            Button('閲嶈�?).onClick(() => { this.prepareCurrentVideo(); });
+          }
+        }.justifyContent(FlexAlign.Center).width('100%').height('100%');
+      }
+      Button() {
+        Image($r('app.media.fanhui_left')).width(24).height(24);
+      }
+      .type(ButtonType.ROUNDED_RECTANGLE).width(44).height(44)
+      .backgroundColor('#66000000').borderRadius(22)
+      .position({ left: 16, top: 16 })
+      .onClick(() => { this.onBackPress(); });
+    }
+    .width('100%').height('100%').backgroundColor(Color.Black);
+  }
+
+  @Builder
+  detailPage() {
+    Column() {
+      Stack() {
+        if (this.currentUrl === '' && this.videos[this.currentIndex].cover !== '') {
+          Image(this.videos[this.currentIndex].cover)
+            .width('100%').height('100%').objectFit(ImageFit.Cover);
+        }
+        if (this.currentUrl !== '') {
+          XComponent({
+            id: 'PilihosVideoSurface',
+            type: XComponentType.SURFACE,
+            controller: this.surfaceController
+          }).width('100%').height('100%')
+            .onLoad((): void => {
+              this.onVideoSurfaceLoad();
+            })
+            .onDestroy((): void => {
+              this.surfaceReady = false;
+              this.surfaceId = '';
+            });
+          if (!this.videoMounted) {
+            Image(this.videos[this.currentIndex].cover)
+              .width('100%').height('100%').objectFit(ImageFit.Cover);
+            Button(this.playerError === '' ? '鎾�? : '閲嶈�?).fontSize(16).onClick(() => {
+              this.videoMounted = true;
+              this.playbackReady = false;
+              this.startNativePlayback();
+            });
+          } else if (this.playbackStarting) {
+            Text('姝ｅ湪鍑嗗瑙嗛鈥?).fontColor(Color.White).fontSize(14)
+              .backgroundColor('#99000000').padding(8);
+          }
+        } else {
+          Column({ space: 12 }) {
+            Text(this.playerError === '' ? '姝ｅ湪鑾峰彇瑙嗛鎾斁鍦板潃鈥? : this.playerError)
+              .fontColor(Color.White).fontSize(14).textAlign(TextAlign.Center)
+              .backgroundColor('#99000000').padding(8);
+            if (this.playerError !== '') {
+              Button('閲嶈�?).onClick(() => { this.prepareCurrentVideo(); });
+            }
+          }.justifyContent(FlexAlign.Center).width('100%').height('100%');
+        }
+        Button() {
+          Image($r('app.media.fanhui_left')).width(24).height(24);
+        }
+        .type(ButtonType.ROUNDED_RECTANGLE).width(42).height(42)
+        .backgroundColor(Color.Transparent)
+        .position({ left: 10, top: 10 })
+        .onClick(() => { this.onBackPress(); });
+      }.width('100%').aspectRatio(16 / 9).backgroundColor(Color.Black);
+
+      Row() {
+        Row({ space: 12 }) {
+          Text('\u7B80\u4ECB').fontSize(15).fontColor('#1677A8');
+          Text('\u8BC4\u8BBA ' + this.formatCount(this.videos[this.currentIndex].commentCount)).fontSize(15);
+        }
+        .layoutWeight(1)
+        .padding({ left: 16 })
+        .alignItems(VerticalAlign.Center);
+        Button() {
+          Image($r('app.media.down')).width(18).height(18);
+        }
+        .type(ButtonType.ROUNDED_RECTANGLE).width(40).height(40)
+        .backgroundColor(Color.Transparent)
+        .borderRadius(20)
+        .onClick(() => { this.openLandscapePlayback(); });
+        Row() {
+          TextInput({ placeholder: '\u53D1\u4E00\u6761\u5F39\u5E55', text: this.danmakuText })
+            .width(122).height(36).fontSize(12).fontColor('#858C94')
+            .backgroundColor('#F1F3F5').borderRadius(18)
+            .padding({ left: 10, right: 10 })
+            .onChange((value: string) => { this.danmakuText = value; });
+        }
+        .layoutWeight(1)
+        .padding({ right: 12 })
+        .justifyContent(FlexAlign.End)
+        .alignItems(VerticalAlign.Center);
+      }.width('100%').height(64).backgroundColor(Color.White)
+        .border({ width: { bottom: 1 }, color: '#E5E8EC' });      Scroll() {
+        Column({ space: 14 }) {
+          Row({ space: 12 }) {
+            if (this.videos[this.currentIndex].cover !== '') {
+              Image(this.videos[this.currentIndex].cover).width(52).height(52).borderRadius(26);
+            } else {
+              Row().width(52).height(52).borderRadius(26).backgroundColor('#DCE3EF');
+            }
+            Column({ space: 4 }) {
+              Text(`@${this.videos[this.currentIndex].author}`).fontSize(17);
+              Text('绮変笣鏁? 瑙嗛鏁?).fontSize(12).fontColor('#858C94');
+            }.layoutWeight(1).alignItems(HorizontalAlign.Start);
+            Button(this.videos[this.currentIndex].followed ? '宸插叧娉? : '鍏虫�?).fontSize(13).height(36);
+          }.width('100%').height(64);
+          Row({ space: 8 }) {
+            Text(this.videos[this.currentIndex].title).fontSize(19)
+              .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
+              .layoutWeight(1);
+            Button() {
+              Image($r('app.media.down')).width(17).height(17);
+            }
+            .type(ButtonType.ROUNDED_RECTANGLE).width(32).height(32)
+            .backgroundColor(Color.Transparent).borderRadius(16)
+            .onClick(() => { this.detailExpanded = !this.detailExpanded; });
+          }.width('100%').alignItems(VerticalAlign.Center);
+
+          if (this.detailExpanded) {
+            Column({ space: 8 }) {
+              Text(this.videos[this.currentIndex].title)
+                .fontSize(18).fontWeight(FontWeight.Medium).lineHeight(25)
+                .width('100%');
+              Text(this.detailLoading ? '姝ｅ湪鍔犺浇瑙嗛璇︽儏�? :
+                (this.detailError !== '' ? this.detailError :
+                  (this.videos[this.currentIndex].description === ''
+                    ? '鏆傛棤绠€浠? : this.videos[this.currentIndex].description)))
+                .fontSize(14).fontColor('#59616B').lineHeight(21)
+                .width('100%');
+              Text('BV�?' + (this.videos[this.currentIndex].bvid === ''
+                ? '鏆傛�? : this.videos[this.currentIndex].bvid))
+                .fontSize(13).fontColor('#858C94').width('100%');
+              Text('鏍囩�?' + (this.videos[this.currentIndex].tags.length === 0
+                ? '鏆傛�? : this.videos[this.currentIndex].tags.join(' �?')))
+                .fontSize(13).fontColor('#858C94').lineHeight(20)
+                .width('100%');
+            }.width('100%').padding({ top: 2, bottom: 4 })
+              .backgroundColor('#F7F8FA').borderRadius(8)
+              .padding({ left: 10, right: 10, top: 8, bottom: 8 });
+          }
+          Row({ space: 18 }) {
+            Text('鎾斁閲?' + this.formatCount(this.videos[this.currentIndex].viewCount))
+              .fontSize(13).fontColor('#858C94');
+            Text('寮瑰�?' + this.formatCount(this.videos[this.currentIndex].danmuCount))
+              .fontSize(13).fontColor('#858C94');
+            Text('\u53D1\u5E03\u4E8E ' + this.formatPublishDate(this.videos[this.currentIndex].publishTime))
+              .fontSize(13).fontColor('#858C94');
+          }.width('100%').height(28)
+            .justifyContent(FlexAlign.Start)
+            .alignItems(VerticalAlign.Center);
+          Row() {
+            this.detailAction('鐐硅�?, 'dianzan');
+            this.detailAction('鐐硅�?, 'diancai');
+            this.detailAction('鎶曞�?, 'toubi');
+            this.detailAction('鏀惰棌', 'favorites');
+            this.detailAction('鍐嶇�?, 'watch_later');
+            this.detailAction('鍒嗕�?, 'share');
+          }.width('100%').height(64).padding({ top: 12, bottom: 12 })
+            .border({ width: { bottom: 1 }, color: '#E5E8EC' });
+          ForEach(this.videos, (item: VideoItem) => {
+            if (!item.placeholder) {
+              Row({ space: 10 }) {
+                Image(item.cover).width(132).height(76).borderRadius(8);
+                Column({ space: 5 }) {
+                  Text(item.title).fontSize(14).maxLines(2).lineHeight(20);
+                  Text(`�?${this.formatCount(item.viewCount)}   �?${this.formatCount(item.danmuCount)}   ${this.formatPublishTime(item.publishTime)}`)
+                    .fontSize(11).fontColor('#858C94');
+                  Text(`@${item.author}`).fontSize(11).fontColor('#858C94');
+                }.layoutWeight(1).alignItems(HorizontalAlign.Start);
+              }.width('100%').onClick(() => {
+                this.currentIndex = this.videos.indexOf(item);
+                this.detailExpanded = false;
+                this.detailError = '';
+                this.currentUrl = '';
+                this.loadVideoDetail();
+                this.prepareCurrentVideo();
+              });
+            }
+          }, (item: VideoItem) => `related_${item.id}`);
+        }.width('100%').alignItems(HorizontalAlign.Start)
+          .padding({ left: 16, right: 16, top: 14, bottom: this.bottomInset + 30 });
+      }.layoutWeight(1).width('100%').scrollBar(BarState.Off).backgroundColor(Color.White);
+    }
+    .width('100%').height('100%')
+    .padding({ top: this.topInset })
+    .backgroundColor(Color.Black);
+  }
+
+  @Builder
+  topBubbleButton(label: string, selected: boolean, width: number, action: () => void) {
+    Button(label)
+      .type(ButtonType.ROUNDED_RECTANGLE)
+      .controlSize(ControlSize.NORMAL)
+      .width(width)
+      .height(40)
+      .fontSize(selected ? 15 : 14)
+      .fontColor(selected ? Color.White : '#3E4854')
+      .fontWeight(selected ? FontWeight.Bold : FontWeight.Normal)
+      .backgroundColor(selected ? '#1677A8' : '#FFFFFF')
+      .borderRadius(20)
+      .shadow({ radius: selected ? 8 : 4, color: selected ? '#301677A8' : '#18000000', offsetX: 0, offsetY: 2 })
+      .onClick(action);
+  }
+
+  @Builder
+  topCircleButton(label: string, action: () => void) {
+    Button() {
+      if (this.authSession !== null && this.authSession.face !== '') {
+        Image(this.authSession.face).width(36).height(36).borderRadius(18).objectFit(ImageFit.Cover);
+      } else {
+        Image($r('app.media.user_me')).width(34).height(34).objectFit(ImageFit.Contain);
+      }
+    }
+      .type(ButtonType.ROUNDED_RECTANGLE)
+      .controlSize(ControlSize.NORMAL)
+      .width(48)
+      .height(48)
+      .backgroundColor('#FFFFFF')
+      .padding(0)
+      .borderRadius(24)
+      .shadow({ radius: 6, color: '#25000000', offsetX: 0, offsetY: 2 })
+      .onClick(action);
+  }
+
+  @Builder
+  mineCoverImage() {
+    if (this.mineCoverUri === '') {
+      Image($r('app.media.bottom')).width('100%').height(150)
+        .objectFit(ImageFit.Cover).borderRadius(14).clip(true);
+    } else {
+      Image(this.mineCoverUri).width('100%').height(150)
+        .objectFit(ImageFit.Cover).borderRadius(14).clip(true);
+    }
+  }
+
+  @Builder
+  mineCoverSheet() {
+    Column({ space: 14 }) {
+      Text('鏇存崲鍥剧墖').fontSize(18).fontWeight(FontWeight.Bold);
+      Button('鏇存崲鍥剧墖')
+        .type(ButtonType.ROUNDED_RECTANGLE)
+        .width('100%').height(48).fontSize(16)
+        .backgroundColor('#F1F3F5').fontColor('#1E252D')
+        .onClick(() => { this.chooseMineCover(); });
+    }
+    .width('100%').padding({ left: 24, right: 24, top: 20, bottom: this.bottomInset + 20 });
+  }
+
+  @Builder
+  mineSidebar() {
+    Column({ space: 14 }) {
+      Stack() {
+        this.mineCoverImage();
+      }
+      .width('100%').height(150)
+      .onClick(() => { this.showMineCoverSheet = true; });
+
+      Row({ space: 14 }) {
+        if (this.authSession !== null && this.authSession.face !== '') {
+          Image(this.authSession.face).width(88).height(88).borderRadius(44).objectFit(ImageFit.Cover);
+        } else {
+          Image($r('app.media.user_me')).width(88).height(88).borderRadius(44).objectFit(ImageFit.Contain);
+        }
+        Column({ space: 5 }) {
+          Row({ space: 6 }) {
+            Text(this.authSession === null ? 'Pilihos 鐢ㄦ�? : this.authSession.name)
+              .fontSize(18).fontWeight(FontWeight.Bold).maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis });
+            Text('LV' + (this.authSession === null ? '0' : String(this.authSession.level)))
+              .margin({ left: 6 })
+              .fontSize(11).fontWeight(FontWeight.Bold).fontColor('#FFFFFF')
+              .backgroundColor('#F08A24').borderRadius(5)
+              .padding({ left: 5, right: 5, top: 2, bottom: 2 });
+          }.width('100%');
+          Text(this.authSession === null ? '鐧诲綍鍚庡悓姝ヤ釜浜虹�? :
+            (this.authSession.sign === '' ? '杩欎釜浜哄緢鎳掞紝浠€涔堥兘娌℃湁鐣欎笅' : this.authSession.sign))
+            .fontSize(13).fontColor('#858C94').maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis }).width('100%');
+          Text(this.authSession === null ? 'UID -- �?IP灞炲�?--' :
+            ('UID ' + this.authSession.uid + ' �?IP灞炲�?' +
+              (this.authSession.ipLocation === '' ? '鏈�? : this.authSession.ipLocation)))
+            .fontSize(12).fontColor('#858C94').maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis }).width('100%');
+        }.alignItems(HorizontalAlign.Start).layoutWeight(1)
+          .margin({ top: 22 });
+      }.width('100%').height(92)
+        .margin({ top: -36 })
+        .alignItems(VerticalAlign.Top)
+        .onClick(() => {
+        this.loginVisible = true;
+        this.sidebar = 0;
+        this.loginNotice = '';
+      });
+
+      Row({ space: 8 }) {
+        this.mineStat(this.authSession === null ? '0' : this.formatCount(this.authSession.dynamicCount), '鍔ㄦ�?);
+        this.mineStat(this.authSession === null ? '0' : this.formatCount(this.authSession.followingCount), '鍏虫�?);
+        this.mineStat(this.authSession === null ? '0' : this.formatCount(this.authSession.followerCount), '绮変�?);
+      }.width('100%');
+
+      Grid() {
+        GridItem() { this.mineGridAction('offline_cache', '绂荤嚎缂撳瓨', true); }
+        GridItem() { this.mineGridAction('bofang', '瑙傜湅璁板綍', true); }
+        GridItem() { this.mineGridAction('subscriptions', '鎴戠殑璁㈤槄', true); }
+        GridItem() { this.mineGridAction('watch_later', '绋嶅悗鍐嶇湅', true); }
+        GridItem() { this.mineGridAction('favorites', '鎴戠殑鏀惰棌', true); }
+        GridItem() { this.mineGridAction('software_settings', '杞欢璁剧疆', false); }
+      }
+      .columnsTemplate('1fr 1fr 1fr')
+      .columnsGap(10)
+      .rowsGap(10)
+      .width('100%')
+      .layoutWeight(1);
+    }
+    .width('100%').height('100%')
+    .padding({ top: this.topInset + 12, left: 18, right: 18, bottom: this.bottomInset + 20 })
+    .backgroundColor('#F7F8FA')
+    .alignItems(HorizontalAlign.Start)
+    .bindSheet($$this.showMineCoverSheet, this.mineCoverSheet(), {
+      height: SheetSize.FIT_CONTENT,
+      dragBar: true,
+      showClose: true
+    });
+  }
+  @Builder
+  mineStat(value: string, label: string) {
+    Column({ space: 4 }) {
+      Text(value).fontSize(22).fontWeight(FontWeight.Bold);
+      Text(label).fontSize(13).fontColor('#858C94');
+    }.layoutWeight(1);
+  }
+
+  @Builder
+  mineGridAction(iconName: string, label: string, showArrow: boolean) {
+    Stack() {
+      Column({ space: 8 }) {
+        if (iconName === 'offline_cache') {
+          Image($r('app.media.offline_cache')).width(24).height(24);
+        } else if (iconName === 'bofang') {
+          Image($r('app.media.bofang')).width(24).height(24);
+        } else if (iconName === 'subscriptions') {
+          Image($r('app.media.subscriptions')).width(24).height(24);
+        } else if (iconName === 'watch_later') {
+          Image($r('app.media.watch_later')).width(24).height(24);
+        } else if (iconName === 'favorites') {
+          Image($r('app.media.favorites')).width(24).height(24);
+        } else {
+          Image($r('app.media.software_settings')).width(24).height(24);
+        }
+        Text(label).fontSize(13).fontColor('#3E4854').textAlign(TextAlign.Center);
+      }.justifyContent(FlexAlign.Center).alignItems(HorizontalAlign.Center);
+      if (showArrow) {
+        Image($r('app.media.jinxin_right')).width(16).height(16)
+          .position({ right: 10, bottom: 10 });
+      }
+    }
+    .width('100%').aspectRatio(1)
+    .backgroundColor('#FFFFFF')
+    .borderRadius(12)
+    .shadow({ radius: 6, color: '#18000000', offsetX: 0, offsetY: 2 });
+  }
+  @Builder
+  messageSidebar() {
+    Column({ space: 18 }) {
+      Row() {
+        Button() {
+          Image($r('app.media.fanhui_left')).width(24).height(24);
+        }
+        .type(ButtonType.ROUNDED_RECTANGLE).width(42).height(42)
+        .backgroundColor(Color.Transparent)
+        .onClick(() => { this.sidebar = 0; });
+        Text('娑堟�?).fontSize(14).fontWeight(FontWeight.Bold).fontColor(Color.Black).layoutWeight(1);
+        Text('娓呯�?).fontSize(14).fontWeight(FontWeight.Bold).fontColor(Color.Black);
+      }.width('100%').alignItems(VerticalAlign.Center);
+      Row({ space: 8 }) {
+        this.messageBubble('鍥炲鎴戠殑', '3', 'message_reply');
+        this.messageBubble('@�?, '', 'at_me');
+        this.messageBubble('鏀跺埌鐨勮�?, '12', 'received_likes');
+        this.messageBubble('绯荤粺閫氱煡', '', 'xiaoxi');
+      }.width('100%');
+      Column({ space: 0 }) {
+        this.messageRow('绀惧尯涓�?, '涓炬姤杩涘睍鍙嶉�?, '08-17', 'message_reply');
+        this.messageRow('鐗瑰埆鍏虫敞', '鏂扮殑鍏虫敞鍔ㄦ€佸皢鍦ㄨ繖閲屾樉绀?, '08-21', 'at_me');
+        this.messageRow('绯荤粺閫氱煡', '娆㈣繋浣跨敤 Pilihos', '浠婂�?, 'xiaoxi');
+        this.messageRow('浜掑姩娑堟伅', '璇勮銆佺偣璧炲拰鍥炲灏嗗湪杩欓噷鏄剧�?, '鏇存�?, 'received_likes');
+      }.width('100%');
+    }
+    .width('100%').height('100%')
+    .padding({ top: this.topInset + 12, left: 22, right: 22, bottom: this.bottomInset + 20 })
+    .backgroundColor('#F7F8FA')
+    .alignItems(HorizontalAlign.Start);
+  }
+
+  @Builder
+  messageBubble(label: string, count: string, iconName: string) {
+    Column({ space: 6 }) {
+      Stack() {
+        Button() {
+          if (iconName === 'message_reply') {
+            Image($r('app.media.message_reply')).width(22).height(22);
+          } else if (iconName === 'at_me') {
+            Image($r('app.media.at_me')).width(22).height(22);
+          } else if (iconName === 'received_likes') {
+            Image($r('app.media.xiaoxi')).width(22).height(22);
+          } else {
+            Image($r('app.media.xiaoxi')).width(22).height(22);
+          }
+        }
+        .type(ButtonType.ROUNDED_RECTANGLE)
+        .width(52).height(52)
+        .backgroundColor('#FFFFFF')
+        .borderRadius(26)
+        .shadow({ radius: 6, color: '#22000000', offsetX: 0, offsetY: 2 });
+        if (count !== '') {
+          Text(count).fontSize(10).fontColor(Color.White).backgroundColor('#C51D2A')
+            .borderRadius(12).padding({ left: 7, right: 7, top: 3, bottom: 3 })
+            .position({ right: -4, top: -4 });
+        }
+      }
+      Text(label).fontSize(12).textAlign(TextAlign.Center);
+    }.layoutWeight(1).alignItems(HorizontalAlign.Center);
+  }
+  @Builder
+  messageRow(title: string, summary: string, date: string, iconName: string) {
+    Row({ space: 12 }) {
+      if (iconName === 'message_reply') {
+        Image($r('app.media.message_reply')).width(50).height(50).borderRadius(25);
+      } else if (iconName === 'at_me') {
+        Image($r('app.media.at_me')).width(50).height(50).borderRadius(25);
+      } else if (iconName === 'received_likes') {
+        Image($r('app.media.xiaoxi')).width(50).height(50).borderRadius(25);
+      } else {
+        Image($r('app.media.xiaoxi')).width(50).height(50).borderRadius(25);
+      }
+      Column({ space: 5 }) {
+        Row() {
+          Text(title).fontSize(17).layoutWeight(1);
+          Text(date).fontSize(12).fontColor('#858C94');
+        }.width('100%');
+        Text(summary).fontSize(13).fontColor('#858C94').maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis }).width('100%');
+      }.layoutWeight(1).alignItems(HorizontalAlign.Start);
+    }.width('100%').padding({ top: 14, bottom: 14 })
+      .border({ width: { bottom: 1 }, color: '#E9EDF0' });
+  }
+
+  @Builder
+  loginModeButton(label: string, mode: number) {
+    Button(label)
+      .type(ButtonType.ROUNDED_RECTANGLE)
+      .layoutWeight(1).height(52).fontSize(15)
+      .fontColor(this.loginMode === mode ? '#1677A8' : '#3E4854')
+      .fontWeight(this.loginMode === mode ? FontWeight.Bold : FontWeight.Normal)
+      .backgroundColor(Color.Transparent)
+      .border({
+        width: { bottom: this.loginMode === mode ? 3 : 0 },
+        color: '#1677A8'
+      })
+      .onClick(() => {
+        this.loginMode = mode;
+        this.loginNotice = '';
+        if (mode === 2) {
+          this.startQrLogin();
+        } else {
+          this.qrPolling = false;
+        }
+      });
+  }
+
+  @Builder
+  loginPage() {
+    Column() {
+      Row({ space: 14 }) {
+        Button() {
+          Image($r('app.media.fanhui_left')).width(26).height(26);
+        }
+        .type(ButtonType.ROUNDED_RECTANGLE).width(46).height(46)
+        .backgroundColor(Color.Transparent)
+        .onClick(() => { this.closeLoginPage(); });
+        Text('鐧诲�?).fontSize(26).fontWeight(FontWeight.Medium);
+      }
+      .width('100%')
+      .padding({ left: 14, right: 14, top: this.topInset + 8, bottom: 8 });
+
+      if (this.authSession !== null) {
+        Row({ space: 10 }) {
+          if (this.authSession.face !== '') {
+            Image(this.authSession.face).width(42).height(42).borderRadius(21);
+          } else {
+            Row().width(42).height(42).borderRadius(21).backgroundColor('#DCE3EF');
+          }
+          Column({ space: 2 }) {
+            Text(this.authSession.name).fontSize(16).fontWeight(FontWeight.Bold);
+            Text('UID ' + this.authSession.uid).fontSize(12).fontColor('#858C94');
+          }.layoutWeight(1).alignItems(HorizontalAlign.Start);
+          Button('閫€�?).height(34).fontSize(13).onClick(() => { this.logout(); });
+        }.width('100%').padding({ left: 18, right: 18, bottom: 12 });
+      }
+
+      Row({ space: 4 }) {
+        this.loginModeButton('瀵嗙�?, 0);
+        this.loginModeButton('鐭�?, 1);
+        this.loginModeButton('鎵�?, 2);
+        this.loginModeButton('Cookie', 3);
+      }
+      .width('100%').height(58)
+      .padding({ left: 12, right: 12 })
+      .border({ width: { bottom: 1 }, color: '#D9DDE2' });
+
+      Scroll() {
+        Column({ space: 18 }) {
+          if (this.loginMode === 0) {
+            Text('浣跨敤璐﹀彿瀵嗙爜鐧诲綍').fontSize(23).fontWeight(FontWeight.Medium)
+              .margin({ top: 28, bottom: 10 });
+            Column() {
+              TextInput({ placeholder: '璐﹀�?, text: this.loginAccount })
+                .width('100%').height(58).fontSize(17)
+                .backgroundColor(Color.Transparent)
+                .onChange((value: string) => { this.loginAccount = value; });
+              Row().width('100%').height(1).backgroundColor('#787D84');
+              Row({ space: 8 }) {
+                TextInput({ placeholder: '瀵嗙�?, text: this.loginPassword })
+                  .layoutWeight(1).height(58).fontSize(17)
+                  .backgroundColor(Color.Transparent)
+                  .type(this.loginShowPassword ? InputType.Normal : InputType.Password)
+                  .onChange((value: string) => { this.loginPassword = value; });
+                Text(this.loginShowPassword ? '闅愯棌瀵嗙�? : '鏄剧ず瀵嗙�?)
+                  .fontSize(13).fontColor('#1677A8')
+                  .onClick(() => { this.loginShowPassword = !this.loginShowPassword; });
+              }.width('100%');
+              Row().width('100%').height(1).backgroundColor('#787D84');
+            }.width('100%');
+
+            Row() {
+              Text('璁颁綇璐﹀�?).fontSize(14).fontColor('#4C535B');
+              Text('蹇樿瀵嗙�?).fontSize(14).fontColor('#1677A8').layoutWeight(1)
+                .textAlign(TextAlign.End);
+            }.width('100%');
+
+            Button('鐧诲�?)
+              .type(ButtonType.ROUNDED_RECTANGLE).width(180).height(52)
+              .fontSize(18).fontColor('#1677A8').backgroundColor(Color.Transparent)
+              .border({ width: 1, color: '#1677A8' }).borderRadius(26)
+              .onClick(() => {
+                this.loginNotice = this.loginAccount.length === 0 || this.loginPassword.length === 0
+                  ? '璇疯緭鍏ヨ处鍙峰拰瀵嗙�? : '璐﹀彿瀵嗙爜鐧诲綍闇€�?B 绔欏畼鏂归獙璇佺爜鍜屼汉鏈烘牎楠岋紝璇蜂娇鐢ㄦ壂鐮佹�?Cookie 鐧诲�?;
+              });
+          } else if (this.loginMode === 1) {
+            Text('浣跨敤鐭俊鐧诲�?).fontSize(23).fontWeight(FontWeight.Medium)
+              .margin({ top: 28, bottom: 10 });
+            TextInput({ placeholder: '鎵嬫満�?, text: this.loginAccount })
+              .width('100%').height(58).fontSize(17)
+              .backgroundColor(Color.Transparent)
+              .onChange((value: string) => { this.loginAccount = value; });
+            Row().width('100%').height(1).backgroundColor('#787D84');
+            Row({ space: 8 }) {
+              TextInput({ placeholder: '楠岃瘉鐮?, text: this.loginSmsCode })
+                .layoutWeight(1).height(58).fontSize(17)
+                .backgroundColor(Color.Transparent)
+                .onChange((value: string) => { this.loginSmsCode = value; });
+              Button('鑾峰彇楠岃瘉�?)
+                .type(ButtonType.ROUNDED_RECTANGLE).height(38)
+                .backgroundColor('#E9F4F8').fontColor('#1677A8')
+                .onClick(() => {
+                  this.loginNotice = '鐭俊楠岃瘉鐮侀渶瑕?B 绔欏畼鏂逛汉鏈烘牎楠岋紝璇蜂娇鐢ㄦ壂鐮佹�?Cookie 鐧诲�?;
+                });
+            }.width('100%');
+            Row().width('100%').height(1).backgroundColor('#787D84');
+            Button('鐧诲�?)
+              .type(ButtonType.ROUNDED_RECTANGLE).width(180).height(52).fontSize(18)
+              .fontColor('#1677A8').backgroundColor(Color.Transparent)
+              .border({ width: 1, color: '#1677A8' }).borderRadius(26)
+              .onClick(() => {
+                this.loginNotice = this.loginAccount.length === 0 || this.loginSmsCode.length === 0
+                  ? '璇疯緭鍏ユ墜鏈哄彿鍜岄獙璇佺�? : '鐭俊鐧诲綍闇€�?B 绔欏畼鏂逛汉鏈烘牎楠岋紝璇蜂娇鐢ㄦ壂鐮佹�?Cookie 鐧诲�?;
+              });
+          } else if (this.loginMode === 2) {
+            Text('鎵爜鐧诲綍').fontSize(23).fontWeight(FontWeight.Medium)
+              .margin({ top: 28, bottom: 10 });
+            Column({ space: 14 }) {
+              if (this.loginQrUrl === '') {
+                Row() {
+                  Text(this.loginQrStatus)
+                    .fontSize(14).fontColor('#858C94').textAlign(TextAlign.Center);
+                }
+                .width(210).height(210).padding(14).backgroundColor('#EEF1F4')
+                .borderRadius(8).justifyContent(FlexAlign.Center);
+              } else {
+                QRCode(this.loginQrUrl)
+                  .width(210).height(210).color(Color.Black).backgroundColor(Color.White);
+              }
+              Text(this.loginQrStatus).fontSize(14).fontColor('#1677A8');
+              if (this.loginQrSeconds > 0) {
+                Text('浜岀淮鐮佹湁鏁堟�?' + this.loginQrSeconds + ' �?).fontSize(12).fontColor('#858C94');
+              }
+              Button('鍒锋柊浜岀淮鐮?).height(40).onClick(() => { this.startQrLogin(); });
+            }.alignItems(HorizontalAlign.Center).width('100%');
+          } else {
+            Text('浣跨�?Cookie 鐧诲�?).fontSize(23).fontWeight(FontWeight.Medium)
+              .margin({ top: 28, bottom: 10 });
+            TextInput({ placeholder: '绮樿�?Cookie', text: this.loginCookie })
+              .width('100%').height(110).fontSize(15)
+              .backgroundColor('#F1F3F5').borderRadius(10).padding(12)
+              .onChange((value: string) => { this.loginCookie = value; });
+            Button('鐧诲�?)
+              .type(ButtonType.ROUNDED_RECTANGLE).width(180).height(52).fontSize(18)
+              .fontColor('#1677A8').backgroundColor(Color.Transparent)
+              .border({ width: 1, color: '#1677A8' }).borderRadius(26)
+              .onClick(() => { this.loginByCookie(); });
+          }
+          if (this.loginNotice !== '') {
+            Text(this.loginNotice).fontSize(13).fontColor('#C51D2A')
+              .textAlign(TextAlign.Center).width('100%');
+          }
+          Text('鐧诲綍鍑瘉浠呯敤浜庡綋鍓嶅鎴风浼氳瘽锛屾帴鍏ョ湡瀹炴帴鍙ｅ墠涓嶄細鎻愪氦鎴栦繚瀛樸�?)
+            .fontSize(12).fontColor('#A4A9AF')
+            .textAlign(TextAlign.Center).width('100%')
+            .margin({ top: 28, bottom: 24 });
+        }
+        .width('100%')
+        .padding({ left: 30, right: 30, bottom: this.bottomInset + 20 })
+        .alignItems(HorizontalAlign.Center);
+      }
+      .layoutWeight(1).width('100%').scrollBar(BarState.Off);
+    }
+    .width('100%').height('100%').backgroundColor('#FAFBFC');
+  }
+  build() {
+    Stack() {
+      if (this.showVertical) {
+        if (this.landscapePlayback) {
+          this.landscapePlayer();
+        } else {
+          this.detailPage();
+        }
+      } else {
+        Stack({ alignContent: Alignment.Start }) {
+          Column() {
+          if (this.activeTab === 1) {
+            Row({ space: 8 }) {
+              this.topCircleButton('�?, () => { this.sidebar = 1; });
+              this.topBubbleButton('鐩存�?, false, 62, () => { this.loadError = '鐩存挱鐗堝潡杩佺Щ�?; });
+              this.topBubbleButton('鎺ㄨ�?, true, 66, () => { this.activeTab = 1; this.loadError = ''; });
+              this.topBubbleButton('鐑�?, false, 62, () => { this.loadError = '鐑棬鐗堝潡杩佺Щ�?; });
+              Button() {
+                Image($r('app.media.xiaoxi')).width(24).height(24);
+              }
+              .type(ButtonType.ROUNDED_RECTANGLE)
+              .width(48).height(48)
+              .backgroundColor('#FFFFFF')
+              .borderRadius(24)
+              .shadow({ radius: 6, color: '#25000000', offsetX: 0, offsetY: 2 })
+              .onClick(() => { this.sidebar = 2; });
+            }
+            .width('100%')
+            .padding({ left: 10, right: 10, top: 10, bottom: 8 })
+            .justifyContent(FlexAlign.SpaceBetween);
+            Scroll() {
+              Grid() {
+                ForEach(this.videos, (item: VideoItem) => {
+                  GridItem() { this.homeCard(item); }
+                }, (item: VideoItem) => `${item.id}`);
+              }
+              .columnsTemplate('1fr 1fr')
+              .columnsGap(8)
+              .rowsGap(10)
+              .padding({ left: 12, right: 12, bottom: 88 })
+              .onScrollIndex((_first: number, last: number): void => {
+                if (_first <= 0 || last < this.videos.length - 2) return;
+                if (this.lastLoadTriggerLength === this.videos.length) return;
+                this.lastLoadTriggerLength = this.videos.length;
+                this.loadMoreRecommendations();
+              });
+            }.layoutWeight(1).width('100%').scrollBar(BarState.Off);
+          } else if (this.activeTab === 0) {
+            Column({ space: 16 }) {
+              Text('鍔ㄦ�?).fontSize(26).fontWeight(FontWeight.Bold);
+              Text('鍏虫敞鐨勭敤鎴峰姩鎬佸皢鍦ㄨ繖閲屾樉绀?).fontSize(15).fontColor('#8B9199');
+              Button('鍒锋柊鍔ㄦ€?).onClick(() => { this.loadError = '鍔ㄦ€佹帴鍙ｈ縼绉讳�?; });
+            }.justifyContent(FlexAlign.Center).layoutWeight(1).width('100%');
+          } else {
+            Column({ space: 16 }) {
+              Text('鐣�?).fontSize(26).fontWeight(FontWeight.Bold);
+              Text('鐣墽鍐呭灏嗗湪杩欓噷鏄剧�?).fontSize(15).fontColor('#8B9199');
+            }.justifyContent(FlexAlign.Center).layoutWeight(1).width('100%');
+          }
+          }.width('100%').height('100%').padding({ top: this.topInset }).backgroundColor('#F7F8FA');
+          Row({ space: 10 }) {
+            Row() {
+              Button() {
+                Column({ space: 2 }) {
+                  Image($r('app.media.dontai')).width(this.activeTab === 0 ? 22 : 20)
+                    .height(this.activeTab === 0 ? 22 : 20);
+                  Text('鍔ㄦ�?).fontSize(11)
+                    .fontColor(this.activeTab === 0 ? '#1677A8' : '#3E4854')
+                    .fontWeight(this.activeTab === 0 ? FontWeight.Bold : FontWeight.Normal);
+                }.alignItems(HorizontalAlign.Center);
+              }
+              .type(ButtonType.ROUNDED_RECTANGLE).height(52).layoutWeight(1)
+              .backgroundColor(Color.Transparent)
+              .onClick(() => { this.activeTab = 0; this.loadError = ''; });
+              Button() {
+                Column({ space: 2 }) {
+                  Image($r('app.media.home')).width(this.activeTab === 1 ? 22 : 20)
+                    .height(this.activeTab === 1 ? 22 : 20);
+                  Text('棣栭�?).fontSize(11)
+                    .fontColor(this.activeTab === 1 ? '#1677A8' : '#3E4854')
+                    .fontWeight(this.activeTab === 1 ? FontWeight.Bold : FontWeight.Normal);
+                }.alignItems(HorizontalAlign.Center);
+              }
+              .type(ButtonType.ROUNDED_RECTANGLE).height(52).layoutWeight(1)
+              .backgroundColor(Color.Transparent)
+              .onClick(() => { this.activeTab = 1; this.loadError = ''; });
+              Button() {
+                Column({ space: 2 }) {
+                  Image($r('app.media.fanju')).width(this.activeTab === 2 ? 22 : 20)
+                    .height(this.activeTab === 2 ? 22 : 20);
+                  Text('鐣�?).fontSize(11)
+                    .fontColor(this.activeTab === 2 ? '#1677A8' : '#3E4854')
+                    .fontWeight(this.activeTab === 2 ? FontWeight.Bold : FontWeight.Normal);
+                }.alignItems(HorizontalAlign.Center);
+              }
+              .type(ButtonType.ROUNDED_RECTANGLE).height(52).layoutWeight(1)
+              .backgroundColor(Color.Transparent)
+              .onClick(() => { this.activeTab = 2; this.loadError = ''; });
+            }
+            .layoutWeight(1).height(58).padding({ left: 6, right: 6 })
+            .backgroundColor('#FFFFFF').borderRadius(30)
+            .shadow({ radius: 8, color: '#25000000', offsetX: 0, offsetY: 2 });
+
+            Row() {
+              Button() {
+                Image($r('app.media.ic_public_search_filled'))
+                  .width(24).height(24);
+              }
+              .type(ButtonType.ROUNDED_RECTANGLE)
+              .width(52).height(52)
+              .backgroundColor('#FFFFFF')
+              .borderRadius(26)
+              .shadow({ radius: 8, color: '#25000000', offsetX: 0, offsetY: 2 })
+              .onClick(() => { this.searchExpanded = true; });
+            }
+            .width(58).height(58).justifyContent(FlexAlign.Center);
+          }
+          .width('94%').height(58)
+          .position({ left: '3%', bottom: this.bottomInset + 2 })
+          .zIndex(10);
+        }
+        .width('100%').height('100%')
+        .backgroundColor('#F7F8FA');
+      }
+      if (this.loginVisible && !this.showVertical) {
+        this.loginPage();
+      }
+      if (this.sidebar !== 0 && !this.showVertical && !this.searchExpanded) {
+        Column() {
+          if (this.sidebar === 1) {
+            this.mineSidebar();
+          } else {
+            this.messageSidebar();
+          }
+        }
+        .width('100%').height('100%')
+        .backgroundColor('#F7F8FA')
+        .transition({ type: TransitionType.Insert, opacity: 0.0 });
+      }
+      if (this.searchExpanded && !this.showVertical) {
+        Column() {
+          Row({ space: 8 }) {
+            Button() {
+              Image($r('app.media.fanhui_left')).width(24).height(24);
+            }
+            .type(ButtonType.ROUNDED_RECTANGLE).width(48).height(48)
+            .backgroundColor('#FFFFFF')
+            .borderRadius(24)
+            .shadow({ radius: 8, color: '#25000000', offsetX: 0, offsetY: 2 })
+            .onClick(() => { this.searchExpanded = false; });
+            Search({ placeholder: '鎼滅储瑙嗛', value: this.searchText })
+              .layoutWeight(1).height(48).backgroundColor(Color.White).borderRadius(24)
+              .shadow({ radius: 8, color: '#25000000', offsetX: 0, offsetY: 2 })
+              .focusable(true)
+              .defaultFocus(true)
+              .onChange((value: string) => { this.searchText = value; });
+          }
+          .width('100%').padding({ left: 10, right: 10, top: this.topInset + 8, bottom: 8 });
+        }
+        .width('100%').height('100%')
+        .alignItems(HorizontalAlign.Start)
+        .backgroundColor('#F7F8FA');
+      }
+    }.width('100%').height('100%')
+    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM]);
+  }
+}

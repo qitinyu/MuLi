@@ -1,0 +1,12 @@
+{
+  "apiType": "stageMode",
+  "buildOption": {
+    "externalNativeOptions": {}
+  },
+  "buildOptionSet": [],
+  "targets": [
+    {
+      "name": "default"
+    }
+  ]
+}
