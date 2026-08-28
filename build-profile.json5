@@ -20,7 +20,7 @@
         "name": "default",
         "bundleName": "com.pilihos.player",
         "signingConfig": "default",
-        "compatibleSdkVersion": "26.0.0",
+        "compatibleSdkVersion": "6.1.1(24)",
         "targetSdkVersion": "26.0.0",
         "runtimeOS": "HarmonyOS",
       }
@@ -35,7 +35,15 @@
   "modules": [
     {
       "name": "entry",
-      "srcPath": "./entry"
+      "srcPath": "./entry",
+      "targets": [
+        {
+          "name": "default",
+          "applyToProducts": [
+            "default"
+          ]
+        }
+      ]
     }
   ]
 }

@@ -13,7 +13,8 @@ export default class EntryAbility extends UIAbility {
       console.error(`Pilihos fullscreen layout failed: ${error.code} ${error.message}`);
     });
     mainWindow.setWindowSystemBarProperties({
-      statusBarColor: '#00000000',
+      // Keep system areas opaque so the app bars cannot bleed or blur through them.
+      statusBarColor: '#F7F8FA',
       navigationBarColor: '#00000000',
       isStatusBarLightIcon: true,
       isNavigationBarLightIcon: true

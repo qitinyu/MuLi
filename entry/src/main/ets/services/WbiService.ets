@@ -1,6 +1,7 @@
 import { cryptoFramework } from '@kit.CryptoArchitectureKit';
 import util from '@ohos.util';
 import http from '@ohos.net.http';
+import { BiliHttpClient } from './BiliHttpClient';
 
 export class WbiService {
   private static mixinKey: string = '';
@@ -35,7 +36,7 @@ export class WbiService {
     try {
       const response: http.HttpResponse = await request.request('https://api.bilibili.com/x/web-interface/nav', {
         method: http.RequestMethod.GET,
-        header: { 'User-Agent': 'Pilihos/1.0.0', 'Referer': 'https://www.bilibili.com/' },
+        header: { 'User-Agent': BiliHttpClient.browserUserAgent, 'Referer': 'https://www.bilibili.com/' },
         connectTimeout: 10000,
         readTimeout: 10000
       });

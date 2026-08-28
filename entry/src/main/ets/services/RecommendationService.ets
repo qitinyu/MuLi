@@ -1,5 +1,6 @@
 ﻿import { VideoItem } from '../models/VideoItem';
 import { BiliHttpClient } from './BiliHttpClient';
+
 import { VideoDetailService } from './VideoDetailService';
 
 class RecommendationQuery {
@@ -38,19 +39,28 @@ class RecommendationQuery {
   }
 }
 
+export interface RecommendationBatch {
+  items: VideoItem[];
+  nextIndex: string;
+}
+
 export class RecommendationService {
   static readonly PAGE_SIZE: number = 6;
 
-  static async load(page: number = 0): Promise<VideoItem[]> {
+  static async loadBatch(index: string = '0', forceRefresh: boolean = false): Promise<RecommendationBatch> {
     const query: RecommendationQuery = new RecommendationQuery();
-    query.idx = `${page}`;
-    query.pull = page === 0 ? 'true' : 'false';
+    query.idx = index;
+    query.pull = index === '0' ? 'true' : 'false';
+    if (forceRefresh) query.flush = '1';
     const result: Record<string, Object> = await BiliHttpClient.getAppJson('/x/v2/feed/index', query.toQueryString());
-    const data: Record<string, Object> = result['data'] as Record<string, Object>;
-    const items: Object[] = data['items'] as Object[];
+    if (Number(result['code'] ?? 0) !== 0) {
+      throw new Error(String(result['message'] ?? '推荐接口返回错误'));
+    }
+    const data: Record<string, Object> = (result['data'] as Record<string, Object>) ?? {};
+    const items: Object[] = (data['items'] as Object[]) ?? [];
     const parsed: VideoItem[] = items
       .map((raw: Object) => RecommendationService.parseItem(raw as Record<string, Object>))
-      .filter((item: VideoItem) => item.id > 0 && item.cid > 0);
+      .filter((item: VideoItem) => item.id > 0 && item.title !== '');
     const unique: VideoItem[] = [];
     const seen: Set<string> = new Set<string>();
     parsed.forEach((item: VideoItem): void => {
@@ -60,6 +70,12 @@ export class RecommendationService {
         unique.push(item);
       }
     });
+    let nextIndex: string = index;
+    if (items.length > 0) {
+      const last: Record<string, Object> = items[items.length - 1] as Record<string, Object>;
+      const rawIndex: string = String(last['idx'] ?? '');
+      if (rawIndex !== '' && rawIndex !== '0') nextIndex = rawIndex;
+    }
     const limited: VideoItem[] = unique.slice(0, RecommendationService.PAGE_SIZE);
     const hydrated: VideoItem[] = [];
     for (const item of limited) {
@@ -70,22 +86,29 @@ export class RecommendationService {
       try {
         hydrated.push(await VideoDetailService.load(item));
       } catch (error) {
-        console.error('Pilihos recommendation detail failed: ' + String(error));
+        console.error('Pilihos recommendation publish time failed: ' + String(error));
         hydrated.push(item);
       }
     }
-    return hydrated;
+    return { items: hydrated, nextIndex: nextIndex };
+  }
+
+  static async load(page: number = 0, forceRefresh: boolean = false): Promise<VideoItem[]> {
+    const batch: RecommendationBatch = await RecommendationService.loadBatch(
+      page === 0 ? '0' : `${page}`, forceRefresh);
+    return batch.items;
   }
 
   private static parseItem(raw: Record<string, Object>): VideoItem {
     const args: Record<string, Object> = (raw['args'] as Record<string, Object>) ?? {};
     const player: Record<string, Object> = (raw['player_args'] as Record<string, Object>) ?? {};
     const reason: string = String(raw['rcmd_reason'] ?? '');
+    const aid: number = Number(player['aid'] ?? raw['param'] ?? raw['aid'] ?? raw['id'] ?? 0);
     return {
-      id: Number(player['aid'] ?? raw['param'] ?? 0),
-      aid: Number(player['aid'] ?? raw['param'] ?? 0),
+      id: aid,
+      aid: aid,
       bvid: String(raw['bvid'] ?? ''),
-      cid: Number(player['cid'] ?? 0),
+      cid: Number(player['cid'] ?? raw['cid'] ?? 0),
       title: String(raw['title'] ?? ''),
       author: String(args['up_name'] ?? ''),
       cover: RecommendationService.compactCover(String(raw['cover'] ?? '')),
@@ -98,7 +121,9 @@ export class RecommendationService {
       playUrl: '',
       placeholder: false,
       publishTime: RecommendationService.parseTimestamp(
-        raw['pubdate'] ?? args['pubdate'] ?? raw['pub_time'] ?? raw['publish_time'] ?? raw['ctime'] ?? 0),
+        raw['pubdate'] ?? raw['pub_date'] ?? raw['pub_time'] ?? raw['publish_time'] ??
+        raw['publishTime'] ?? raw['ctime'] ?? raw['create_time'] ?? args['pubdate'] ??
+        args['pub_time'] ?? args['publish_time'] ?? 0),
       description: '',
       tags: [],
       detailLoaded: false
@@ -106,9 +131,16 @@ export class RecommendationService {
   }
 
   private static parseTimestamp(value: Object): number {
-    const parsed: number = Number(value);
-    if (Number.isNaN(parsed) || parsed <= 0) return 0;
-    return parsed > 100000000000 ? Math.floor(parsed / 1000) : Math.floor(parsed);
+    const text: string = String(value ?? '').trim();
+    if (text === '') return 0;
+    const parsed: number = Number(text);
+    if (!Number.isNaN(parsed) && parsed > 0) {
+      return parsed > 100000000000 ? Math.floor(parsed / 1000) : Math.floor(parsed);
+    }
+    const date: Date = new Date(text);
+    const dateMillis: number = date.getTime();
+    if (Number.isNaN(dateMillis) || dateMillis <= 0) return 0;
+    return Math.floor(dateMillis / 1000);
   }
 
   private static parseCount(value: string): number {

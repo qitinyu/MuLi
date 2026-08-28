@@ -48,6 +48,7 @@ export class VideoDetailService {
       cid: Number(data['cid'] ?? item.cid),
       title: String(data['title'] ?? item.title),
       author: String(owner['name'] ?? item.author),
+      authorFace: String(owner['face'] ?? item.authorFace ?? ''),
       cover: String(data['pic'] ?? item.cover),
       viewCount: Number(stat['view'] ?? item.viewCount),
       danmuCount: Number(stat['danmaku'] ?? item.danmuCount),

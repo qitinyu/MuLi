@@ -5,11 +5,13 @@ export interface VideoItem {
   cid: number;
   title: string;
   author: string;
+  authorFace?: string;
   cover: string;
   viewCount: number;
   danmuCount: number;
   likeCount: number;
   commentCount: number;
+  shareCount?: number;
   followed: boolean;
   duration: number;
   playUrl: string;

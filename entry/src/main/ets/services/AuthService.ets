@@ -4,6 +4,7 @@ import util from '@ohos.util';
 import common from '@ohos.app.ability.common';
 import { preferences } from '@kit.ArkData';
 import huks from '@ohos.security.huks';
+import { AdvancedFeatures } from '../utils/AdvancedFeatures';
 
 export class AuthSession {
   uid: string = '';
@@ -18,18 +19,6 @@ export class AuthSession {
   sign: string = '';
   level: number = 0;
   ipLocation: string = '';
-}
-
-export class AuthQrCode {
-  authCode: string = '';
-  url: string = '';
-  expiresIn: number = 180;
-}
-
-export class AuthPollResult {
-  code: number = -1;
-  message: string = '';
-  session: AuthSession | null = null;
 }
 
 class AuthParam {
@@ -65,18 +54,28 @@ export class AuthService {
     try {
       await AuthService.ensureCredentialPreferences(context);
       if (AuthService.credentialPreferences === null) return null;
-      const encryptedCookie: string =
-        AuthService.credentialPreferences.getSync('cookie_cipher', '') as string;
-      if (encryptedCookie === '') return null;
-      const cookie: string = await AuthService.decryptCookie(encryptedCookie);
+      let cookie: string = AuthService.credentialPreferences.getSync('cookie', '') as string;
+      if (cookie === '') {
+        const encryptedCookie: string =
+          AuthService.credentialPreferences.getSync('cookie_cipher', '') as string;
+        if (encryptedCookie !== '') {
+          cookie = await AuthService.decryptCookie(encryptedCookie);
+        }
+      }
       if (cookie === '') return null;
-      return await AuthService.validateCookie(cookie, context);
+      try {
+        return await AuthService.validateCookie(cookie, context);
+      } catch (error) {
+        const stored: AuthSession | null = AuthService.readStoredSession(cookie);
+        if (stored !== null) {
+          AuthService.session = stored;
+          console.error('Pilihos auth validation deferred after restart: ' + String(error));
+          return stored;
+        }
+        throw new Error(String(error));
+      }
     } catch (error) {
       console.error('Pilihos stored auth restore failed: ' + String(error));
-      if (AuthService.credentialPreferences !== null) {
-        AuthService.credentialPreferences.deleteSync('cookie_cipher');
-        AuthService.credentialPreferences.flushSync();
-      }
       AuthService.session = null;
       return null;
     }
@@ -91,6 +90,9 @@ export class AuthService {
     await AuthService.ensureCredentialPreferences(context);
     if (AuthService.credentialPreferences === null || cookie === '') return;
     try {
+      // Write the durable session value before optional keystore work.
+      AuthService.credentialPreferences.putSync('cookie', cookie);
+      AuthService.credentialPreferences.flushSync();
       const encryptedCookie: string = await AuthService.encryptCookie(cookie);
       AuthService.credentialPreferences.putSync('cookie_cipher', encryptedCookie);
       AuthService.credentialPreferences.flushSync();
@@ -118,17 +120,22 @@ export class AuthService {
     await AuthService.ensureSecureKey();
     const nonce: Uint8Array = cryptoFramework.createRandom().generateRandomSync(12).data;
     const encoder = new util.TextEncoder();
+    const input: Uint8Array = encoder.encodeInto(cookie);
+
+    let ciphertext: Uint8Array;
+
+    // 使用会话式 API（API 26+）
     const session = await huks.initSession(AuthService.secureKeyAlias, {
       properties: [
         { tag: huks.HuksTag.HUKS_TAG_PURPOSE, value: huks.HuksKeyPurpose.HUKS_KEY_PURPOSE_ENCRYPT },
         { tag: huks.HuksTag.HUKS_TAG_NONCE, value: nonce }
       ]
     });
-    const input: Uint8Array = encoder.encodeInto(cookie);
     const updated = await huks.updateSession(session.handle, { inData: input });
     const finished = await huks.finishSession(session.handle, { inData: new Uint8Array(0) });
-    const ciphertext: Uint8Array = AuthService.concatBytes(updated.outData ?? new Uint8Array(0),
+    ciphertext = AuthService.concatBytes(updated.outData ?? new Uint8Array(0),
       finished.outData ?? new Uint8Array(0));
+
     return new util.Base64Helper().encodeToStringSync(AuthService.concatBytes(nonce, ciphertext));
   }
 
@@ -138,6 +145,10 @@ export class AuthService {
     if (bytes.length <= 12) return '';
     const nonce: Uint8Array = bytes.slice(0, 12);
     const ciphertext: Uint8Array = bytes.slice(12);
+
+    let plaintext: Uint8Array;
+
+    // 使用会话式 API（API 26+）
     const session = await huks.initSession(AuthService.secureKeyAlias, {
       properties: [
         { tag: huks.HuksTag.HUKS_TAG_PURPOSE, value: huks.HuksKeyPurpose.HUKS_KEY_PURPOSE_DECRYPT },
@@ -146,8 +157,9 @@ export class AuthService {
     });
     const updated = await huks.updateSession(session.handle, { inData: ciphertext });
     const finished = await huks.finishSession(session.handle, { inData: new Uint8Array(0) });
-    const plaintext: Uint8Array = AuthService.concatBytes(updated.outData ?? new Uint8Array(0),
+    plaintext = AuthService.concatBytes(updated.outData ?? new Uint8Array(0),
       finished.outData ?? new Uint8Array(0));
+
     return new util.TextDecoder().decodeToString(plaintext);
   }
 
@@ -155,58 +167,6 @@ export class AuthService {
     const result = new Uint8Array(left.length + right.length);
     result.set(left, 0);
     result.set(right, left.length);
-    return result;
-  }
-
-  static async requestQrCode(): Promise<AuthQrCode> {
-    const params: AuthParam[] = [];
-    params.push(new AuthParam('local_id', '0'));
-    params.push(new AuthParam('platform', 'android'));
-    params.push(new AuthParam('mobi_app', 'android_hd'));
-    const query: string = await AuthService.signedQuery(params);
-    const body: Record<string, Object> = await AuthService.requestJson(
-      `${AuthService.passportBase}/x/passport-tv-login/qrcode/auth_code?${query}`,
-      http.RequestMethod.POST,
-      new AuthHeaders()
-    );
-    const code: number = Number(body['code'] ?? -1);
-    if (code !== 0) {
-      throw new Error(String(body['message'] ?? '获取二维码失败'));
-    }
-    const data: Record<string, Object> = (body['data'] ?? {}) as Record<string, Object>;
-    const result: AuthQrCode = new AuthQrCode();
-    result.authCode = String(data['auth_code'] ?? '');
-    result.url = String(data['url'] ?? '');
-    if (result.authCode === '' || result.url === '') {
-      throw new Error('二维码接口返回内容不完整');
-    }
-    return result;
-  }
-
-  static async pollQrCode(authCode: string, context?: common.UIAbilityContext): Promise<AuthPollResult> {
-    const params: AuthParam[] = [];
-    params.push(new AuthParam('auth_code', authCode));
-    params.push(new AuthParam('local_id', '0'));
-    const query: string = await AuthService.signedQuery(params);
-    const body: Record<string, Object> = await AuthService.requestJson(
-      `${AuthService.passportBase}/x/passport-tv-login/qrcode/poll?${query}`,
-      http.RequestMethod.POST,
-      new AuthHeaders()
-    );
-    const result: AuthPollResult = new AuthPollResult();
-    result.code = Number(body['code'] ?? -1);
-    result.message = String(body['message'] ?? '');
-    if (result.code !== 0) return result;
-
-    const data: Record<string, Object> = (body['data'] ?? {}) as Record<string, Object>;
-    const cookieInfo: Record<string, Object> = (data['cookie_info'] ?? {}) as Record<string, Object>;
-    const cookies: Object[] = (cookieInfo['cookies'] ?? []) as Object[];
-    const cookie: string = AuthService.cookieListToString(cookies);
-    if (cookie === '') {
-      result.message = '扫码成功，但没有返回登录凭证';
-      return result;
-    }
-    result.session = await AuthService.validateCookie(cookie, context);
     return result;
   }
 
@@ -237,6 +197,42 @@ export class AuthService {
     await AuthService.loadUserProfile(session, headers);
     AuthService.session = session;
     await AuthService.persistCookie(cookie, context);
+    await AuthService.persistSession(session);
+    return session;
+  }
+
+  private static async persistSession(session: AuthSession): Promise<void> {
+    if (AuthService.credentialPreferences === null) return;
+    try {
+      AuthService.credentialPreferences.putSync('session_uid', session.uid);
+      AuthService.credentialPreferences.putSync('session_name', session.name);
+      AuthService.credentialPreferences.putSync('session_face', session.face);
+      AuthService.credentialPreferences.putSync('session_csrf', session.csrf);
+      AuthService.credentialPreferences.putSync('session_sign', session.sign);
+      AuthService.credentialPreferences.putSync('session_level', String(session.level));
+      AuthService.credentialPreferences.putSync('session_ip_location', session.ipLocation);
+      AuthService.credentialPreferences.putSync('session_is_login', 'true');
+      AuthService.credentialPreferences.flushSync();
+    } catch (error) {
+      console.error('Pilihos local auth session persistence failed: ' + String(error));
+    }
+  }
+
+  private static readStoredSession(cookie: string): AuthSession | null {
+    if (AuthService.credentialPreferences === null) return null;
+    const isLogin: string = AuthService.credentialPreferences.getSync('session_is_login', '') as string;
+    const uid: string = AuthService.credentialPreferences.getSync('session_uid', '') as string;
+    if (isLogin !== 'true' || uid === '') return null;
+    const session: AuthSession = new AuthSession();
+    session.uid = uid;
+    session.name = AuthService.credentialPreferences.getSync('session_name', '') as string;
+    session.face = AuthService.credentialPreferences.getSync('session_face', '') as string;
+    session.csrf = AuthService.credentialPreferences.getSync('session_csrf', '') as string;
+    session.sign = AuthService.credentialPreferences.getSync('session_sign', '') as string;
+    session.level = Number(AuthService.credentialPreferences.getSync('session_level', '0'));
+    session.ipLocation = AuthService.credentialPreferences.getSync('session_ip_location', '') as string;
+    session.cookie = cookie;
+    session.isLogin = true;
     return session;
   }
 
@@ -295,6 +291,15 @@ export class AuthService {
     if (AuthService.credentialPreferences !== null) {
       try {
         AuthService.credentialPreferences.deleteSync('cookie_cipher');
+        AuthService.credentialPreferences.deleteSync('cookie');
+        AuthService.credentialPreferences.deleteSync('session_uid');
+        AuthService.credentialPreferences.deleteSync('session_name');
+        AuthService.credentialPreferences.deleteSync('session_face');
+        AuthService.credentialPreferences.deleteSync('session_csrf');
+        AuthService.credentialPreferences.deleteSync('session_sign');
+        AuthService.credentialPreferences.deleteSync('session_level');
+        AuthService.credentialPreferences.deleteSync('session_ip_location');
+        AuthService.credentialPreferences.deleteSync('session_is_login');
         AuthService.credentialPreferences.flushSync();
       } catch (error) {
         console.error('Pilihos auth persistence clear failed: ' + String(error));
