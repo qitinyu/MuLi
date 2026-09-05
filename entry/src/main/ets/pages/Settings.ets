@@ -545,7 +545,7 @@ struct Settings {
           Column({ space: 8 }) {
             Image($r('app.media.app_logo')).width(112).height(112).borderRadius(22);
             Text('Pilihos').fontSize(28).fontWeight(FontWeight.Bold);
-            Text('Version 1.0.3.6').fontSize(15).fontColor('#646A73');
+            Text('Version 1.0.4').fontSize(15).fontColor('#646A73');
           }
           .width('100%')
           .alignItems(HorizontalAlign.Center)
@@ -558,7 +558,9 @@ struct Settings {
           Row({ space: 10 }) {
             this.aboutInfoCard('软件协议', '本软件采用 MIT 开源协议');
             this.aboutInfoCard('版本日志',
-              'v1.0.3.6\n' +
+              'v1.0.4\n' +
+              '1. 搜索页独立化，支持搜索历史记忆\n' +
+              '\nv1.0.3.6\n' +
               '1. 修改首页顶栏样式设置\n' +
               '2. 增加播放区基础图标及其样式\n' +
               '3. 修改复up主头像不显示的问题\n' +

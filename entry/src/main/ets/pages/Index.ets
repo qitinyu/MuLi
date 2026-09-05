@@ -18,7 +18,6 @@ import { preferences } from '@kit.ArkData';
 import web_webview from '@ohos.web.webview';
 import { ImmersiveMaterial } from '../utils/ImmersiveMaterial';
 import { AdvancedFeatures } from '../utils/AdvancedFeatures';
-import { SearchService } from '../services/SearchService';
 
 @Entry
 @Component
@@ -45,13 +44,8 @@ struct Index {
   @State activeTab: number = 1;
   @State contentTab: number = 1;
   @State selectedTopTab: number = 1;
-  @State searchExpanded: boolean = false;
-  @State searchText: string = '';
-  @State searchLoading: boolean = false;
-  @State searchError: string = '';
   @State searchResults: VideoItem[] = [];
-  @State searchHistory: string[] = [];
-  @State searchHistoryEnabled: boolean = false;
+  private searchPayloadConsumed: boolean = false;
   @State loginVisible: boolean = false;
   @State webLoginVisible: boolean = false;
   @State webLoginStatus: string = '';
@@ -162,7 +156,6 @@ struct Index {
     this.authSession = AuthService.currentSession();
     AdvancedFeatures.loadSettings(this.context);
     this.loadPlayerSettings();
-    this.loadSearchSettings();
     this.restoreAuthSession();
     this.loadMineCover();
     this.loadRecommendations();
@@ -212,7 +205,7 @@ struct Index {
 
   onPageShow(): void {
     this.loadPlayerSettings();
-    this.loadSearchSettings();
+    this.consumeSearchPayload();
   }
 
   private async loadPlayerSettings(): Promise<void> {
@@ -251,85 +244,24 @@ struct Index {
     }
   }
 
-  private async submitVideoSearch(keyword: string): Promise<void> {
-    const value: string = keyword.trim();
-    if (value === '' || this.searchLoading) return;
-    this.searchText = value;
-    this.searchLoading = true;
-    this.searchError = '';
-    this.searchResults = [];
-    try {
-      const results: VideoItem[] = await SearchService.searchVideo(value);
-      if (results.length === 0) {
-        this.showPlaybackToast('没有找到相关视频');
-        return;
-      }
-      this.searchResults = results;
-      await this.rememberSearch(value);
-    } catch (error) {
-      this.showPlaybackToast('搜索失败，请稍后重试');
-      console.error(`Pilihos video search failed: ${String(error)}`);
-    } finally {
-      this.searchLoading = false;
-    }
-  }
-
-  private async loadSearchSettings(): Promise<void> {
-    try {
-      const store: preferences.Preferences = await preferences.getPreferences(this.context, 'pilihos_search');
-      this.searchHistoryEnabled = store.getSync('history_enabled', false) as boolean;
-      const saved: string = store.getSync('history', '') as string;
-      this.searchHistory = saved === '' ? [] : saved.split('|').filter((item: string): boolean => item !== '');
-    } catch (error) {
-      console.error(`Pilihos search settings load failed: ${String(error)}`);
-    }
-  }
-
-  private async rememberSearch(keyword: string): Promise<void> {
-    if (!this.searchHistoryEnabled) return;
-    const updated: string[] = [keyword].concat(this.searchHistory.filter((item: string): boolean => item !== keyword)).slice(0, 12);
-    this.searchHistory = updated;
-    try {
-      const store: preferences.Preferences = await preferences.getPreferences(this.context, 'pilihos_search');
-      store.putSync('history', updated.join('|'));
-      store.flushSync();
-    } catch (error) {
-      console.error(`Pilihos search history save failed: ${String(error)}`);
-    }
-  }
-
-  private async deleteSearchHistory(keyword: string): Promise<void> {
-    this.searchHistory = this.searchHistory.filter((item: string): boolean => item !== keyword);
-    await this.saveSearchHistory();
-  }
-
-  private async clearSearchHistory(): Promise<void> {
-    this.searchHistory = [];
-    await this.saveSearchHistory();
-  }
-
-  private async saveSearchHistory(): Promise<void> {
-    try {
-      const store: preferences.Preferences = await preferences.getPreferences(this.context, 'pilihos_search');
-      store.putSync('history', this.searchHistory.join('|'));
-      store.flushSync();
-    } catch (error) {
-      console.error(`Pilihos search history clear failed: ${String(error)}`);
-    }
-  }
-
   private openSearchPanel(): void {
-    this.searchResults = [];
-    this.searchError = '';
-    this.searchLoading = false;
-    this.searchExpanded = true;
-    this.loadSearchSettings();
+    router.pushUrl({ url: 'pages/SearchPage' }).catch((error: BusinessError): void => {
+      console.error('Pilihos search page failed: ' + String(error));
+    });
   }
 
-  private closeSearchPanel(): void {
-    this.searchExpanded = false;
-    this.searchResults = [];
-    this.searchError = '';
+  private consumeSearchPayload(): void {
+    const params: Object | undefined = router.getParams() as Object | undefined;
+    if (params === undefined || this.searchPayloadConsumed) return;
+    const payload: Object | undefined =
+      (params as Record<string, Object>)['pilihosSearch'] as Object | undefined;
+    if (payload === undefined) return;
+    const results: VideoItem[] = (payload as Record<string, Object>)['results'] as VideoItem[];
+    const index: number = Number((payload as Record<string, Object>)['index']);
+    if (!Array.isArray(results) || Number.isNaN(index) || index < 0 || index >= results.length) return;
+    this.searchPayloadConsumed = true;
+    this.searchResults = results;
+    this.openSearchResult(results[index]);
   }
 
   private async loadDynamicVideos(refresh: boolean = false): Promise<void> {
@@ -664,7 +596,6 @@ struct Index {
     if (index < 0) return;
     this.videos = this.searchResults;
     this.currentIndex = index;
-    this.searchExpanded = false;
     this.showVertical = true;
     this.detailExpanded = false;
     this.detailError = '';
@@ -674,64 +605,6 @@ struct Index {
     this.playbackReady = false;
     this.loadVideoDetail();
     this.prepareCurrentVideo();
-  }
-
-  private useSearchHistory(keyword: string): void {
-    this.searchText = keyword;
-    this.submitVideoSearch(keyword);
-  }
-
-  @Builder
-  searchHistoryPanel() {
-    if (this.searchHistoryEnabled && this.searchHistory.length > 0) {
-      Row() {
-        Text('搜索历史').fontSize(17).fontWeight(FontWeight.Medium).fontColor('#20242A').layoutWeight(1);
-        Text('清空').fontSize(13).fontColor('#8B9199').onClick(() => { this.clearSearchHistory(); });
-      }.width('100%').padding({ left: 18, right: 18, top: 16, bottom: 8 });
-      Grid() {
-        ForEach(this.searchHistory, (keyword: string) => {
-          GridItem() {
-            Text(keyword).fontSize(keyword.length > 8 ? 12 : 14).fontColor('#59616B')
-              .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
-              .width('100%').textAlign(TextAlign.Center)
-              .padding({ left: 10, right: 10, top: 8, bottom: 8 })
-              .backgroundColor('#F1F4F6').borderRadius(16)
-              .gesture(LongPressGesture({ repeat: false }).onAction(() => {
-                this.deleteSearchHistory(keyword);
-              }))
-              .onClick(() => { this.useSearchHistory(keyword); });
-          }
-        }, (keyword: string) => keyword);
-      }.columnsTemplate('1fr 1fr 1fr').columnsGap(8).rowsGap(8)
-        .width('100%').padding({ left: 18, right: 18, bottom: 8 });
-    }
-  }
-
-  @Builder
-  searchResultCard(item: VideoItem) {
-    Row({ space: 12 }) {
-      Stack() {
-        Image(item.cover).width('100%').height('100%').objectFit(ImageFit.Cover)
-          .borderRadius(10);
-        Text(this.formatPlaybackTime(item.duration * 1000))
-          .fontSize(11).fontColor(Color.White).backgroundColor('#B0000000')
-          .padding({ left: 5, right: 5, top: 3, bottom: 3 }).borderRadius(4)
-          .position({ right: 5, bottom: 5 });
-      }.width('42%').aspectRatio(16 / 9);
-      Column({ space: 7 }) {
-        Text(item.title).fontSize(16).fontColor('#20242A').maxLines(2)
-          .textOverflow({ overflow: TextOverflow.Ellipsis }).width('100%');
-        Text(item.author === '' ? '未知用户' : item.author).fontSize(12).fontColor('#8B9199')
-          .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis }).width('100%');
-        Row({ space: 12 }) {
-          Text(this.formatCount(item.viewCount) + '播放').fontSize(12).fontColor('#8B9199');
-          Text(this.formatCount(item.danmuCount) + '弹幕').fontSize(12).fontColor('#8B9199');
-        }
-      }.layoutWeight(1).alignItems(HorizontalAlign.Start);
-    }
-    .width('100%').padding({ left: 16, right: 16, top: 10, bottom: 10 })
-    .backgroundColor(Color.White)
-    .onClick((): void => { this.openSearchResult(item); });
   }
 
   private formatPublishTime(timestamp: number): string {
@@ -817,10 +690,6 @@ struct Index {
     }
     if (this.loginVisible) {
       this.closeLoginPage();
-      return true;
-    }
-    if (this.searchExpanded) {
-      this.closeSearchPanel();
       return true;
     }
     if (this.episodeListVisible || this.speedMenuVisible) {
@@ -2541,7 +2410,7 @@ if (this.floatBallSwapped) {
         this.webLoginPage();
       }
 
-      if (this.sidebar !== 0 && !this.showVertical && !this.searchExpanded) {
+      if (this.sidebar !== 0 && !this.showVertical) {
         Column() {
           if (this.sidebar === 1) {
             this.mineSidebar();
@@ -2553,68 +2422,6 @@ if (this.floatBallSwapped) {
         .backgroundColor(ImmersiveMaterial.fallbackBackground())
         .systemMaterial(ImmersiveMaterial.thin())
         .transition({ type: TransitionType.Insert, opacity: 0.0 });
-      }
-      if (this.searchExpanded && !this.showVertical) {
-        Column() {
-          Row({ space: 8 }) {
-            Button() {
-              Image($r('app.media.fanhui_left')).width(24).height(24);
-            }
-            .type(ButtonType.ROUNDED_RECTANGLE).width(48).height(48)
-            .backgroundColor(ImmersiveMaterial.fallbackBackground())
-            .borderRadius(24)
-            .systemMaterial(ImmersiveMaterial.thin())
-            .shadow({ radius: 8, color: '#25000000', offsetX: 0, offsetY: 2 })
-            .onClick(() => { this.closeSearchPanel(); });
-            Search({ placeholder: '搜索视频', value: this.searchText })
-              .layoutWeight(1).height(48).backgroundColor(ImmersiveMaterial.fallbackBackground())
-              .borderRadius(24).systemMaterial(ImmersiveMaterial.thin())
-              .shadow({ radius: 8, color: '#25000000', offsetX: 0, offsetY: 2 })
-              .focusable(true)
-              .defaultFocus(true)
-              .onChange((value: string) => { this.searchText = value; })
-              .onSubmit((value: string): void => {
-                this.submitVideoSearch(value);
-              });
-          }
-          .width('100%').padding({ left: 10, right: 10, top: this.topInset + 8, bottom: 8 });
-          this.searchHistoryPanel();
-          if (this.searchResults.length > 0 && !this.searchLoading) {
-            Scroll() {
-              Row({ space: 28 }) {
-                Text('视频 ' + (this.searchResults.length >= 20 ? '20+' : String(this.searchResults.length)))
-                  .fontSize(16).fontColor('#1677A8').fontWeight(FontWeight.Bold);
-                Text('番剧').fontSize(16).fontColor('#59616B');
-                Text('影视').fontSize(16).fontColor('#59616B');
-                Text('直播间').fontSize(16).fontColor('#59616B');
-                Text('用户').fontSize(16).fontColor('#59616B');
-              }.padding({ left: 24, right: 24 });
-            }.width('100%').height(48).scrollable(ScrollDirection.Horizontal).scrollBar(BarState.Off);
-            Scroll() {
-              Row({ space: 25 }) {
-                Text('默认排序').fontSize(15).fontColor('#1677A8').fontWeight(FontWeight.Bold);
-                Text('播放多').fontSize(15).fontColor('#59616B');
-                Text('新发布').fontSize(15).fontColor('#59616B');
-                Text('弹幕多').fontSize(15).fontColor('#59616B');
-                Text('收藏多').fontSize(15).fontColor('#59616B');
-              }.padding({ left: 24, right: 24 });
-            }.width('100%').height(42).scrollable(ScrollDirection.Horizontal).scrollBar(BarState.Off);
-            Scroll() {
-              Column() {
-                ForEach(this.searchResults, (item: VideoItem) => {
-                  this.searchResultCard(item);
-                }, (item: VideoItem) => `${item.id}-${item.bvid}`);
-              }.width('100%');
-            }.layoutWeight(1).width('100%').scrollBar(BarState.Off);
-          } else if (this.searchLoading) {
-            this.loadingIndicator('正在搜索视频...', '#1677A8');
-          } else if (this.searchError !== '') {
-            Text(this.searchError).fontSize(14).fontColor('#8B9199').margin({ top: 18 });
-          }
-        }
-        .width('100%').height('100%')
-        .alignItems(HorizontalAlign.Start)
-        .backgroundColor('#F7F8FA');
       }
       if (this.showDynamicEditor && !this.showVertical) {
         this.dynamicEditorPage();
