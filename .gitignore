@@ -28,3 +28,6 @@
 # 系统文件
 .DS_Store
 Thumbs.db
+
+# API 探测临时文件
+*_probe.json

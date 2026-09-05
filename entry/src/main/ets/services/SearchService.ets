@@ -53,11 +53,24 @@ export class SearchService {
       duration: SearchService.parseDuration(String(raw['duration'] ?? '')),
       playUrl: '',
       placeholder: false,
-      publishTime: 0,
+      publishTime: SearchService.parseTimestamp(raw['pubdate'] ?? raw['pubtime'] ?? 0),
       description: '',
       tags: [],
       detailLoaded: false
     };
+  }
+
+  private static parseTimestamp(value: Object): number {
+    const text: string = String(value ?? '').trim();
+    if (text === '') return 0;
+    const parsed: number = Number(text);
+    if (!Number.isNaN(parsed) && parsed > 0) {
+      return parsed > 100000000000 ? Math.floor(parsed / 1000) : Math.floor(parsed);
+    }
+    const date: Date = new Date(text);
+    const dateMillis: number = date.getTime();
+    if (Number.isNaN(dateMillis) || dateMillis <= 0) return 0;
+    return Math.floor(dateMillis / 1000);
   }
 
   private static cleanHtml(value: string): string {

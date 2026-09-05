@@ -12,8 +12,19 @@ export struct DynamicPage {
   @State refreshing: boolean = false;
   @State loadingMore: boolean = false;
   @State loadError: string = '';
+  @State selectedAuthor: string = '';
   private feedOffset: string = '';
   private hasMore: boolean = false;
+
+  private toggleAuthorFilter(name: string): void {
+    this.selectedAuthor = this.selectedAuthor === name ? '' : name;
+  }
+
+  private visibleEntries(): DynamicEntry[] {
+    if (this.selectedAuthor === '') return this.entries;
+    return this.entries.filter((entry: DynamicEntry): boolean =>
+      entry.authorName === this.selectedAuthor);
+  }
 
   aboutToAppear(): void {
     this.loadFeed(true);
@@ -193,19 +204,38 @@ export struct DynamicPage {
     Refresh({ refreshing: $$this.refreshing, offset: 56, friction: 80 }) {
       Scroll() {
         Column({ space: 10 }) {
-          Row() {
+          Row({ space: 8 }) {
             Text('最近更新').fontSize(18).fontWeight(FontWeight.Bold).fontColor('#1E252D')
               .layoutWeight(1);
+            if (this.selectedAuthor !== '') {
+              Row({ space: 5 }) {
+                Text('只看 @' + this.selectedAuthor).fontSize(11).fontColor('#1677A8')
+                  .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
+                  .constraintSize({ maxWidth: 150 });
+                Text('✕').fontSize(11).fontColor('#1677A8').fontWeight(FontWeight.Bold);
+              }
+              .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+              .backgroundColor('#1A1677A8').borderRadius(12)
+              .onClick(() => { this.selectedAuthor = ''; });
+            }
           }.width('100%').height(40);
           if (this.authors.length > 0) {
             Scroll() {
               Row({ space: 14 }) {
                 ForEach(this.authors, (author: DynamicAuthor) => {
                   Column({ space: 4 }) {
-                    Image(author.face).width(50).height(50).borderRadius(25).objectFit(ImageFit.Cover);
-                    Text(author.name).fontSize(11).fontColor('#59616B').maxLines(1)
-                      .textOverflow({ overflow: TextOverflow.Ellipsis }).width(58).textAlign(TextAlign.Center);
-                  }.width(58);
+                    Image(author.face).width(50).height(50).borderRadius(25).objectFit(ImageFit.Cover)
+                      .border({
+                        width: this.selectedAuthor === author.name ? 2.5 : 0,
+                        color: '#1677A8'
+                      });
+                    Text(author.name).fontSize(11)
+                      .fontColor(this.selectedAuthor === author.name ? '#1677A8' : '#59616B')
+                      .fontWeight(this.selectedAuthor === author.name ? FontWeight.Bold : FontWeight.Normal)
+                      .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
+                      .width(58).textAlign(TextAlign.Center);
+                  }.width(58)
+                    .onClick(() => { this.toggleAuthorFilter(author.name); });
                 }, (author: DynamicAuthor) => `dynamic_author_${author.name}`);
               }.width(Math.max(4, this.authors.length * 72 + 4))
                 .padding({ left: 2, right: 2 });
@@ -220,8 +250,11 @@ export struct DynamicPage {
           } else if (this.entries.length === 0 && this.loadError !== '') {
             Text(this.loadError).fontSize(14).fontColor('#8B9199').width('100%')
               .textAlign(TextAlign.Center).margin({ top: 50 });
+          } else if (this.visibleEntries().length === 0) {
+            Text('该UP主暂无可展示的动态').fontSize(14).fontColor('#8B9199').width('100%')
+              .textAlign(TextAlign.Center).margin({ top: 50 });
           } else {
-            ForEach(this.entries, (entry: DynamicEntry) => {
+            ForEach(this.visibleEntries(), (entry: DynamicEntry) => {
               this.dynamicEntryCard(entry);
             }, (entry: DynamicEntry) => `entry_${entry.id}_${entry.authorName}`);
             if (this.loadingMore) {

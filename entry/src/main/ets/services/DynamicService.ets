@@ -189,7 +189,8 @@ export class DynamicService {
     if (majorType === 'MAJOR_TYPE_ARCHIVE') {
       entry.type = 'video';
       entry.video = DynamicService.parseVideoItem(
-        (major['archive'] as Record<string, Object>) ?? {}, entry.text);
+        (major['archive'] as Record<string, Object>) ?? {},
+        entry.text, entry.authorName, entry.authorFace, entry.publishTime);
     } else if (majorType === 'MAJOR_TYPE_DRAW') {
       entry.type = 'pics';
       entry.pics = DynamicService.parsePics((major['draw'] as Record<string, Object>) ?? {});
@@ -214,8 +215,12 @@ export class DynamicService {
         const origMajor: Record<string, Object> = (origDynamic['major'] as Record<string, Object>) ?? {};
         entry.repostText = String(((origDynamic['desc'] ?? {}) as Record<string, Object>)['text'] ?? '');
         if (String(origMajor['type'] ?? '') === 'MAJOR_TYPE_ARCHIVE') {
+          const origPubTs: number = Number(origAuthor['pub_ts'] ?? 0);
           entry.repostVideo = DynamicService.parseVideoItem(
-            (origMajor['archive'] as Record<string, Object>) ?? {}, entry.repostText);
+            (origMajor['archive'] as Record<string, Object>) ?? {},
+            entry.repostText, entry.repostName,
+            String(origAuthor['face'] ?? ''),
+            origPubTs > 100000000000 ? Math.floor(origPubTs / 1000) : origPubTs);
         }
       }
     }
@@ -235,7 +240,8 @@ export class DynamicService {
     return pics;
   }
 
-  private static parseVideoItem(archive: Record<string, Object>, fallbackText: string): VideoItem | null {
+  private static parseVideoItem(archive: Record<string, Object>, fallbackText: string,
+    authorName: string, authorFace: string, publishTime: number): VideoItem | null {
     const title: string = String(archive['title'] ?? '');
     const bvid: string = String(archive['bvid'] ?? '');
     const aid: number = Number(archive['aid'] ?? 0);
@@ -243,12 +249,13 @@ export class DynamicService {
     const stat: Record<string, Object> = (archive['stat'] as Record<string, Object>) ?? {};
     return {
       id: aid > 0 ? aid : 1, aid: aid, bvid: bvid, cid: Number(archive['cid'] ?? 0), title: title,
-      author: '', authorFace: '', cover: DynamicService.compactCover(String(archive['cover'] ?? '')),
+      author: authorName, authorFace: authorFace,
+      cover: DynamicService.compactCover(String(archive['cover'] ?? '')),
       viewCount: Number(stat['view'] ?? 0), danmuCount: Number(stat['danmaku'] ?? 0),
       likeCount: Number(stat['like'] ?? 0), commentCount: Number(stat['reply'] ?? 0),
       shareCount: 0,
       followed: false, duration: Number(archive['duration'] ?? 0), playUrl: '', placeholder: false,
-      publishTime: 0,
+      publishTime: publishTime,
       description: fallbackText, tags: [], detailLoaded: false
     };
   }
