@@ -29,6 +29,7 @@ struct Settings {
   @State advancedHuksEnabled: boolean = true;
   @State advancedWebCookieEnabled: boolean = true;
   @State advancedSegmentEnabled: boolean = true;
+  @State bottomBarPinned: boolean = true;
   @State filterEditorVisible: boolean = false;
   @State filterEditorKind: string = 'video';
   @State filterEditorText: string = '';
@@ -55,9 +56,9 @@ struct Settings {
     const videoWords: string[] = FilterWords.getWords('video');
     const danmakuWords: string[] = FilterWords.getWords('danmaku');
     this.videoFilterSummary = videoWords.length > 0
-      ? '已启用 ' + String(videoWords.length) + ' 个筛选词' : '未设置';
+      ? videoWords.join('|') : '未设置';
     this.danmakuFilterSummary = danmakuWords.length > 0
-      ? '已启用 ' + String(danmakuWords.length) + ' 个筛选词' : '未设置';
+      ? danmakuWords.join('|') : '未设置';
   }
 
   private openFilterEditor(kind: string): void {
@@ -102,8 +103,20 @@ struct Settings {
       const store: preferences.Preferences = await preferences.getPreferences(this.context, 'pilihos_ui');
       this.floatBallSwapped = store.getSync('float_ball_swapped', false) as boolean;
       this.topTabsMerged = store.getSync('top_tabs_merged', false) as boolean;
+      this.bottomBarPinned = store.getSync('bottom_bar_pinned', true) as boolean;
     } catch (error) {
       console.error('Pilihos appearance settings load failed: ' + String(error));
+    }
+  }
+
+  private async setBottomBarPinned(value: boolean): Promise<void> {
+    this.bottomBarPinned = value;
+    try {
+      const store: preferences.Preferences = await preferences.getPreferences(this.context, 'pilihos_ui');
+      store.putSync('bottom_bar_pinned', value);
+      store.flushSync();
+    } catch (error) {
+      console.error('Pilihos appearance settings save failed: ' + String(error));
     }
   }
 
@@ -395,7 +408,19 @@ struct Settings {
       Scroll() {
         Column({ space: 10 }) {
           this.settingsCard('主题', '跟随系统', false);
-          this.settingsCard('首页布局', '在首页功能栏中切换', false);
+          Row({ space: 12 }) {
+            Column({ space: 5 }) {
+              Text('首页布局 - 底部常驻').fontSize(16).fontColor('#1E252D');
+              Text('关闭后，底部栏会间歇性隐藏：向下滚动屏幕时自动隐藏，向上滚动或停止操作时自动弹出')
+                .fontSize(12).fontColor('#858C94').maxLines(3);
+            }.layoutWeight(1).alignItems(HorizontalAlign.Start);
+            Toggle({ type: ToggleType.Switch, isOn: this.bottomBarPinned })
+              .selectedColor('#1677A8')
+              .onChange((value: boolean) => { this.setBottomBarPinned(value); });
+          }.width('100%').padding({ left: 16, right: 14, top: 10, bottom: 10 })
+            .backgroundColor(ImmersiveMaterial.fallbackBackground()).borderRadius(10)
+            .systemMaterial(ImmersiveMaterial.thin())
+            .shadow({ radius: 4, color: '#16000000', offsetX: 0, offsetY: 1 });
           Row({ space: 12 }) {
             Column({ space: 5 }) {
               Text('悬浮球互换').fontSize(16).fontColor('#1E252D');
@@ -545,10 +570,9 @@ struct Settings {
         .backgroundColor(Color.White)
         .borderRadius(14)
         .shadow({ radius: 16, color: '#33000000', offsetX: 0, offsetY: 4 })
-        .margin({ bottom: this.bottomInset + 24 });
       }
       .width('100%').height('100%')
-      .alignContent(Alignment.Bottom);
+      .alignContent(Alignment.Center);
     }
   }
 

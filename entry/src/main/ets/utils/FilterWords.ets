@@ -17,16 +17,17 @@ export class FilterWords {
   }
 
   static async save(context: common.UIAbilityContext, kind: string, text: string): Promise<void> {
+    // 先更新内存态，保证界面摘要立即生效；存储失败不阻塞
+    if (kind === 'video') {
+      FilterWords.videoWords = FilterWords.parse(text);
+    } else {
+      FilterWords.danmakuWords = FilterWords.parse(text);
+    }
     try {
       const store: preferences.Preferences =
         await preferences.getPreferences(context, 'pilihos_filter');
       store.putSync(kind === 'video' ? 'video_words' : 'danmaku_words', text);
       store.flushSync();
-      if (kind === 'video') {
-        FilterWords.videoWords = FilterWords.parse(text);
-      } else {
-        FilterWords.danmakuWords = FilterWords.parse(text);
-      }
     } catch (error) {
       console.error('Pilihos filter words save failed: ' + String(error));
     }

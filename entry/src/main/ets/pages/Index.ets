@@ -14,6 +14,7 @@ import { BusinessError } from '@kit.BasicServicesKit';
 import { media } from '@kit.MediaKit';
 import { picker } from '@kit.CoreFileKit';
 import { preferences } from '@kit.ArkData';
+import { curves } from '@kit.ArkUI';
 import web_webview from '@ohos.web.webview';
 import { ImmersiveMaterial } from '../utils/ImmersiveMaterial';
 import { AdvancedFeatures } from '../utils/AdvancedFeatures';
@@ -29,6 +30,8 @@ struct Index {
   @State showVertical: boolean = false;
   @State landscapePlayback: boolean = false;
   @State verticalExpanded: boolean = false;
+  @State videoWeight: number = 8;
+  private panStartWeight: number = 8;
   @State currentIndex: number = 0;
   @State draggingDown: boolean = false;
   @State loading: boolean = false;
@@ -39,6 +42,9 @@ struct Index {
   @State actionMenuVisible: boolean = false;
   @State floatBallSwapped: boolean = false;
   @State topTabsMerged: boolean = false;
+  @State bottomBarPinned: boolean = true;
+  @State bottomBarVisible: boolean = true;
+  private bottomBarTimer: number = -1;
   private page: number = 0;
   private recommendationIndex: string = '0';
   private homeGridScroller: Scroller = new Scroller();
@@ -222,6 +228,8 @@ struct Index {
       const appearanceStore: preferences.Preferences = await preferences.getPreferences(this.context, 'pilihos_ui');
       this.floatBallSwapped = appearanceStore.getSync('float_ball_swapped', false) as boolean;
       this.topTabsMerged = appearanceStore.getSync('top_tabs_merged', false) as boolean;
+      this.bottomBarPinned = appearanceStore.getSync('bottom_bar_pinned', true) as boolean;
+      if (this.bottomBarPinned) this.bottomBarVisible = true;
       
       // 加载高级功能设置状态
       await AdvancedFeatures.loadSettings(this.context);
@@ -406,6 +414,25 @@ struct Index {
     return 16 / 9;
   }
 
+  private handleGridScroll(delta: number): void {
+    if (this.bottomBarPinned || this.showVertical) {
+      this.bottomBarVisible = true;
+      return;
+    }
+    if (delta > 0.5) {
+      this.bottomBarVisible = false;
+    } else if (delta < -0.5) {
+      this.bottomBarVisible = true;
+    }
+    if (this.bottomBarTimer !== -1) {
+      clearTimeout(this.bottomBarTimer);
+    }
+    this.bottomBarTimer = setTimeout((): void => {
+      this.bottomBarVisible = true;
+      this.bottomBarTimer = -1;
+    }, 700);
+  }
+
   private openVideoDetail(item: VideoItem, showComments: boolean = false): void {
     const index: number = this.videos.indexOf(item);
     if (index < 0 || item.placeholder) return;
@@ -438,6 +465,7 @@ struct Index {
     this.subtitlesEnabled = false;
     this.danmakuEnabled = true;
     this.verticalExpanded = false;
+    this.videoWeight = 8;
     this.showVertical = true;
     this.loadVideoDetail();
     this.prepareCurrentVideo();
@@ -1351,10 +1379,7 @@ struct Index {
   }
 
   @Builder
-  detailPage() {
-    Stack() {
-      Column() {
-      Stack() {
+  detailVideoInner() {
         if (this.currentUrl === '' && this.videos[this.currentIndex].cover !== '') {
           Image(this.videos[this.currentIndex].cover)
             .width('100%').height('100%').objectFit(ImageFit.Cover);
@@ -1425,13 +1450,10 @@ struct Index {
         if (this.currentUrl !== '') {
           this.playbackControls();
         }
-      }.width('100%')
-        .aspectRatio(this.currentVideoAspect())
-        .layoutWeight(this.verticalExpanded ? 1 : 0)
-        .backgroundColor(Color.Black)
-        .onClick((): void => { this.showPlaybackControls(); });
+  }
 
-      if (!this.verticalExpanded) {
+  @Builder
+  detailTabs() {
       Row() {
         Row({ space: 12 }) {
           Text('\u7B80\u4ECB').fontSize(15)
@@ -1448,17 +1470,14 @@ struct Index {
         .padding({ left: 16 })
         .alignItems(VerticalAlign.Center);
         Button() {
-          Image($r('app.media.down')).width(18).height(18);
+          Image($r('app.media.downput')).width(18).height(18);
         }
         .type(ButtonType.ROUNDED_RECTANGLE).width(40).height(40)
         .backgroundColor(Color.Transparent)
         .borderRadius(20)
+        .margin({ right: 6 })
         .onClick(() => {
-          if (this.currentVideoAspect() < 1) {
-            this.verticalExpanded = !this.verticalExpanded;
-          } else {
-            this.openLandscapePlayback();
-          }
+          this.verticalExpanded = !this.verticalExpanded;
         });
         Stack({ alignContent: Alignment.End }) {
           TextInput({ placeholder: '\u53D1\u4E00\u6761\u5F39\u5E55', text: this.danmakuText })
@@ -1478,8 +1497,10 @@ struct Index {
         .padding({ right: 8 });
       }.width('100%').height(64).backgroundColor(Color.White)
         .border({ width: { bottom: 1 }, color: '#E5E8EC' });
-      }
-      if (!this.verticalExpanded) {
+  }
+
+  @Builder
+  detailScroll() {
       Scroll() {
         Column({ space: 14 }) {
           if (this.detailSection === 1) {
@@ -1589,6 +1610,63 @@ struct Index {
         }.width('100%').alignItems(HorizontalAlign.Start)
           .padding({ left: 16, right: 16, top: 14, bottom: this.bottomInset + 30 });
       }.layoutWeight(1).width('100%').scrollBar(BarState.Off).backgroundColor(Color.White);
+  }
+
+
+  @Builder
+  @Builder
+  detailPage() {
+    Stack() {
+      Column() {
+      if (this.verticalExpanded) {
+        Column() {
+          Stack() {
+            this.detailVideoInner();
+          }
+          .width('100%').layoutWeight(1).backgroundColor(Color.Black)
+          .onClick((): void => { this.showPlaybackControls(); });
+          if (this.currentVideoAspect() >= 1) {
+            Row() {
+              Button() {
+                Image($r('app.media.qp')).width(24).height(24).fillColor(Color.White);
+              }
+              .type(ButtonType.Circle).width(46).height(46)
+              .backgroundColor('#66000000')
+              .onClick(() => { this.openLandscapePlayback(); });
+            }
+            .width('100%').justifyContent(FlexAlign.Center)
+            .padding({ top: 10, bottom: this.bottomInset + 10 });
+          }
+        }
+        .width('100%').height('100%');
+      } else if (this.currentVideoAspect() < 1) {
+        Stack() {
+          this.detailVideoInner();
+        }
+        .width('100%').layoutWeight(this.videoWeight).backgroundColor(Color.Black)
+        .onClick((): void => { this.showPlaybackControls(); });
+        Column() {
+          this.detailTabs();
+          this.detailScroll();
+        }
+        .width('100%').layoutWeight(10 - this.videoWeight)
+        .gesture(PanGesture({ fingers: 1, direction: PanDirection.Vertical })
+          .onActionStart((event: GestureEvent): void => {
+            this.panStartWeight = this.videoWeight;
+          })
+          .onActionUpdate((event: GestureEvent): void => {
+            if (this.currentVideoAspect() >= 1) return;
+            const delta: number = event.offsetY / 64;
+            this.videoWeight = Math.min(8, Math.max(4, this.panStartWeight + delta));
+          }));
+      } else {
+        Stack() {
+          this.detailVideoInner();
+        }
+        .width('100%').aspectRatio(this.currentVideoAspect()).backgroundColor(Color.Black)
+        .onClick((): void => { this.showPlaybackControls(); });
+        this.detailTabs();
+        this.detailScroll();
       }
       }
       .width('100%').height('100%')
@@ -2240,6 +2318,9 @@ struct Index {
                 if (this.loadingMore) return;
                 this.loadMoreRecommendations();
               })
+              .onDidScroll((offset: number, _state: ScrollState): void => {
+                this.handleGridScroll(offset);
+              })
               .width('100%').height('100%').scrollBar(BarState.Off);
             }
             .layoutWeight(1).width('100%')
@@ -2342,6 +2423,8 @@ if (this.floatBallSwapped) {
           .width('94%').height(58).padding({ left: 4, right: 4 })
           .justifyContent(FlexAlign.SpaceBetween)
           .position({ left: '3%', bottom: this.bottomInset + 6 })
+          .translate({ y: this.bottomBarVisible ? 0 : 220 })
+          .animation({ curve: curves.springMotion(0.4, 0.8) })
           .zIndex(10);
           if (this.actionMenuVisible) {
             Column({ space: 8 }) {

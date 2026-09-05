@@ -1,6 +1,7 @@
 import { VideoItem } from '../models/VideoItem';
 import { AuthService } from '../services/AuthService';
 import { SearchSeason, SearchService, SearchUser } from '../services/SearchService';
+import { WbiService } from '../services/WbiService';
 import { ImmersiveMaterial } from '../utils/ImmersiveMaterial';
 import router from '@ohos.router';
 import common from '@ohos.app.ability.common';
@@ -45,6 +46,8 @@ struct SearchPage {
   aboutToAppear(): void {
     this.updateSystemInsets();
     this.loadSearchSettings();
+    // 提前拉取 WBI 签名密钥，避免首次回车搜索等待
+    WbiService.warmup();
   }
 
   private async updateSystemInsets(): Promise<void> {
@@ -351,7 +354,7 @@ struct SearchPage {
         .systemMaterial(ImmersiveMaterial.thin())
         .shadow({ radius: 8, color: '#25000000', offsetX: 0, offsetY: 2 })
         .onClick(() => { router.back(); });
-        Search({ placeholder: '搜索', value: this.searchText })
+        Search({ placeholder: '搜索' })
           .layoutWeight(1).height(48).backgroundColor(ImmersiveMaterial.fallbackBackground())
           .borderRadius(24).systemMaterial(ImmersiveMaterial.thin())
           .shadow({ radius: 8, color: '#25000000', offsetX: 0, offsetY: 2 })
@@ -361,6 +364,15 @@ struct SearchPage {
           .onSubmit((value: string): void => {
             this.submitVideoSearch(value);
           });
+        Button() {
+          Image($r('app.media.ic_public_search_filled')).width(22).height(22).fillColor('#1677A8');
+        }
+        .type(ButtonType.ROUNDED_RECTANGLE).width(48).height(48)
+        .backgroundColor(ImmersiveMaterial.fallbackBackground())
+        .borderRadius(24)
+        .systemMaterial(ImmersiveMaterial.thin())
+        .shadow({ radius: 8, color: '#25000000', offsetX: 0, offsetY: 2 })
+        .onClick(() => { this.submitVideoSearch(this.searchText); });
       }
       .width('100%').padding({ left: 10, right: 10, top: this.topInset + 8, bottom: 8 });
       this.typeTabs();
