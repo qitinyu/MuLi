@@ -3,6 +3,12 @@ import { AuthService } from '../services/AuthService';
 import { DynamicAuthor, DynamicEntry, DynamicFeedBatch, DynamicPic, DynamicService } from '../services/DynamicService';
 import { FilterWords } from '../utils/FilterWords';
 
+// 模块级缓存：版块切入切出保留首次内容，仅手动刷新更新
+let cachedEntries: DynamicEntry[] = [];
+let cachedAuthors: DynamicAuthor[] = [];
+let cachedOffset: string = '';
+let cachedHasMore: boolean = false;
+
 @Component
 export struct DynamicPage {
   @Prop bottomInset: number = 8;
@@ -19,8 +25,16 @@ export struct DynamicPage {
   private hasMore: boolean = false;
   private fetching: boolean = false;
 
-  private toggleAuthorFilter(name: string): void {
-    this.selectedAuthor = this.selectedAuthor === name ? '' : name;
+  aboutToAppear(): void {
+    if (cachedEntries.length > 0) {
+      this.entries = cachedEntries;
+      this.authors = cachedAuthors;
+      this.feedOffset = cachedOffset;
+      this.hasMore = cachedHasMore;
+      this.loading = false;
+      return;
+    }
+    this.loadFeed(true);
   }
 
   private visibleEntries(): DynamicEntry[] {
@@ -29,8 +43,8 @@ export struct DynamicPage {
       entry.authorName === this.selectedAuthor);
   }
 
-  aboutToAppear(): void {
-    this.loadFeed(true);
+  private toggleAuthorFilter(name: string): void {
+    this.selectedAuthor = this.selectedAuthor === name ? '' : name;
   }
 
   private async loadFeed(refresh: boolean = false): Promise<void> {
@@ -62,9 +76,8 @@ export struct DynamicPage {
         return !FilterWords.isVideoFiltered(title) && !FilterWords.isVideoFiltered(entry.text);
       });
       this.entries = refresh ? visible : this.entries.concat(visible);
-      if (refresh) {
-        this.authors = batch.authors;
-      } else {
+      this.authors = refresh ? batch.authors : this.authors;
+      if (!refresh) {
         const merged: DynamicAuthor[] = this.authors.slice();
         batch.authors.forEach((author: DynamicAuthor): void => {
           if (!merged.some((candidate: DynamicAuthor): boolean => candidate.name === author.name)) {
@@ -73,6 +86,10 @@ export struct DynamicPage {
         });
         this.authors = merged;
       }
+      cachedEntries = this.entries;
+      cachedAuthors = this.authors;
+      cachedOffset = this.feedOffset;
+      cachedHasMore = this.hasMore;
     } catch (error) {
       if (refresh) {
         this.loadError = '动态加载失败，请检查网络或登录状态';

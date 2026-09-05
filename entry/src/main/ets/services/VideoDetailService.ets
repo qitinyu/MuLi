@@ -17,6 +17,7 @@ export class VideoDetailService {
     const owner: Record<string, Object> = (data['owner'] ?? {}) as Record<string, Object>;
     const stat: Record<string, Object> = (data['stat'] ?? {}) as Record<string, Object>;
     const rawTags: Object[] = (data['tags'] as Object[]) ?? [];
+    const dimension: Record<string, Object> = (data['dimension'] ?? {}) as Record<string, Object>;
     const tags: string[] = [];
     rawTags.forEach((raw: Object): void => {
       const tag: Record<string, Object> = raw as Record<string, Object>;
@@ -61,7 +62,9 @@ export class VideoDetailService {
       publishTime: Number(data['pubdate'] ?? item.publishTime),
       description: String(data['desc'] ?? ''),
       tags: tags,
-      detailLoaded: true
+      detailLoaded: true,
+      videoWidth: Number(dimension['width'] ?? 0),
+      videoHeight: Number(dimension['height'] ?? 0)
     };
   }
 }

@@ -20,6 +20,7 @@ export class HotService {
     const owner: Record<string, Object> = (raw['owner'] ?? {}) as Record<string, Object>;
     const stat: Record<string, Object> = (raw['stat'] ?? {}) as Record<string, Object>;
     const reason: Record<string, Object> = (raw['rcmd_reason'] ?? {}) as Record<string, Object>;
+    const dimension: Record<string, Object> = (raw['dimension'] ?? {}) as Record<string, Object>;
     const aid: number = Number(raw['aid'] ?? 0);
     const tags: string[] = [];
     const reasonText: string = String(reason['content'] ?? '');
@@ -45,7 +46,9 @@ export class HotService {
       publishTime: Number(raw['pubdate'] ?? 0),
       description: String(raw['desc'] ?? ''),
       tags: tags,
-      detailLoaded: false
+      detailLoaded: false,
+      videoWidth: Number(dimension['width'] ?? 0),
+      videoHeight: Number(dimension['height'] ?? 0)
     };
   }
 

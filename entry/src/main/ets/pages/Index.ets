@@ -28,6 +28,7 @@ import { AnimePage } from './AnimePage';
 struct Index {
   @State showVertical: boolean = false;
   @State landscapePlayback: boolean = false;
+  @State verticalExpanded: boolean = false;
   @State currentIndex: number = 0;
   @State draggingDown: boolean = false;
   @State loading: boolean = false;
@@ -394,6 +395,17 @@ struct Index {
     return '#9AA4AE';
   }
 
+  private currentVideoAspect(): number {
+    const item: VideoItem = this.videos[this.currentIndex];
+    const width: number = Number(item?.videoWidth ?? 0);
+    const height: number = Number(item?.videoHeight ?? 0);
+    if (width > 0 && height > 0) {
+      // 限制在 9:16 ~ 16:9 之间，防止极端比例撑破布局
+      return Math.min(16 / 9, Math.max(9 / 16, width / height));
+    }
+    return 16 / 9;
+  }
+
   private openVideoDetail(item: VideoItem, showComments: boolean = false): void {
     const index: number = this.videos.indexOf(item);
     if (index < 0 || item.placeholder) return;
@@ -422,9 +434,10 @@ struct Index {
     this.playbackSpeed = 1.0;
     this.speedMenuVisible = false;
     this.episodeListVisible = false;
-    this.playbackControlsVisible = true;
+    this.playbackControlsVisible = false;
     this.subtitlesEnabled = false;
     this.danmakuEnabled = true;
+    this.verticalExpanded = false;
     this.showVertical = true;
     this.loadVideoDetail();
     this.prepareCurrentVideo();
@@ -724,6 +737,10 @@ struct Index {
       this.closeLandscapePlayback();
       return true;
     }
+    if (this.showVertical && this.verticalExpanded) {
+      this.verticalExpanded = false;
+      return true;
+    }
     if (this.sidebar !== 0) {
       this.sidebar = 0;
       this.showMineCoverSheet = false;
@@ -868,7 +885,8 @@ struct Index {
     this.playbackFinished = true;
     this.playbackPaused = true;
     this.recommendedPlaybackIndex = this.randomRecommendationIndex();
-    this.showPlaybackControls();
+    // 播放结束：隐藏全部控件，呈现黑屏居中推荐
+    this.playbackControlsVisible = false;
   }
 
   private replayFinishedVideo(): void {
@@ -1253,29 +1271,34 @@ struct Index {
   @Builder
   playbackFinishedOverlay() {
     if (this.playbackFinished && this.recommendedPlaybackIndex >= 0) {
-      Column({ space: 6 }) {
-        Row({ space: 8 }) {
-          Image(this.videos[this.recommendedPlaybackIndex].cover).width(92).height(52)
-            .objectFit(ImageFit.Cover).borderRadius(4);
-          Text(this.videos[this.recommendedPlaybackIndex].title).fontSize(12)
-            .fontColor(Color.White).maxLines(2).layoutWeight(1);
-        }.width('100%');
-        Row({ space: 16 }) {
-          Column() {
-            Image($r('app.media.cb')).width(23).height(23).fillColor(Color.White);
-            Text('重播').fontSize(10).fontColor(Color.White);
+      // 播放结束：播放区黑屏，推荐视频居中展示
+      Column().width('100%').height('100%').backgroundColor(Color.Black).zIndex(5);
+      Column({ space: 14 }) {
+        Text('为你推荐').fontSize(13).fontColor('#B3FFFFFF');
+        Image(this.videos[this.recommendedPlaybackIndex].cover)
+          .width(216).height(122).objectFit(ImageFit.Cover).borderRadius(10);
+        Text(this.videos[this.recommendedPlaybackIndex].title).fontSize(15)
+          .fontColor(Color.White).maxLines(2).textAlign(TextAlign.Center)
+          .lineHeight(21).width('100%');
+        Row({ space: 28 }) {
+          Column({ space: 4 }) {
+            Image($r('app.media.cb')).width(24).height(24).fillColor(Color.White);
+            Text('重播').fontSize(11).fontColor(Color.White);
           }.onClick(() => { this.replayFinishedVideo(); });
-          Column() {
-            Image($r('app.media.bofang')).width(23).height(23).fillColor(Color.White);
-            Text('立即播放').fontSize(10).fontColor(Color.White);
+          Column({ space: 4 }) {
+            Image($r('app.media.bofang')).width(24).height(24).fillColor(Color.White);
+            Text('立即播放').fontSize(11).fontColor(Color.White);
           }.onClick(() => { this.playRecommendedVideo(); });
-          Column() {
-            Image($r('app.media.share')).width(23).height(23).fillColor(Color.White);
-            Text('分享').fontSize(10).fontColor(Color.White);
+          Column({ space: 4 }) {
+            Image($r('app.media.share')).width(24).height(24).fillColor(Color.White);
+            Text('分享').fontSize(11).fontColor(Color.White);
           }.onClick(() => { this.shareCurrentVideo(); });
-        }.width('100%').justifyContent(FlexAlign.End);
-      }.width(250).padding(8).backgroundColor('#CC111111').borderRadius(8)
-        .position({ right: 8, bottom: 8 }).zIndex(6);
+        }.width('100%').justifyContent(FlexAlign.Center);
+      }
+      .justifyContent(FlexAlign.Center)
+      .width('100%').height('100%')
+      .padding({ left: 24, right: 24 })
+      .zIndex(6);
     }
   }
 
@@ -1390,12 +1413,25 @@ struct Index {
       .position({ left: 10, top: 10 })
         .visibility(this.playbackControlsVisible ? Visibility.Visible : Visibility.None)
         .onClick(() => { this.onBackPress(); });
+        Button() {
+          Image($r('app.media.down_xia')).width(20).height(20).fillColor(Color.White);
+        }
+        .type(ButtonType.ROUNDED_RECTANGLE).width(40).height(40)
+        .backgroundColor('#66000000').borderRadius(20)
+        .position({ right: 10, top: 10 })
+        .visibility(this.verticalExpanded && this.playbackControlsVisible
+          ? Visibility.Visible : Visibility.None)
+        .onClick(() => { this.verticalExpanded = false; });
         if (this.currentUrl !== '') {
           this.playbackControls();
         }
-      }.width('100%').aspectRatio(16 / 9).backgroundColor(Color.Black)
+      }.width('100%')
+        .aspectRatio(this.currentVideoAspect())
+        .layoutWeight(this.verticalExpanded ? 1 : 0)
+        .backgroundColor(Color.Black)
         .onClick((): void => { this.showPlaybackControls(); });
 
+      if (!this.verticalExpanded) {
       Row() {
         Row({ space: 12 }) {
           Text('\u7B80\u4ECB').fontSize(15)
@@ -1417,27 +1453,34 @@ struct Index {
         .type(ButtonType.ROUNDED_RECTANGLE).width(40).height(40)
         .backgroundColor(Color.Transparent)
         .borderRadius(20)
-        .onClick(() => { this.openLandscapePlayback(); });
-        Row() {
+        .onClick(() => {
+          if (this.currentVideoAspect() < 1) {
+            this.verticalExpanded = !this.verticalExpanded;
+          } else {
+            this.openLandscapePlayback();
+          }
+        });
+        Stack({ alignContent: Alignment.End }) {
           TextInput({ placeholder: '\u53D1\u4E00\u6761\u5F39\u5E55', text: this.danmakuText })
-            .width(122).height(36).fontSize(12).fontColor('#858C94')
+            .width(150).height(36).fontSize(12).fontColor('#858C94')
             .backgroundColor('#F1F3F5').borderRadius(18)
-            .padding({ left: 10, right: 10 })
+            .padding({ left: 12, right: 38 })
             .enabled(this.danmakuEnabled)
             .onChange((value: string) => { this.danmakuText = value; });
           Button() {
             Image($r('app.media.dmg')).width(20).height(20)
               .opacity(this.danmakuEnabled ? 1 : 0.38);
-          }.type(ButtonType.Capsule).width(36).height(36)
+          }.type(ButtonType.Capsule).width(32).height(32)
             .backgroundColor(Color.Transparent)
+            .margin({ right: 3 })
             .onClick(() => { this.toggleDanmaku(); });
         }
-        .layoutWeight(1)
-        .padding({ right: 8 })
-        .justifyContent(FlexAlign.End)
-        .alignItems(VerticalAlign.Center);
+        .padding({ right: 8 });
       }.width('100%').height(64).backgroundColor(Color.White)
-        .border({ width: { bottom: 1 }, color: '#E5E8EC' });      Scroll() {
+        .border({ width: { bottom: 1 }, color: '#E5E8EC' });
+      }
+      if (!this.verticalExpanded) {
+      Scroll() {
         Column({ space: 14 }) {
           if (this.detailSection === 1) {
             this.commentPanel();
@@ -1546,6 +1589,7 @@ struct Index {
         }.width('100%').alignItems(HorizontalAlign.Start)
           .padding({ left: 16, right: 16, top: 14, bottom: this.bottomInset + 30 });
       }.layoutWeight(1).width('100%').scrollBar(BarState.Off).backgroundColor(Color.White);
+      }
       }
       .width('100%').height('100%')
       .padding({ top: this.topInset })

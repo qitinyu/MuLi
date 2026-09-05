@@ -2,6 +2,9 @@ import router from '@ohos.router';
 import { VideoItem } from '../models/VideoItem';
 import { HotService } from '../services/HotService';
 
+// 模块级缓存：版块切入切出保留首次内容，仅手动刷新更新
+let cachedHotList: VideoItem[] = [];
+
 @Component
 export struct HotPage {
   @Prop bottomInset: number = 8;
@@ -14,6 +17,12 @@ export struct HotPage {
   private fetching: boolean = false;
 
   aboutToAppear(): void {
+    if (cachedHotList.length > 0) {
+      this.hotList = cachedHotList;
+      this.page = Math.max(1, Math.ceil(cachedHotList.length / 20));
+      this.loading = false;
+      return;
+    }
     this.loadHotList(true);
   }
 
@@ -31,6 +40,7 @@ export struct HotPage {
     try {
       const items: VideoItem[] = await HotService.loadPopular(this.page);
       this.hotList = refresh ? items : this.hotList.concat(items);
+      cachedHotList = this.hotList;
     } catch (error) {
       if (refresh) {
         this.loadError = '热门榜单加载失败，请检查网络';

@@ -20,4 +20,6 @@ export interface VideoItem {
   description: string;
   tags: string[];
   detailLoaded: boolean;
+  videoWidth?: number;
+  videoHeight?: number;
 }

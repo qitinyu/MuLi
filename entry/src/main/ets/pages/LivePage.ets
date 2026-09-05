@@ -2,12 +2,18 @@ import router from '@ohos.router';
 import { AuthService } from '../services/AuthService';
 import { LiveRoom, LiveService } from '../services/LiveService';
 
+// 模块级缓存：版块切入切出保留首次内容，仅手动刷新更新
+let cachedFollowedRooms: LiveRoom[] = [];
+let cachedHotRooms: LiveRoom[] = [];
+let cachedOtherRooms: LiveRoom[] = [];
+
 @Component
 export struct LivePage {
   @Prop bottomInset: number = 8;
   @State followedRooms: LiveRoom[] = [];
   @State hotRooms: LiveRoom[] = [];
   @State otherRooms: LiveRoom[] = [];
+  @State followedHint: string = '登录后查看关注的主播直播';
   @State loading: boolean = true;
   @State loadingMore: boolean = false;
   @State refreshing: boolean = false;
@@ -17,8 +23,23 @@ export struct LivePage {
   private followedFetching: boolean = false;
 
   aboutToAppear(): void {
+    if (cachedFollowedRooms.length > 0 || cachedHotRooms.length > 0) {
+      this.followedRooms = cachedFollowedRooms;
+      this.hotRooms = cachedHotRooms;
+      this.otherRooms = cachedOtherRooms;
+      this.loading = false;
+      this.refreshFollowedHint();
+      return;
+    }
     this.loadFollowed();
     this.loadLiveList(true);
+  }
+
+  private refreshFollowedHint(): void {
+    if (this.followedRooms.length > 0) return;
+    const session = AuthService.currentSession();
+    this.followedHint = session === null || session.cookie === '' || session.uid === ''
+      ? '登录后查看关注的主播直播' : '暂无关注的主播直播';
   }
 
   private async loadFollowed(): Promise<void> {
@@ -28,12 +49,18 @@ export struct LivePage {
       const session = AuthService.currentSession();
       if (session === null || session.cookie === '' || session.uid === '') {
         this.followedRooms = [];
+        this.followedHint = '登录后查看关注的主播直播';
         return;
       }
       this.followedRooms = await LiveService.loadFollowedLive(session.cookie, session.uid);
+      if (this.followedRooms.length === 0) {
+        this.followedHint = '暂无关注的主播直播';
+      }
+      cachedFollowedRooms = this.followedRooms;
     } catch (error) {
       // 关注区静默降级：失败时不阻塞热门直播展示
       this.followedRooms = [];
+      this.followedHint = '暂无关注的主播直播';
       console.error('Pilihos followed live load failed: ' + String(error));
     } finally {
       this.followedFetching = false;
@@ -59,6 +86,8 @@ export struct LivePage {
       } else {
         this.otherRooms = this.otherRooms.concat(rooms);
       }
+      cachedHotRooms = this.hotRooms;
+      cachedOtherRooms = this.otherRooms;
     } catch (error) {
       if (refresh) {
         this.loadError = '直播列表加载失败，请检查网络';
@@ -140,15 +169,18 @@ export struct LivePage {
     Refresh({ refreshing: $$this.refreshing, offset: 56, friction: 80 }) {
       Scroll() {
         Column() {
+          this.sectionHeader('我的关注', '关注的主播');
           if (this.followedRooms.length > 0) {
-            this.sectionHeader('我的关注', '关注的正在直播的主播');
             ForEach(this.followedRooms, (room: LiveRoom) => {
               Column() {
                 this.liveCard(room);
               }.width('100%').padding({ bottom: 10 });
             }, (room: LiveRoom) => `followed_${room.roomId}`);
+          } else {
+            Text(this.followedHint).fontSize(13).fontColor('#8B9199').width('100%')
+              .textAlign(TextAlign.Center).padding({ top: 8, bottom: 14 });
           }
-          this.sectionHeader('热门直播', '全平台实时人气排行');
+          this.sectionHeader('推荐直播', '全平台实时人气排行');
           if (this.hotRooms.length === 0 && this.loading) {
             Row({ space: 8 }) {
               LoadingProgress().width(26).height(26).color('#1677A8');
@@ -167,7 +199,7 @@ export struct LivePage {
             }, (room: LiveRoom) => `hot_${room.roomId}`);
           }
           if (this.otherRooms.length > 0) {
-            this.sectionHeader('其他直播', '继续探索更多直播间');
+            this.sectionHeader('相关直播', '继续探索更多直播间');
             ForEach(this.otherRooms, (room: LiveRoom) => {
               Column() {
                 this.liveCard(room);

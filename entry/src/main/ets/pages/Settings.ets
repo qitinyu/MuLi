@@ -515,7 +515,7 @@ struct Settings {
   @Builder
   filterEditorOverlay() {
     if (this.filterEditorVisible) {
-      Column() {
+      Stack() {
         Column().width('100%').height('100%').backgroundColor('#66000000')
           .onClick(() => { this.filterEditorVisible = false; });
         Column({ space: 12 }) {
@@ -527,6 +527,7 @@ struct Settings {
             .width('100%').height(150)
             .backgroundColor('#F1F3F5').borderRadius(8)
             .padding(10)
+            .defaultFocus(true)
             .onChange((value: string) => { this.filterEditorText = value; });
           Row({ space: 10 }) {
             Button('取消')
@@ -543,11 +544,11 @@ struct Settings {
         .padding(16)
         .backgroundColor(Color.White)
         .borderRadius(14)
-        .shadow({ radius: 16, color: '#33000000', offsetX: 0, offsetY: 4 });
+        .shadow({ radius: 16, color: '#33000000', offsetX: 0, offsetY: 4 })
+        .margin({ bottom: this.bottomInset + 24 });
       }
       .width('100%').height('100%')
-      .justifyContent(FlexAlign.Center)
-      .alignItems(HorizontalAlign.Center);
+      .alignContent(Alignment.Bottom);
     }
   }
 

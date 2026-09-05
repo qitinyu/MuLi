@@ -1,6 +1,9 @@
 import router from '@ohos.router';
 import { AnimeSeason, AnimeService } from '../services/AnimeService';
 
+// 模块级缓存：版块切入切出保留首次内容，仅手动刷新更新
+let cachedAnimeList: AnimeSeason[] = [];
+
 @Component
 export struct AnimePage {
   @Prop bottomInset: number = 8;
@@ -10,6 +13,11 @@ export struct AnimePage {
   @State loadError: string = '';
 
   aboutToAppear(): void {
+    if (cachedAnimeList.length > 0) {
+      this.animeList = cachedAnimeList;
+      this.loading = false;
+      return;
+    }
     this.loadRankList();
   }
 
@@ -22,6 +30,7 @@ export struct AnimePage {
     this.loadError = '';
     try {
       this.animeList = await AnimeService.loadRank();
+      cachedAnimeList = this.animeList;
     } catch (error) {
       this.loadError = '番剧榜单加载失败，请检查网络';
       console.error('Pilihos anime page load failed: ' + String(error));
