@@ -108,7 +108,9 @@ struct SearchPage {
         this.showToast('没有找到相关内容');
       }
     } catch (error) {
-      this.showToast('搜索失败，请稍后重试');
+      const detail: string = String(error);
+      this.showToast(detail.length > 0 && detail.length <= 40
+        ? '搜索失败: ' + detail : '搜索失败，请稍后重试');
       console.error(`Pilihos video search failed: ${String(error)}`);
     } finally {
       this.searchLoading = false;
@@ -354,7 +356,7 @@ struct SearchPage {
         .systemMaterial(ImmersiveMaterial.thin())
         .shadow({ radius: 8, color: '#25000000', offsetX: 0, offsetY: 2 })
         .onClick(() => { router.back(); });
-        Search({ placeholder: '搜索' })
+        Search({ placeholder: '搜索', value: this.searchText })
           .layoutWeight(1).height(48).backgroundColor(ImmersiveMaterial.fallbackBackground())
           .borderRadius(24).systemMaterial(ImmersiveMaterial.thin())
           .shadow({ radius: 8, color: '#25000000', offsetX: 0, offsetY: 2 })

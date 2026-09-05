@@ -8,6 +8,7 @@ let cachedHotList: VideoItem[] = [];
 @Component
 export struct HotPage {
   @Prop bottomInset: number = 8;
+  @Prop showPortraitBadge: boolean = true;
   @State hotList: VideoItem[] = [];
   @State loading: boolean = true;
   @State loadingMore: boolean = false;
@@ -92,10 +93,19 @@ export struct HotPage {
       Text(item.author === '' ? '未知用户' : item.author).fontSize(12).fontColor('#8B9199')
         .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis }).width('100%');
       Row({ space: 10 }) {
-        Text(this.formatCount(item.viewCount) + ' 播放').fontSize(11).fontColor('#A4A9AF');
+        Row({ space: 3 }) {
+          Image($r('app.media.bofang')).width(11).height(11);
+          Text(this.formatCount(item.viewCount)).fontSize(11).fontColor('#A4A9AF');
+        }
         Row({ space: 3 }) {
           Image($r('app.media.dm')).width(11).height(11);
           Text(this.formatCount(item.danmuCount)).fontSize(11).fontColor('#A4A9AF');
+        }
+        if (this.showPortraitBadge && Number(item.videoWidth ?? 0) > 0
+          && Number(item.videoWidth ?? 0) < Number(item.videoHeight ?? 0)) {
+          Text('竖屏').fontSize(9).fontColor('#E661A0')
+            .padding({ left: 4, right: 4, top: 1, bottom: 1 })
+            .backgroundColor('#1AE661A0').borderRadius(3);
         }
         Text(this.formatPublishTime(item.publishTime)).fontSize(11).fontColor('#A4A9AF')
           .layoutWeight(1).textAlign(TextAlign.End)

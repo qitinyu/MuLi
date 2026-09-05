@@ -125,6 +125,35 @@ export struct LivePage {
   }
 
   @Builder
+  followedCard(room: LiveRoom) {
+    Column({ space: 6 }) {
+      Stack({ alignContent: Alignment.BottomStart }) {
+        Image(room.cover !== '' ? room.cover : room.face)
+          .width('100%').height(78).borderRadius(8).objectFit(ImageFit.Cover);
+        Row({ space: 3 }) {
+          Circle({ width: 5, height: 5 }).fill(Color.White);
+          Text('LIVE').fontSize(9).fontWeight(FontWeight.Bold).fontColor(Color.White);
+        }
+        .padding({ left: 5, right: 5, top: 2, bottom: 2 })
+        .backgroundColor('#E6000044').borderRadius(9)
+        .margin(5);
+      }.width('100%');
+      Row({ space: 5 }) {
+        Image(room.face).width(18).height(18).borderRadius(9).objectFit(ImageFit.Cover);
+        Text(room.uname).fontSize(12).fontColor('#20242A').maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis }).layoutWeight(1);
+      }.width('100%');
+      Text(this.formatCount(room.online) + ' 人观看').fontSize(10).fontColor('#A4A9AF')
+        .width('100%').maxLines(1);
+    }
+    .width(136)
+    .padding(6)
+    .backgroundColor(Color.White)
+    .borderRadius(10)
+    .onClick((): void => { this.openLiveDetail(room); });
+  }
+
+  @Builder
   liveCard(room: LiveRoom) {
     Row({ space: 12 }) {
       Stack({ alignContent: Alignment.BottomStart }) {
@@ -171,11 +200,17 @@ export struct LivePage {
         Column() {
           this.sectionHeader('我的关注', '关注的主播');
           if (this.followedRooms.length > 0) {
-            ForEach(this.followedRooms, (room: LiveRoom) => {
-              Column() {
-                this.liveCard(room);
-              }.width('100%').padding({ bottom: 10 });
-            }, (room: LiveRoom) => `followed_${room.roomId}`);
+            Scroll() {
+              Row({ space: 10 }) {
+                ForEach(this.followedRooms, (room: LiveRoom) => {
+                  this.followedCard(room);
+                }, (room: LiveRoom) => `followed_${room.roomId}`);
+              }.padding({ left: 2, right: 2 });
+            }
+            .width('100%')
+            .scrollable(ScrollDirection.Horizontal)
+            .scrollBar(BarState.Off)
+            .padding({ bottom: 10 });
           } else {
             Text(this.followedHint).fontSize(13).fontColor('#8B9199').width('100%')
               .textAlign(TextAlign.Center).padding({ top: 8, bottom: 14 });

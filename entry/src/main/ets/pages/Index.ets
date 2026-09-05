@@ -32,6 +32,8 @@ struct Index {
   @State verticalExpanded: boolean = false;
   @State videoWeight: number = 8;
   private panStartWeight: number = 8;
+  private pendingResumeMs: number = 0;
+  @State portraitBadge: boolean = true;
   @State currentIndex: number = 0;
   @State draggingDown: boolean = false;
   @State loading: boolean = false;
@@ -229,6 +231,7 @@ struct Index {
       this.floatBallSwapped = appearanceStore.getSync('float_ball_swapped', false) as boolean;
       this.topTabsMerged = appearanceStore.getSync('top_tabs_merged', false) as boolean;
       this.bottomBarPinned = appearanceStore.getSync('bottom_bar_pinned', true) as boolean;
+      this.portraitBadge = appearanceStore.getSync('portrait_badge', true) as boolean;
       if (this.bottomBarPinned) this.bottomBarVisible = true;
       
       // 加载高级功能设置状态
@@ -433,6 +436,13 @@ struct Index {
     }, 700);
   }
 
+  private isPortraitVideo(item: VideoItem): boolean {
+    if (!this.portraitBadge) return false;
+    const width: number = Number(item?.videoWidth ?? 0);
+    const height: number = Number(item?.videoHeight ?? 0);
+    return width > 0 && height > 0 && width < height;
+  }
+
   private openVideoDetail(item: VideoItem, showComments: boolean = false): void {
     const index: number = this.videos.indexOf(item);
     if (index < 0 || item.placeholder) return;
@@ -569,6 +579,7 @@ struct Index {
   }
 
   private async openLandscapePlayback(): Promise<void> {
+    this.pendingResumeMs = this.playbackCurrentMs;
     this.landscapePlayback = true;
     this.setSystemBarAppearance(true);
     this.videoMounted = true;
@@ -582,6 +593,7 @@ struct Index {
   }
 
   private async closeLandscapePlayback(): Promise<void> {
+    this.pendingResumeMs = this.playbackCurrentMs;
     this.landscapePlayback = false;
     this.setSystemBarAppearance(true);
     try {
@@ -810,6 +822,12 @@ struct Index {
     this.playbackStarting = false;
     this.playbackReady = true;
     this.playbackPaused = false;
+    // 播放器实例因横竖屏/尺寸切换重建时，续播切换前的进度
+    if (this.pendingResumeMs > 1000) {
+      const resumeMs: number = this.pendingResumeMs;
+      this.pendingResumeMs = 0;
+      this.seekPlayback(resumeMs);
+    }
   }
 
   private onNativeVideoUpdate(info: PlaybackInfo): void {
@@ -1080,6 +1098,11 @@ struct Index {
           Row({ space: 4 }) {
             Image($r('app.media.dm')).width(14).height(14);
             Text(this.formatCount(item.danmuCount)).fontSize(11).fontColor('#8B9199');
+          }.layoutWeight(1);
+          if (this.isPortraitVideo(item)) {
+            Text('竖屏').fontSize(10).fontColor('#E661A0')
+              .padding({ left: 5, right: 5, top: 2, bottom: 2 })
+              .backgroundColor('#1AE661A0').borderRadius(4);
           }
         }
       }.width('100%');
@@ -1302,30 +1325,34 @@ struct Index {
       // 播放结束：播放区黑屏，推荐视频居中展示
       Column().width('100%').height('100%').backgroundColor(Color.Black).zIndex(5);
       Column({ space: 14 }) {
-        Text('为你推荐').fontSize(13).fontColor('#B3FFFFFF');
-        Image(this.videos[this.recommendedPlaybackIndex].cover)
-          .width(216).height(122).objectFit(ImageFit.Cover).borderRadius(10);
-        Text(this.videos[this.recommendedPlaybackIndex].title).fontSize(15)
-          .fontColor(Color.White).maxLines(2).textAlign(TextAlign.Center)
-          .lineHeight(21).width('100%');
-        Row({ space: 28 }) {
+        Text('为你推荐').fontSize(12).fontColor('#B3FFFFFF').width('100%');
+        Row({ space: 10 }) {
+          Image(this.videos[this.recommendedPlaybackIndex].cover)
+            .width(120).height(68).objectFit(ImageFit.Cover).borderRadius(8);
+          Text(this.videos[this.recommendedPlaybackIndex].title).fontSize(14)
+            .fontColor(Color.White).maxLines(3).textAlign(TextAlign.Start)
+            .lineHeight(20).layoutWeight(1);
+        }.width('100%').alignItems(VerticalAlign.Center);
+        Row({ space: 30 }) {
           Column({ space: 4 }) {
-            Image($r('app.media.cb')).width(24).height(24).fillColor(Color.White);
-            Text('重播').fontSize(11).fontColor(Color.White);
+            Image($r('app.media.cb')).width(22).height(22).fillColor(Color.White);
+            Text('重播').fontSize(10).fontColor(Color.White);
           }.onClick(() => { this.replayFinishedVideo(); });
           Column({ space: 4 }) {
-            Image($r('app.media.bofang')).width(24).height(24).fillColor(Color.White);
-            Text('立即播放').fontSize(11).fontColor(Color.White);
+            Image($r('app.media.bofang')).width(22).height(22).fillColor(Color.White);
+            Text('立即播放').fontSize(10).fontColor(Color.White);
           }.onClick(() => { this.playRecommendedVideo(); });
           Column({ space: 4 }) {
-            Image($r('app.media.share')).width(24).height(24).fillColor(Color.White);
-            Text('分享').fontSize(11).fontColor(Color.White);
+            Image($r('app.media.share')).width(22).height(22).fillColor(Color.White);
+            Text('分享').fontSize(10).fontColor(Color.White);
           }.onClick(() => { this.shareCurrentVideo(); });
         }.width('100%').justifyContent(FlexAlign.Center);
       }
       .justifyContent(FlexAlign.Center)
-      .width('100%').height('100%')
-      .padding({ left: 24, right: 24 })
+      .width('78%')
+      .padding(14)
+      .backgroundColor('#1C1C1E')
+      .borderRadius(12)
       .zIndex(6);
     }
   }
@@ -1375,7 +1402,8 @@ struct Index {
       .visibility(this.playbackControlsVisible ? Visibility.Visible : Visibility.None)
       .onClick(() => { this.onBackPress(); });
     }
-    .width('100%').height('100%').backgroundColor(Color.Black);
+    .width('100%').height('100%').backgroundColor(Color.Black)
+    .onClick((): void => { this.showPlaybackControls(); });
   }
 
   @Builder
@@ -1477,8 +1505,30 @@ struct Index {
         .borderRadius(20)
         .margin({ right: 6 })
         .onClick(() => {
+          this.pendingResumeMs = this.playbackCurrentMs;
           this.verticalExpanded = !this.verticalExpanded;
-        });
+        })
+        .gesture(GestureGroup(GestureMode.Sequence,
+          LongPressGesture({ repeat: false, duration: 350 }),
+          PanGesture({ fingers: 1, direction: PanDirection.Vertical })
+            .onActionStart((event: GestureEvent): void => {
+              this.panStartWeight = this.videoWeight;
+            })
+            .onActionUpdate((event: GestureEvent): void => {
+              const weight: number = this.panStartWeight + event.offsetY / 64;
+              if (weight >= 8.5) {
+                if (!this.verticalExpanded) {
+                  this.pendingResumeMs = this.playbackCurrentMs;
+                  this.verticalExpanded = true;
+                }
+                return;
+              }
+              if (this.verticalExpanded) {
+                this.pendingResumeMs = this.playbackCurrentMs;
+                this.verticalExpanded = false;
+              }
+              this.videoWeight = Math.min(8, Math.max(4, weight));
+            })));
         Stack({ alignContent: Alignment.End }) {
           TextInput({ placeholder: '\u53D1\u4E00\u6761\u5F39\u5E55', text: this.danmakuText })
             .width(150).height(36).fontSize(12).fontColor('#858C94')
@@ -1592,9 +1642,10 @@ struct Index {
                       Image($r('app.media.bfl')).width(13).height(13);
                       Text(this.formatCount(item.viewCount)).fontSize(11).fontColor('#858C94');
                     }
-                    Row({ space: 3 }) {
-                      Image($r('app.media.dm')).width(13).height(13);
-                      Text(this.formatCount(item.danmuCount)).fontSize(11).fontColor('#858C94');
+                    if (this.isPortraitVideo(item)) {
+                      Text('竖屏').fontSize(9).fontColor('#E661A0')
+                        .padding({ left: 4, right: 4, top: 1, bottom: 1 })
+                        .backgroundColor('#1AE661A0').borderRadius(3);
                     }
                     Text(this.formatPublishTime(item.publishTime))
                       .fontSize(11).fontColor('#858C94').layoutWeight(1);
@@ -2328,7 +2379,7 @@ struct Index {
 } else if (this.contentTab === 0) {
               LivePage({ bottomInset: this.bottomInset });
 	            } else if (this.contentTab === 2) {
-              HotPage({ bottomInset: this.bottomInset });
+              HotPage({ bottomInset: this.bottomInset, showPortraitBadge: this.portraitBadge });
 	            } else if (this.contentTab === 3) {
               DynamicPage({
                 bottomInset: this.bottomInset,

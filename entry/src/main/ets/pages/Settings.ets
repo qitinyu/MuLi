@@ -30,6 +30,7 @@ struct Settings {
   @State advancedWebCookieEnabled: boolean = true;
   @State advancedSegmentEnabled: boolean = true;
   @State bottomBarPinned: boolean = true;
+  @State portraitBadgeEnabled: boolean = true;
   @State filterEditorVisible: boolean = false;
   @State filterEditorKind: string = 'video';
   @State filterEditorText: string = '';
@@ -104,6 +105,7 @@ struct Settings {
       this.floatBallSwapped = store.getSync('float_ball_swapped', false) as boolean;
       this.topTabsMerged = store.getSync('top_tabs_merged', false) as boolean;
       this.bottomBarPinned = store.getSync('bottom_bar_pinned', true) as boolean;
+      this.portraitBadgeEnabled = store.getSync('portrait_badge', true) as boolean;
     } catch (error) {
       console.error('Pilihos appearance settings load failed: ' + String(error));
     }
@@ -114,6 +116,17 @@ struct Settings {
     try {
       const store: preferences.Preferences = await preferences.getPreferences(this.context, 'pilihos_ui');
       store.putSync('bottom_bar_pinned', value);
+      store.flushSync();
+    } catch (error) {
+      console.error('Pilihos appearance settings save failed: ' + String(error));
+    }
+  }
+
+  private async setPortraitBadge(value: boolean): Promise<void> {
+    this.portraitBadgeEnabled = value;
+    try {
+      const store: preferences.Preferences = await preferences.getPreferences(this.context, 'pilihos_ui');
+      store.putSync('portrait_badge', value);
       store.flushSync();
     } catch (error) {
       console.error('Pilihos appearance settings save failed: ' + String(error));
@@ -417,6 +430,19 @@ struct Settings {
             Toggle({ type: ToggleType.Switch, isOn: this.bottomBarPinned })
               .selectedColor('#1677A8')
               .onChange((value: boolean) => { this.setBottomBarPinned(value); });
+          }.width('100%').padding({ left: 16, right: 14, top: 10, bottom: 10 })
+            .backgroundColor(ImmersiveMaterial.fallbackBackground()).borderRadius(10)
+            .systemMaterial(ImmersiveMaterial.thin())
+            .shadow({ radius: 4, color: '#16000000', offsetX: 0, offsetY: 1 });
+          Row({ space: 12 }) {
+            Column({ space: 5 }) {
+              Text('竖屏提示').fontSize(16).fontColor('#1E252D');
+              Text('所有视频均可显示：视频卡片在播放量/弹幕量后展示竖屏标记（仅竖屏比例视频显示）')
+                .fontSize(12).fontColor('#858C94').maxLines(3);
+            }.layoutWeight(1).alignItems(HorizontalAlign.Start);
+            Toggle({ type: ToggleType.Switch, isOn: this.portraitBadgeEnabled })
+              .selectedColor('#1677A8')
+              .onChange((value: boolean) => { this.setPortraitBadge(value); });
           }.width('100%').padding({ left: 16, right: 14, top: 10, bottom: 10 })
             .backgroundColor(ImmersiveMaterial.fallbackBackground()).borderRadius(10)
             .systemMaterial(ImmersiveMaterial.thin())
