@@ -2,7 +2,6 @@
 import { VideoItem } from '../models/VideoItem';
 import { VideoDetailService } from '../services/VideoDetailService';
 import { RecommendationService, RecommendationBatch } from '../services/RecommendationService';
-import { DynamicService, DynamicBatch, DynamicAuthor } from '../services/DynamicService';
 import { ReplyService, VideoComment, CommentBatch } from '../services/ReplyService';
 import { PlaybackService } from '../services/PlaybackService';
 import { WbiService } from '../services/WbiService';
@@ -18,6 +17,10 @@ import { preferences } from '@kit.ArkData';
 import web_webview from '@ohos.web.webview';
 import { ImmersiveMaterial } from '../utils/ImmersiveMaterial';
 import { AdvancedFeatures } from '../utils/AdvancedFeatures';
+import { HotPage } from './HotPage';
+import { LivePage } from './LivePage';
+import { DynamicPage } from './DynamicPage';
+import { AnimePage } from './AnimePage';
 
 @Entry
 @Component
@@ -32,7 +35,6 @@ struct Index {
   @State keepRefreshContent: boolean = false;
   @State compactGrid: boolean = false;
   @State actionMenuVisible: boolean = false;
-  @State showDynamicEditor: boolean = false;
   @State floatBallSwapped: boolean = false;
   @State topTabsMerged: boolean = false;
   private page: number = 0;
@@ -45,7 +47,7 @@ struct Index {
   @State contentTab: number = 1;
   @State selectedTopTab: number = 1;
   @State searchResults: VideoItem[] = [];
-  private searchPayloadConsumed: boolean = false;
+  private lastSearchNonce: string = '';
   @State loginVisible: boolean = false;
   @State webLoginVisible: boolean = false;
   @State webLoginStatus: string = '';
@@ -79,11 +81,6 @@ struct Index {
   @State showMineCoverSheet: boolean = false;
   @State topInset: number = 0;
   @State bottomInset: number = 0;
-  @State dynamicVideos: VideoItem[] = [];
-  @State dynamicAuthors: DynamicAuthor[] = [];
-  @State dynamicLoading: boolean = false;
-  @State dynamicError: string = '';
-  private dynamicOffset: string = '';
   @State detailSection: number = 0;
   @State comments: VideoComment[] = [];
   @State commentLoading: boolean = false;
@@ -252,49 +249,19 @@ struct Index {
 
   private consumeSearchPayload(): void {
     const params: Object | undefined = router.getParams() as Object | undefined;
-    if (params === undefined || this.searchPayloadConsumed) return;
+    if (params === undefined) return;
     const payload: Object | undefined =
-      (params as Record<string, Object>)['pilihosSearch'] as Object | undefined;
+      (params as Record<string, Object>)['pilihosPlayback'] as Object | undefined;
     if (payload === undefined) return;
-    const results: VideoItem[] = (payload as Record<string, Object>)['results'] as VideoItem[];
-    const index: number = Number((payload as Record<string, Object>)['index']);
+    const payloadRecord: Record<string, Object> = payload as Record<string, Object>;
+    const nonce: string = String(payloadRecord['nonce'] ?? '');
+    if (nonce === '' || nonce === this.lastSearchNonce) return;
+    const results: VideoItem[] = payloadRecord['results'] as VideoItem[];
+    const index: number = Number(payloadRecord['index']);
     if (!Array.isArray(results) || Number.isNaN(index) || index < 0 || index >= results.length) return;
-    this.searchPayloadConsumed = true;
+    this.lastSearchNonce = nonce;
     this.searchResults = results;
     this.openSearchResult(results[index]);
-  }
-
-  private async loadDynamicVideos(refresh: boolean = false): Promise<void> {
-    const session: AuthSession | null = this.authSession ?? AuthService.currentSession();
-    if (session === null || session.cookie === '') {
-      this.dynamicVideos = [];
-      this.dynamicError = '登录后查看关注用户的最新投稿';
-      return;
-    }
-    if (this.dynamicLoading) return;
-    this.dynamicLoading = true;
-    this.dynamicError = '';
-    try {
-      const batch: DynamicBatch = await DynamicService.loadVideos(session.cookie, refresh ? '' : this.dynamicOffset);
-      this.dynamicOffset = batch.offset;
-      this.dynamicVideos = refresh ? batch.items : this.dynamicVideos.concat(batch.items);
-      if (refresh) {
-        this.dynamicAuthors = batch.authors;
-      } else {
-        const mergedAuthors: DynamicAuthor[] = this.dynamicAuthors.slice();
-        batch.authors.forEach((author: DynamicAuthor): void => {
-          if (!mergedAuthors.some((candidate: DynamicAuthor): boolean => candidate.name === author.name)) {
-            mergedAuthors.push(author);
-          }
-        });
-        this.dynamicAuthors = mergedAuthors;
-      }
-    } catch (error) {
-      this.dynamicError = '动态加载失败，请检查网络或登录状态';
-      console.error('Pilihos dynamic failed: ' + String(error));
-    } finally {
-      this.dynamicLoading = false;
-    }
   }
 
   private async refreshRecommendations(): Promise<void> {
@@ -409,7 +376,7 @@ struct Index {
   private openDynamicVideo(item: VideoItem, showComments: boolean = false): void {
     this.refreshing = false;
     this.actionMenuVisible = false;
-    this.videos = this.dynamicVideos;
+    this.videos = [item];
     this.openVideoDetail(item, showComments);
   }
 
@@ -418,9 +385,7 @@ struct Index {
     this.refreshRunning = true;
     this.refreshing = true;
     try {
-      if (this.activeTab === 0 || this.contentTab === 3) {
-        await this.loadDynamicVideos(true);
-      } else if (this.contentTab === 1) {
+      if (this.contentTab === 1) {
         await this.refreshRecommendations();
       }
     } finally {
@@ -433,7 +398,6 @@ struct Index {
     const current: AuthSession | null = AuthService.currentSession();
     const restored: AuthSession | null = await AuthService.restoreSession(this.context);
     this.authSession = restored ?? current;
-    if (this.activeTab === 0) this.loadDynamicVideos(true);
     if (restored === null && current !== null) this.refreshAuthData();
   }
 
@@ -1912,195 +1876,6 @@ struct Index {
   }
 
   @Builder
-  liveBasicPage() {
-    Scroll() {
-      Column({ space: 12 }) {
-        Row() {
-          Text('正在直播').fontSize(22).fontWeight(FontWeight.Bold).fontColor(Color.Black);
-          Text('实时').fontSize(12).fontColor('#1677A8').fontWeight(FontWeight.Bold);
-        }.width('100%').justifyContent(FlexAlign.SpaceBetween);
-        ForEach(['热门游戏直播', '音乐现场', '生活分享', '知识讲堂'], (title: string, index: number) => {
-          Row({ space: 12 }) {
-            Stack() {
-              Column() { Text('LIVE').fontSize(12).fontWeight(FontWeight.Bold).fontColor(Color.White); }
-                .width('100%').height('100%').justifyContent(FlexAlign.Center).alignItems(HorizontalAlign.Center)
-                .backgroundColor(['#D86B5D', '#4E9A8A', '#D29B4A', '#6F8CC4'][index]);
-            }.width(116).height(76).borderRadius(10);
-            Column({ space: 6 }) {
-              Text(title).fontSize(16).fontWeight(FontWeight.Bold).fontColor(Color.Black).maxLines(1);
-              Text(['主播正在游戏中', '现场音乐演出进行中', '分享今天的生活', '一起了解有趣知识'][index])
-                .fontSize(13).fontColor('#626B75').maxLines(1);
-              Text(['12.6万', '8.4万', '3.1万', '1.8万'][index] + ' 人观看')
-                .fontSize(12).fontColor('#858C94');
-            }.layoutWeight(1).alignItems(HorizontalAlign.Start);
-          }.width('100%').padding(12).backgroundColor(Color.White).borderRadius(12)
-            .shadow({ radius: 4, color: '#16000000', offsetX: 0, offsetY: 1 });
-        });
-      }.width('100%').padding({ left: 14, right: 14, top: 18, bottom: this.bottomInset + 88 })
-        .alignItems(HorizontalAlign.Start);
-    }.width('100%').height('100%').scrollBar(BarState.Off);
-  }
-
-  @Builder
-  hotBasicPage() {
-    Scroll() {
-      Column({ space: 8 }) {
-        Text('热门榜单').fontSize(22).fontWeight(FontWeight.Bold).fontColor(Color.Black).width('100%');
-        Text('全站热度实时排行').fontSize(13).fontColor('#858C94').width('100%').margin({ bottom: 6 });
-        ForEach(['年度最佳番剧推荐', '热门游戏直播回顾', '音乐节精彩瞬间', '科技产品评测', '旅行攻略分享', '美食探店指南'], (title: string, index: number) => {
-          Row({ space: 12 }) {
-            Text(String(index + 1)).fontSize(index < 3 ? 20 : 15).fontWeight(FontWeight.Bold)
-              .fontColor(index === 0 ? '#D28A2E' : index === 1 ? '#7D8791' : index === 2 ? '#A66F4D' : '#858C94')
-              .width(30).textAlign(TextAlign.Center);
-            Column({ space: 5 }) {
-              Text(title).fontSize(15).fontWeight(FontWeight.Bold).fontColor(Color.Black).maxLines(1);
-              Text(['综合热度 98.6万', '综合热度 87.3万', '综合热度 76.9万', '综合热度 65.2万', '综合热度 54.8万', '综合热度 49.1万'][index])
-                .fontSize(12).fontColor('#858C94');
-            }.layoutWeight(1).alignItems(HorizontalAlign.Start);
-            Text('查看').fontSize(12).fontColor('#1677A8');
-          }.width('100%').padding({ top: 14, bottom: 14, left: 8, right: 8 })
-            .backgroundColor(Color.White).borderRadius(10);
-        });
-      }.width('100%').padding({ left: 14, right: 14, top: 18, bottom: this.bottomInset + 88 })
-        .alignItems(HorizontalAlign.Start);
-    }.width('100%').height('100%').scrollBar(BarState.Off);
-  }
-
-  @Builder
-  dynamicBasicPage() {
-    Refresh({ refreshing: $$this.refreshing, offset: 56, friction: 80 }) {
-    Scroll() {
-      Column({ space: 12 }) {
-        Row() {
-          Text('最近更新').fontSize(18).fontWeight(FontWeight.Bold).fontColor('#1E252D')
-            .layoutWeight(1);
-          Button() {
-            Image($r('app.media.edit')).width(20).height(20);
-          }.type(ButtonType.ROUNDED_RECTANGLE).width(48).height(48)
-            .backgroundColor(ImmersiveMaterial.fallbackBackground(0.72))
-            .borderRadius(24)
-            .systemMaterial(ImmersiveMaterial.thin())
-            .shadow({ radius: 6, color: '#25000000', offsetX: 0, offsetY: 2 })
-            .onClick(() => { this.showDynamicEditor = true; });
-        }.width('100%').height(48);
-        Scroll() {
-          Row({ space: 14 }) {
-            ForEach(this.dynamicAuthors, (author: DynamicAuthor) => {
-              Column({ space: 4 }) {
-                Image(author.face).width(50).height(50).borderRadius(25).objectFit(ImageFit.Cover);
-                Text(author.name).fontSize(11).fontColor('#59616B').maxLines(1)
-                  .textOverflow({ overflow: TextOverflow.Ellipsis }).width(58).textAlign(TextAlign.Center);
-              }.width(58);
-            }, (author: DynamicAuthor) => `dynamic_author_${author.name}`);
-          }.width(Math.max(4, this.dynamicAuthors.length * 72 + 4))
-            .padding({ left: 2, right: 2 });
-        }.width('100%').height(78)
-          .scrollable(ScrollDirection.Horizontal).scrollBar(BarState.Off);
-        if (this.dynamicLoading && this.dynamicVideos.length === 0) {
-          this.loadingIndicator('正在加载关注动态', '#1677A8');
-        } else if (this.dynamicError !== '') {
-          Text(this.dynamicError).fontSize(14).fontColor('#858C94').width('100%').textAlign(TextAlign.Center)
-            .margin({ top: 30 });
-        } else if (this.dynamicVideos.length === 0) {
-          Text('暂时没有新的投稿').fontSize(14).fontColor('#858C94').width('100%').textAlign(TextAlign.Center)
-            .margin({ top: 30 });
-        } else {
-          ForEach(this.dynamicVideos, (item: VideoItem) => {
-            this.dynamicVideoCard(item);
-          }, (item: VideoItem) => `dynamic_${item.id}`);
-        }
-      }.width('100%').padding({ left: 14, right: 14, top: 10, bottom: this.bottomInset + 88 })
-        .alignItems(HorizontalAlign.Start);
-    }.width('100%').height('100%').scrollBar(BarState.Off);
-    }
-    .layoutWeight(1).width('100%')
-    .onRefreshing(() => { this.refreshCurrentPage(); });
-  }
-
-  @Builder
-  dynamicVideoCard(item: VideoItem) {
-    Column({ space: 8 }) {
-      if (item.cover !== '') {
-        Image(item.cover).width('100%').aspectRatio(1.78).objectFit(ImageFit.Cover).borderRadius(8)
-          .onClick(() => { this.openDynamicVideo(item); });
-      }
-      Text(item.title).fontSize(15).fontWeight(FontWeight.Medium).maxLines(2).lineHeight(22);
-      Row() {
-        Text('@' + item.author).fontSize(12).fontColor('#1677A8').layoutWeight(1);
-        Text(this.formatPublishTime(item.publishTime)).fontSize(12).fontColor('#858C94');
-      }.width('100%');
-      Row() {
-        Row({ space: 4 }) {
-          Image($r('app.media.bfl')).width(15).height(15);
-          Text(this.formatCount(item.viewCount)).fontSize(11).fontColor('#858C94');
-        }.layoutWeight(1);
-        Row({ space: 4 }) {
-          Image($r('app.media.dm')).width(15).height(15);
-          Text(this.formatCount(item.danmuCount)).fontSize(11).fontColor('#858C94');
-        }.layoutWeight(1);
-        Row({ space: 4 }) {
-          Image($r('app.media.dianzan')).width(15).height(15);
-          Text(this.formatCount(item.likeCount)).fontSize(11).fontColor('#858C94');
-        }.layoutWeight(1);
-        Row({ space: 4 }) {
-          Image($r('app.media.pl')).width(15).height(15);
-          Text(this.formatCount(item.commentCount)).fontSize(11).fontColor('#858C94');
-        }.layoutWeight(1).onClick(() => { this.openDynamicVideo(item, true); });
-        Row({ space: 4 }) {
-          Image($r('app.media.share')).width(15).height(15);
-          Text(this.formatCount(item.shareCount ?? 0)).fontSize(11).fontColor('#858C94');
-        }.layoutWeight(1);
-      }.width('100%');
-    }.width('100%').padding(12).backgroundColor(Color.White).borderRadius(10)
-      .onClick(() => { this.openDynamicVideo(item); });
-  }
-
-  @Builder
-  dynamicEditorPage() {
-    Column() {
-      Row({ space: 10 }) {
-        Button() {
-          Image($r('app.media.fanhui_left')).width(24).height(24);
-        }.type(ButtonType.ROUNDED_RECTANGLE).width(44).height(44)
-          .backgroundColor(Color.Transparent)
-          .onClick(() => { this.showDynamicEditor = false; });
-        Text('发布动态').fontSize(20).fontWeight(FontWeight.Bold).layoutWeight(1);
-      }.width('100%').padding({ left: 12, right: 12, top: 8, bottom: 8 });
-      Column() {
-        Text('').fontSize(1);
-      }.layoutWeight(1).width('100%');
-    }.width('100%').height('100%').backgroundColor('#F7F8FA');
-  }
-
-  @Builder
-  animeBasicPage() {
-    Scroll() {
-      Column({ space: 12 }) {
-        Row() {
-          Text('番剧').fontSize(22).fontWeight(FontWeight.Bold).fontColor(Color.Black);
-          Text('更新中').fontSize(13).fontColor('#1677A8');
-        }.width('100%').justifyContent(FlexAlign.SpaceBetween);
-        Grid() {
-          ForEach(['进击的巨人', '间谍过家家', '夏日重现', '电锯人', '咒术回战', '我的英雄学院'], (title: string, index: number) => {
-            GridItem() {
-              Column({ space: 7 }) {
-                Stack() {
-                  Column() { Text('番剧').fontSize(14).fontWeight(FontWeight.Bold).fontColor(Color.White); }
-                    .width('100%').height('100%').justifyContent(FlexAlign.Center).alignItems(HorizontalAlign.Center)
-                    .backgroundColor(['#7C9FC4', '#C58A9B', '#8BAE9B', '#D29B69', '#9288B8', '#769EAA'][index]);
-                }.width('100%').height(148).borderRadius(10);
-                Text(title).fontSize(14).fontWeight(FontWeight.Bold).fontColor(Color.Black).maxLines(1);
-                Text('更新至第 ' + String(index + 8) + ' 集').fontSize(12).fontColor('#858C94');
-              }.width('100%').alignItems(HorizontalAlign.Start);
-            }
-          });
-        }.columnsTemplate('1fr 1fr').columnsGap(12).rowsGap(16).width('100%');
-      }.width('100%').padding({ left: 14, right: 14, top: 18, bottom: this.bottomInset + 88 })
-        .alignItems(HorizontalAlign.Start);
-    }.width('100%').height('100%').scrollBar(BarState.Off);
-  }
-
-  @Builder
   webLoginPage() {
     Column() {
       Row({ space: 10 }) {
@@ -2272,18 +2047,28 @@ struct Index {
             .layoutWeight(1).width('100%')
             .onRefreshing(() => { this.refreshCurrentPage(); });
 } else if (this.contentTab === 0) {
-              this.liveBasicPage();
+              LivePage({ bottomInset: this.bottomInset });
 	            } else if (this.contentTab === 2) {
-              this.hotBasicPage();
+              HotPage({ bottomInset: this.bottomInset });
 	            } else if (this.contentTab === 3) {
-              this.dynamicBasicPage();
+              DynamicPage({
+                bottomInset: this.bottomInset,
+                onPlayVideo: (item: VideoItem): void => {
+                  this.openDynamicVideo(item, false);
+                }
+              });
 	            } else {
-              this.animeBasicPage();
+              AnimePage({ bottomInset: this.bottomInset });
 	            }
           } else if (this.activeTab === 0) {
-            this.dynamicBasicPage();
+            DynamicPage({
+              bottomInset: this.bottomInset,
+              onPlayVideo: (item: VideoItem): void => {
+                this.openDynamicVideo(item, false);
+              }
+            });
           } else {
-            this.animeBasicPage();
+            AnimePage({ bottomInset: this.bottomInset });
           }
           }.width('100%').height('100%').padding({ top: this.topInset }).backgroundColor('#F7F8FA');
           Row({ space: 10 }) {
@@ -2310,7 +2095,6 @@ if (this.floatBallSwapped) {
                 this.refreshing = false;
                 this.actionMenuVisible = false;
                 this.loadError = '';
-                this.loadDynamicVideos(true);
               });
 	              Button() {
 	                Column({ space: 2 }) {
@@ -2422,9 +2206,6 @@ if (this.floatBallSwapped) {
         .backgroundColor(ImmersiveMaterial.fallbackBackground())
         .systemMaterial(ImmersiveMaterial.thin())
         .transition({ type: TransitionType.Insert, opacity: 0.0 });
-      }
-      if (this.showDynamicEditor && !this.showVertical) {
-        this.dynamicEditorPage();
       }
     }.width('100%').height('100%')
       .backgroundColor('#F7F8FA')

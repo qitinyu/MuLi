@@ -26,6 +26,26 @@ export class BiliHttpClient {
     }
   }
 
+  static async getJsonHost(host: string, path: string, query: Record<string, string>, cookie: string = ''): Promise<Record<string, Object>> {
+    const request: http.HttpRequest = http.createHttp();
+    const queryText: string = Object.keys(query)
+      .map((key: string) => `${encodeURIComponent(key)}=${encodeURIComponent(query[key])}`)
+      .join('&');
+    const url: string = `https://${host}${path}?${queryText}`;
+    const headers: Record<string, string> = BiliHttpClient.buildHeaders(cookie);
+    try {
+      const response: http.HttpResponse = await request.request(url, {
+        method: http.RequestMethod.GET,
+        header: headers,
+        connectTimeout: 10000,
+        readTimeout: 15000
+      });
+      return JSON.parse(response.result as string) as Record<string, Object>;
+    } finally {
+      request.destroy();
+    }
+  }
+
   static async getJsonQuery(path: string, queryText: string, cookie: string = ''): Promise<Record<string, Object>> {
     const request: http.HttpRequest = http.createHttp();
     const headers: Record<string, string> = BiliHttpClient.buildHeaders(cookie);

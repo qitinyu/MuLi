@@ -133,9 +133,10 @@ struct SearchPage {
       router.back({
         url: 'pages/Index',
         params: {
-          pilihosSearch: {
+          pilihosPlayback: {
             results: this.searchResults,
-            index: index
+            index: index,
+            nonce: `${Date.now()}-${index}`
           }
         }
       });

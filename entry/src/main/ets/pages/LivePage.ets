@@ -1,238 +1,146 @@
-import { router } from '@ohos.router';
-import { common } from '@ohos.app.ability.common';
-import { preferences } from '@kit.ArkData';
-import { window } from '@ohos.window';
-import { BusinessError } from '@kit.BasicServicesKit';
+import router from '@ohos.router';
+import { LiveRoom, LiveService } from '../services/LiveService';
 
-// 直播数据模型
-export class LiveData {
-  id: string = '';
-  streamerName: string = '';
-  streamerAvatar: string = '';
-  coverUrl: string = '';
-  title: string = '';
-  viewerCount: number = 0;
-  isLive: boolean = false;
-  category: string = '';
-  startTime: string = '';
-}
-
-// 直播项组件
-@Component
-struct LiveItem {
-  @Prop liveData: LiveData
-  
-  build() {
-    Stack() {
-      // 直播封面
-      Image(this.liveData.coverUrl)
-        .width('100%')
-        .height(180)
-        .borderRadius(8)
-      
-      // 直播状态标识
-      if (this.liveData.isLive) {
-        Badge({ count: 'LIVE' })
-          .position({ x: '90%', y: '10%' })
-      }
-      
-      // 主播信息
-      Row() {
-        Image(this.liveData.streamerAvatar)
-          .width(32)
-          .height(32)
-          .borderRadius(16)
-        Column() {
-          Text(this.liveData.streamerName)
-            .fontSize(14)
-            .fontWeight(FontWeight.Bold)
-          Text(`${this.liveData.viewerCount} 观看`)
-            .fontSize(12)
-            .fontColor($r('app.color.text_secondary'))
-        }
-      }
-      .position({ x: 16, y: 16 })
-      
-      // 进入按钮
-      Button('进入直播')
-        .width('80%')
-        .height(36)
-        .position({ x: '10%', y: '80%' })
-        .onClick(() => {
-          router.pushUrl({ url: 'pages/LiveDetail' + this.liveData.id })
-        })
-    }
-    .width('100%')
-    .margin({ bottom: 16 })
-  }
-}
-
-// 直播详情页（占位）
-@Component
-struct LiveDetailPage {
-  @Prop liveData: LiveData
-  
-  build() {
-    Column() {
-      Image(this.liveData.coverUrl)
-        .width('100%')
-        .height(250)
-        .objectFit(ImageFit.Cover)
-      
-      Text(this.liveData.title)
-        .fontSize(20)
-        .fontWeight(FontWeight.Bold)
-        .padding({ top: 16, bottom: 8 })
-      
-      Row() {
-        Image(this.liveData.streamerAvatar)
-          .width(40)
-          .height(40)
-          .borderRadius(20)
-        Column() {
-          Text(this.liveData.streamerName)
-            .fontSize(16)
-            .fontWeight(FontWeight.Bold)
-          Text(this.liveData.category)
-            .fontSize(12)
-            .fontColor($r('app.color.text_secondary'))
-        }
-        .layoutWeight(1)
-        .margin({ left: 12 })
-        Text(`${this.liveData.viewerCount} 观看中`)
-          .fontSize(14)
-          .fontColor($r('app.color.text_secondary'))
-      }
-      .padding({ left: 16, right: 16 })
-      
-      Text(this.liveData.startTime)
-        .fontSize(12)
-        .fontColor($r('app.color.text_secondary'))
-        .padding({ left: 16, right: 16, top: 8, bottom: 16 })
-      
-      Button('开始观看')
-        .width('90%')
-        .height(40)
-        .margin({ top: 24, bottom: 24 })
-        .onClick(() => {
-          // 播放逻辑
-        })
-    }
-    .padding(16)
-    .backgroundColor($r('app.color.background'))
-  }
-}
-
-@Entry
 @Component
 export struct LivePage {
-  @State liveList: LiveData[] = [];
+  @Prop bottomInset: number = 8;
+  @State liveList: LiveRoom[] = [];
   @State loading: boolean = true;
+  @State loadingMore: boolean = false;
+  @State refreshing: boolean = false;
   @State loadError: string = '';
-  @State topInset: number = 24;
-  @State bottomInset: number = 8;
-  private context: common.UIAbilityContext = getContext(this) as common.UIAbilityContext;
+  private page: number = 1;
 
   aboutToAppear(): void {
-    this.loadLiveList();
-    window.getLastWindow(this.context).then((mainWindow: window.Window): void => {
-      const systemArea: window.AvoidArea = mainWindow.getWindowAvoidArea(window.AvoidAreaType.TYPE_SYSTEM);
-      const navigationArea: window.AvoidArea = mainWindow.getWindowAvoidArea(window.AvoidAreaType.TYPE_NAVIGATION_INDICATOR);
-      this.topInset = px2vp(systemArea.topRect.height);
-      this.bottomInset = px2vp(navigationArea.bottomRect.height);
-    }).catch((error: BusinessError): void => {
-      console.error(`Live page avoid area failed: ${error.code} ${error.message}`);
+    this.loadLiveList(true);
+  }
+
+  private async loadLiveList(refresh: boolean = false): Promise<void> {
+    if (refresh) {
+      if (this.loading) return;
+      this.refreshing = true;
+      this.loading = true;
+      this.loadError = '';
+      this.page = 1;
+    } else {
+      if (this.loadingMore) return;
+      this.loadingMore = true;
+    }
+    try {
+      const rooms: LiveRoom[] = await LiveService.loadLiveList(this.page);
+      this.liveList = refresh ? rooms : this.liveList.concat(rooms);
+    } catch (error) {
+      if (refresh) {
+        this.loadError = '直播列表加载失败，请检查网络';
+      }
+      console.error('Pilihos live page load failed: ' + String(error));
+    } finally {
+      this.loading = false;
+      this.loadingMore = false;
+      this.refreshing = false;
+    }
+  }
+
+  private openLiveDetail(room: LiveRoom): void {
+    router.pushUrl({
+      url: 'pages/LiveDetail',
+      params: { room: room }
+    }).catch((error: Object): void => {
+      console.error('Pilihos live detail page failed: ' + String(error));
     });
   }
 
-  private async loadLiveList(): Promise<void> {
-    this.loading = true;
-    this.loadError = '';
-    try {
-      // 模拟加载直播数据
-      setTimeout(() => {
-        this.liveList = this.generateMockData();
-        this.loading = false;
-      }, 1000);
-    } catch (error) {
-      this.loadError = '加载直播失败';
-      console.error('Live page load failed: ' + String(error));
-      this.loading = false;
-    }
-  }
-
-  private generateMockData(): LiveData[] {
-    const mockData: LiveData[] = [];
-    const streamerNames = ['主播A', '主播B', '主播C', '主播D', '主播E', '主播F'];
-    const categories = ['游戏', '娱乐', '音乐', '聊天', '绘画', '美食'];
-    
-    for (let i = 0; i < 8; i++) {
-      const data: LiveData = {
-        id: `live_${i}`,
-        streamerName: streamerNames[i % streamerNames.length],
-        streamerAvatar: `https://picsum.photos/seed/streamer${i}/40/40.jpg`,
-        coverUrl: `https://picsum.photos/seed/live${i}/400/240.jpg`,
-        title: `${streamerNames[i % streamerNames.length]}的直播 - ${categories[i % categories.length]}`,
-        viewerCount: Math.floor(Math.random() * 10000),
-        isLive: Math.random() > 0.3,
-        category: categories[i % categories.length],
-        startTime: this.formatStartTime(Date.now() - Math.random() * 3600000)
-      };
-      
-      mockData.push(data);
-    }
-    
-    return mockData;
-  }
-
-  private formatStartTime(timestamp: number): string {
-    const date: Date = new Date(timestamp);
-    const hours: number = date.getHours();
-    const minutes: number = date.getMinutes();
-    return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
+  private formatCount(value: number): string {
+    if (value >= 100000000) return `${(value / 100000000).toFixed(2).replace(/\.00$/, '')}亿`;
+    if (value >= 1000000) return `${(value / 100000).toFixed(2).replace(/\.00$/, '')}万`;
+    if (value >= 1000) return `${(value / 1000).toFixed(1).replace(/\.0$/, '')}千`;
+    return `${value}`;
   }
 
   @Builder
-  loadingIndicator() {
-    Row({ space: 8 }) {
-      LoadingProgress().width(26).height(26).color('#1677A8');
-      Text('加载中...').fontSize(14).fontColor('#1677A8');
+  liveCard(room: LiveRoom) {
+    Row({ space: 12 }) {
+      Stack({ alignContent: Alignment.BottomStart }) {
+        Image(room.cover !== '' ? room.cover : room.face)
+          .width(128).height(82).borderRadius(8).objectFit(ImageFit.Cover);
+        Row({ space: 3 }) {
+          Circle({ width: 6, height: 6 }).fill(Color.White);
+          Text('LIVE').fontSize(10).fontWeight(FontWeight.Bold).fontColor(Color.White);
+        }
+        .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+        .backgroundColor('#E6000044').borderRadius(10)
+        .margin(6);
+      };
+      Column({ space: 6 }) {
+        Text(room.title === '' ? '未开播' : room.title).fontSize(15).fontWeight(FontWeight.Medium)
+          .fontColor('#20242A').maxLines(2).textOverflow({ overflow: TextOverflow.Ellipsis })
+          .lineHeight(20).width('100%');
+        Row({ space: 6 }) {
+          Image(room.face).width(20).height(20).borderRadius(10).objectFit(ImageFit.Cover);
+          Text(room.uname).fontSize(12).fontColor('#8B9199').layoutWeight(1)
+            .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis });
+        }.width('100%');
+        Row({ space: 8 }) {
+          if (room.areaName !== '') {
+            Text(room.areaName).fontSize(10).fontColor('#1677A8')
+              .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+              .backgroundColor('#1A1677A8').borderRadius(4);
+          }
+          Text(this.formatCount(room.online) + ' 人观看').fontSize(11).fontColor('#A4A9AF')
+            .layoutWeight(1).maxLines(1);
+        }.width('100%');
+      }.layoutWeight(1).alignItems(HorizontalAlign.Start);
     }
-    .justifyContent(FlexAlign.Center).alignItems(VerticalAlign.Center);
+    .width('100%')
+    .padding(10)
+    .backgroundColor(Color.White)
+    .borderRadius(10)
+    .onClick((): void => { this.openLiveDetail(room); });
   }
 
   build() {
-    Stack() {
-      if (this.loading) {
-        this.loadingIndicator();
-      } else if (this.loadError) {
+    Refresh({ refreshing: $$this.refreshing, offset: 56, friction: 80 }) {
+      Scroll() {
         Column() {
-          Text(this.loadError).fontSize(16).fontColor('#FF4444');
-          Button('重试').onClick(() => this.loadLiveList());
-        }
-        .justifyContent(FlexAlign.Center).alignItems(HorizontalAlign.Center)
-        .width('100%').height('100%');
-      } else {
-        Scroll() {
-          Column() {
-            Text('正在直播')
-              .fontSize(20)
-              .fontWeight(FontWeight.Bold)
-              .padding({ left: 16, top: 16, bottom: 16 })
-            
-            ForEach(this.liveList, (item: LiveData) => {
-              LiveItem({ liveData: item });
-            }, (item: LiveData) => item.id);
+          Text('正在直播').fontSize(20).fontWeight(FontWeight.Bold).fontColor('#1E252D')
+            .width('100%').padding({ left: 4, bottom: 12 });
+          if (this.liveList.length === 0 && this.loading) {
+            Row({ space: 8 }) {
+              LoadingProgress().width(26).height(26).color('#1677A8');
+              Text('正在获取直播列表...').fontSize(14).fontColor('#1677A8');
+            }.justifyContent(FlexAlign.Center).width('100%').margin({ top: 60 });
+          } else if (this.liveList.length === 0 && this.loadError !== '') {
+            Column({ space: 12 }) {
+              Text(this.loadError).fontSize(14).fontColor('#8B9199');
+              Button('重试').onClick(() => this.loadLiveList(true));
+            }.width('100%').margin({ top: 60 }).alignItems(HorizontalAlign.Center);
+          } else {
+            ForEach(this.liveList, (room: LiveRoom) => {
+              Column() {
+                this.liveCard(room);
+              }.width('100%').padding({ bottom: 10 });
+            }, (room: LiveRoom) => `live_${room.roomId}`);
+            if (this.loadingMore) {
+              Row({ space: 8 }) {
+                LoadingProgress().width(22).height(22).color('#1677A8');
+                Text('加载中...').fontSize(13).fontColor('#1677A8');
+              }.justifyContent(FlexAlign.Center).width('100%').padding({ top: 10 });
+            }
           }
-          .width('100%')
-          .padding({ top: this.topInset + 16, bottom: this.bottomInset + 16 })
-          .alignItems(HorizontalAlign.Start);
         }
-        .width('100%').height('100%')
-        .scrollBar(BarState.Off);
+        .width('100%')
+        .padding({ left: 12, right: 12, bottom: this.bottomInset + 88 });
       }
+      .width('100%').height('100%')
+      .scrollBar(BarState.Off)
+      .onReachEnd((): void => {
+        if (this.loading || this.loadingMore) return;
+        if (this.liveList.length < 20 * this.page) return;
+        this.page += 1;
+        this.loadLiveList(false);
+      });
     }
     .width('100%').height('100%')
-    .backgroundColor($r('app.color.background'));
+    .onRefreshing(() => { this.loadLiveList(true); });
   }
 }
