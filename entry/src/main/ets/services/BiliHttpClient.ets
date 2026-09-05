@@ -85,7 +85,27 @@ export class BiliHttpClient {
     };
     if (cookie !== '') {
       headers['Cookie'] = cookie;
+    } else {
+      // 匿名请求携带随机 buvid3，避免风控接口（如直播 API）返回 -352
+      headers['Cookie'] = 'buvid3=' + BiliHttpClient.randomBuvid();
     }
     return headers;
   }
+
+  private static randomBuvid(): string {
+    if (BiliHttpClient.cachedBuvid !== '') return BiliHttpClient.cachedBuvid;
+    const hex: string = '0123456789ABCDEF';
+    let uuid: string = '';
+    for (let i = 0; i < 36; i++) {
+      if (i === 8 || i === 13 || i === 18 || i === 23) {
+        uuid += '-';
+        continue;
+      }
+      uuid += hex[Math.floor(Math.random() * 16)];
+    }
+    BiliHttpClient.cachedBuvid = uuid + 'infoc';
+    return BiliHttpClient.cachedBuvid;
+  }
+
+  private static cachedBuvid: string = '';
 }

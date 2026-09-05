@@ -11,20 +11,21 @@ export struct HotPage {
   @State refreshing: boolean = false;
   @State loadError: string = '';
   private page: number = 1;
+  private fetching: boolean = false;
 
   aboutToAppear(): void {
     this.loadHotList(true);
   }
 
   private async loadHotList(refresh: boolean = false): Promise<void> {
+    if (this.fetching) return;
+    this.fetching = true;
     if (refresh) {
-      if (this.loading) return;
       this.refreshing = true;
       this.loading = true;
       this.loadError = '';
       this.page = 1;
     } else {
-      if (this.loadingMore) return;
       this.loadingMore = true;
     }
     try {
@@ -39,6 +40,7 @@ export struct HotPage {
       this.loading = false;
       this.loadingMore = false;
       this.refreshing = false;
+      this.fetching = false;
     }
   }
 

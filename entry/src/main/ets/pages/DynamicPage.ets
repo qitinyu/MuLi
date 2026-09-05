@@ -15,6 +15,7 @@ export struct DynamicPage {
   @State selectedAuthor: string = '';
   private feedOffset: string = '';
   private hasMore: boolean = false;
+  private fetching: boolean = false;
 
   private toggleAuthorFilter(name: string): void {
     this.selectedAuthor = this.selectedAuthor === name ? '' : name;
@@ -31,15 +32,15 @@ export struct DynamicPage {
   }
 
   private async loadFeed(refresh: boolean = false): Promise<void> {
+    if (this.fetching) return;
+    if (!refresh && !this.hasMore) return;
+    this.fetching = true;
     if (refresh) {
-      if (this.loading) return;
       this.refreshing = true;
       this.loading = true;
       this.loadError = '';
       this.feedOffset = '';
     } else {
-      if (this.loadingMore || this.loading) return;
-      if (!this.hasMore) return;
       this.loadingMore = true;
     }
     try {
@@ -75,6 +76,7 @@ export struct DynamicPage {
       this.loading = false;
       this.refreshing = false;
       this.loadingMore = false;
+      this.fetching = false;
     }
   }
 
