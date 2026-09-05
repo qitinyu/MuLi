@@ -699,7 +699,7 @@ struct Settings {
           Column({ space: 8 }) {
             Image($r('app.media.app_logo')).width(112).height(112).borderRadius(22);
             Text('Pilihos').fontSize(28).fontWeight(FontWeight.Bold);
-            Text('Version 1.0.4').fontSize(15).fontColor('#646A73');
+            Text('Version 1.0.4.12').fontSize(15).fontColor('#646A73');
           }
           .width('100%')
           .alignItems(HorizontalAlign.Center)
@@ -712,14 +712,16 @@ struct Settings {
           Row({ space: 10 }) {
             this.aboutInfoCard('软件协议', '本软件采用 MIT 开源协议');
             this.aboutInfoCard('版本日志',
-              'v1.0.4\n' +
-              '1. 搜索页独立化，支持搜索历史记忆\n' +
-              '\nv1.0.3.6\n' +
-              '1. 修改首页顶栏样式设置\n' +
-              '2. 增加播放区基础图标及其样式\n' +
-              '3. 修改复up主头像不显示的问题\n' +
-              '4. 修复视频黑屏无法播放的问题\n' +
-              '5. 完整更新日志(Pilihos Wiki]https://github.com/qitinyu/Pilihos/wiki/)');
+              'v1.0.4.12\n' +
+              '1. 搜索独立化与分类搜索 #1041\n' +
+              '2. 页签真实数据化与详情页 #1042\n' +
+              '3. 动态页功能化 #1043\n' +
+              '4. 评论区改版 #1044\n' +
+              '5. 直播分区与关注卡片 #1045\n' +
+              '6. 播放区自适应与竖屏化 #1046-1047\n' +
+              '7. 续播与控件优化 #1048-1049\n' +
+              '8. 竖屏标记/过滤词/底部常驻 #10410-10412\n' +
+              '完整更新日志(Pilihos Wiki]https://github.com/qitinyu/Pilihos/wiki/)');
           }.width('100%').justifyContent(FlexAlign.SpaceBetween);
 
           this.aboutLinkCard('用户反馈', 'https://github.com/qitinyu/Pilihos/discussions/');

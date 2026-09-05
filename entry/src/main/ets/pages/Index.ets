@@ -1401,6 +1401,14 @@ struct Index {
       .position({ left: 16, top: 16 })
       .visibility(this.playbackControlsVisible ? Visibility.Visible : Visibility.None)
       .onClick(() => { this.onBackPress(); });
+      Button() {
+        Image($r('app.media.qp')).width(22).height(22).fillColor(Color.White);
+      }
+      .type(ButtonType.Circle).width(44).height(44)
+      .backgroundColor('#66000000')
+      .position({ right: 16, bottom: 90 })
+      .visibility(this.playbackControlsVisible ? Visibility.Visible : Visibility.None)
+      .onClick(() => { this.closeLandscapePlayback(); });
     }
     .width('100%').height('100%').backgroundColor(Color.Black)
     .onClick((): void => { this.showPlaybackControls(); });
@@ -1466,15 +1474,6 @@ struct Index {
       .position({ left: 10, top: 10 })
         .visibility(this.playbackControlsVisible ? Visibility.Visible : Visibility.None)
         .onClick(() => { this.onBackPress(); });
-        Button() {
-          Image($r('app.media.down_xia')).width(20).height(20).fillColor(Color.White);
-        }
-        .type(ButtonType.ROUNDED_RECTANGLE).width(40).height(40)
-        .backgroundColor('#66000000').borderRadius(20)
-        .position({ right: 10, top: 10 })
-        .visibility(this.verticalExpanded && this.playbackControlsVisible
-          ? Visibility.Visible : Visibility.None)
-        .onClick(() => { this.verticalExpanded = false; });
         if (this.currentUrl !== '') {
           this.playbackControls();
         }
@@ -1503,7 +1502,7 @@ struct Index {
         .type(ButtonType.ROUNDED_RECTANGLE).width(40).height(40)
         .backgroundColor(Color.Transparent)
         .borderRadius(20)
-        .margin({ right: 6 })
+        .margin({ right: 14 })
         .onClick(() => {
           this.pendingResumeMs = this.playbackCurrentMs;
           this.verticalExpanded = !this.verticalExpanded;
@@ -1642,15 +1641,24 @@ struct Index {
                       Image($r('app.media.bfl')).width(13).height(13);
                       Text(this.formatCount(item.viewCount)).fontSize(11).fontColor('#858C94');
                     }
+                    Row({ space: 3 }) {
+                      Image($r('app.media.dm')).width(13).height(13);
+                      Text(this.formatCount(item.danmuCount)).fontSize(11).fontColor('#858C94');
+                    }
+                    Text(this.formatPublishTime(item.publishTime))
+                      .fontSize(11).fontColor('#858C94').layoutWeight(1)
+                      .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis });
+                  }.width('100%');
+                  Row({ space: 6 }) {
                     if (this.isPortraitVideo(item)) {
                       Text('竖屏').fontSize(9).fontColor('#E661A0')
                         .padding({ left: 4, right: 4, top: 1, bottom: 1 })
                         .backgroundColor('#1AE661A0').borderRadius(3);
                     }
-                    Text(this.formatPublishTime(item.publishTime))
-                      .fontSize(11).fontColor('#858C94').layoutWeight(1);
+                    Text(`@${item.author}`).fontSize(11).fontColor('#858C94')
+                      .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
+                      .layoutWeight(1);
                   }.width('100%');
-                  Text(`@${item.author}`).fontSize(11).fontColor('#858C94');
                 }.layoutWeight(1).alignItems(HorizontalAlign.Start);
               }.width('100%').onClick(() => {
                 this.openVideoDetail(item, this.detailSection === 1);
