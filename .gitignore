@@ -1,0 +1,30 @@
+# 构建输出
+/node_modules
+/oh_modules
+**/build
+**/.cxx
+/.hvigor
+.preview/
+/.clangd
+*.class
+
+# IDE 与工具缓存
+/.idea
+/.appanalyzer
+/.codegenie
+
+# 本地环境配置（SDK 路径等）
+/local.properties
+
+# 日志
+/log
+
+# 损坏文件备份
+*.corrupt-backup
+
+# 签名材料（p12 私钥、证书、Profile，禁止入库）
+/pilihoszs
+
+# 系统文件
+.DS_Store
+Thumbs.db
