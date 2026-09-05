@@ -1,6 +1,7 @@
 import { VideoItem } from '../models/VideoItem';
 import { AuthService } from '../services/AuthService';
 import { DynamicAuthor, DynamicEntry, DynamicFeedBatch, DynamicPic, DynamicService } from '../services/DynamicService';
+import { FilterWords } from '../utils/FilterWords';
 
 @Component
 export struct DynamicPage {
@@ -56,7 +57,11 @@ export struct DynamicPage {
         await DynamicService.loadFeed(cookie, refresh ? '' : this.feedOffset);
       this.feedOffset = batch.offset;
       this.hasMore = batch.hasMore;
-      this.entries = refresh ? batch.entries : this.entries.concat(batch.entries);
+      const visible: DynamicEntry[] = batch.entries.filter((entry: DynamicEntry): boolean => {
+        const title: string = entry.video !== null ? entry.video.title : '';
+        return !FilterWords.isVideoFiltered(title) && !FilterWords.isVideoFiltered(entry.text);
+      });
+      this.entries = refresh ? visible : this.entries.concat(visible);
       if (refresh) {
         this.authors = batch.authors;
       } else {

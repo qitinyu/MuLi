@@ -5,6 +5,7 @@ import { preferences } from '@kit.ArkData';
 import window from '@ohos.window';
 import { ImmersiveMaterial } from '../utils/ImmersiveMaterial';
 import { AdvancedFeatures } from '../utils/AdvancedFeatures';
+import { FilterWords } from '../utils/FilterWords';
 
 @Entry
 @Component
@@ -28,6 +29,11 @@ struct Settings {
   @State advancedHuksEnabled: boolean = true;
   @State advancedWebCookieEnabled: boolean = true;
   @State advancedSegmentEnabled: boolean = true;
+  @State filterEditorVisible: boolean = false;
+  @State filterEditorKind: string = 'video';
+  @State filterEditorText: string = '';
+  @State videoFilterSummary: string = '';
+  @State danmakuFilterSummary: string = '';
 
   private context: common.UIAbilityContext = getContext(this) as common.UIAbilityContext;
 
@@ -37,6 +43,33 @@ struct Settings {
     this.loadAppearanceSettings();
     this.loadSearchSettings();
     this.loadAdvancedSettings();
+    this.loadFilterSummaries();
+  }
+
+  private async loadFilterSummaries(): Promise<void> {
+    await FilterWords.load(this.context);
+    this.refreshFilterSummaries();
+  }
+
+  private refreshFilterSummaries(): void {
+    const videoWords: string[] = FilterWords.getWords('video');
+    const danmakuWords: string[] = FilterWords.getWords('danmaku');
+    this.videoFilterSummary = videoWords.length > 0
+      ? '已启用 ' + String(videoWords.length) + ' 个筛选词' : '未设置';
+    this.danmakuFilterSummary = danmakuWords.length > 0
+      ? '已启用 ' + String(danmakuWords.length) + ' 个筛选词' : '未设置';
+  }
+
+  private openFilterEditor(kind: string): void {
+    this.filterEditorKind = kind;
+    this.filterEditorText = FilterWords.getWords(kind).join('|');
+    this.filterEditorVisible = true;
+  }
+
+  private async saveFilterEditor(): Promise<void> {
+    await FilterWords.save(this.context, this.filterEditorKind, this.filterEditorText);
+    this.refreshFilterSummaries();
+    this.filterEditorVisible = false;
   }
 
   private async updateSystemInsets(): Promise<void> {
@@ -253,6 +286,7 @@ struct Settings {
       if (this.infoDialogVisible) {
         this.infoDialog();
       }
+      this.filterEditorOverlay();
     }
     .alignContent(Alignment.TopStart)
   }
@@ -402,6 +436,10 @@ struct Settings {
       Scroll() {
         Column({ space: 10 }) {
           this.settingsCard('播放质量', '自动选择', false);
+          this.filterCard('视频过滤词', this.videoFilterSummary,
+            '键入筛选词，相关视频不会出现在你的动态/推荐等版块。示例：xx|xx，可一行多个。', 'video');
+          this.filterCard('弹幕过滤词', this.danmakuFilterSummary,
+            '键入筛选词，命中关键词的弹幕将不会显示。示例：xx|xx，可一行多个。', 'danmaku');
           Row({ space: 12 }) {
             Column({ space: 5 }) {
               Text('推荐页刷新保留').fontSize(16).fontColor('#1E252D');
@@ -446,6 +484,71 @@ struct Settings {
           .alignItems(HorizontalAlign.Start).justifyContent(FlexAlign.Start);
       }.layoutWeight(1).width('100%').scrollBar(BarState.Off);
     }.width('100%').height('100%').backgroundColor('#F7F8FA');
+  }
+
+  @Builder
+  filterCard(title: string, summary: string, hint: string, kind: string) {
+    Row({ space: 12 }) {
+      Column({ space: 5 }) {
+        Row({ space: 6 }) {
+          Text(title).fontSize(16).fontColor('#1E252D');
+          Text('[' + summary + ']').fontSize(11).fontColor('#1677A8')
+            .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
+            .layoutWeight(1);
+        }.width('100%');
+        Text(hint).fontSize(11).fontColor('#858C94').maxLines(2);
+      }.layoutWeight(1).alignItems(HorizontalAlign.Start);
+      Button() {
+        Image($r('app.media.edit')).width(18).height(18).fillColor('#1677A8');
+      }
+      .type(ButtonType.ROUNDED_RECTANGLE).width(34).height(34)
+      .backgroundColor('#1A1677A8').borderRadius(17)
+      .onClick((): void => { this.openFilterEditor(kind); });
+    }.width('100%').padding({ left: 16, right: 14, top: 10, bottom: 10 })
+      .backgroundColor(ImmersiveMaterial.fallbackBackground()).borderRadius(10)
+      .systemMaterial(ImmersiveMaterial.thin())
+      .shadow({ radius: 4, color: '#16000000', offsetX: 0, offsetY: 1 })
+      .alignItems(VerticalAlign.Center)
+      .onClick((): void => { this.openFilterEditor(kind); });
+  }
+
+  @Builder
+  filterEditorOverlay() {
+    if (this.filterEditorVisible) {
+      Column() {
+        Column().width('100%').height('100%').backgroundColor('#66000000')
+          .onClick(() => { this.filterEditorVisible = false; });
+        Column({ space: 12 }) {
+          Text(this.filterEditorKind === 'video' ? '视频过滤词' : '弹幕过滤词')
+            .fontSize(17).fontWeight(FontWeight.Bold).fontColor('#1E252D').width('100%');
+          Text('键入关键词和分隔符并保存，示例样式为：xx|xx，可以一行多个；单独一个筛选词没有字数上限。')
+            .fontSize(12).fontColor('#858C94').width('100%');
+          TextArea({ text: this.filterEditorText, placeholder: '示例：xx|xx\n可一行多个，回车换行' })
+            .width('100%').height(150)
+            .backgroundColor('#F1F3F5').borderRadius(8)
+            .padding(10)
+            .onChange((value: string) => { this.filterEditorText = value; });
+          Row({ space: 10 }) {
+            Button('取消')
+              .layoutWeight(1).height(40)
+              .backgroundColor('#F1F3F5').fontColor('#59616B')
+              .onClick(() => { this.filterEditorVisible = false; });
+            Button('保存')
+              .layoutWeight(1).height(40)
+              .backgroundColor('#1677A8').fontColor(Color.White)
+              .onClick((): void => { this.saveFilterEditor(); });
+          }.width('100%');
+        }
+        .width('88%')
+        .padding(16)
+        .backgroundColor(Color.White)
+        .borderRadius(14)
+        .shadow({ radius: 16, color: '#33000000', offsetX: 0, offsetY: 4 });
+      }
+      .width('100%').height('100%')
+      .justifyContent(FlexAlign.Center)
+      .alignItems(HorizontalAlign.Center);
+    }
   }
 
   @Builder
@@ -598,7 +701,7 @@ struct Settings {
       Text(label).fontSize(15).fontColor('#1E252D').layoutWeight(1);
       Image($r('app.media.jinxin_right')).width(17).height(17);
     }
-    .width('100%').height(76)
+    .width('100%').height(56)
     .layoutWeight(1)
     .padding({ left: 18, right: 14 })
     .backgroundColor(ImmersiveMaterial.fallbackBackground())
@@ -615,7 +718,7 @@ struct Settings {
       Text('浏览器打开').fontSize(13).fontColor('#646A73');
       Image($r('app.media.jinxin_right')).width(17).height(17);
     }
-    .width('100%').height(76)
+    .width('100%').height(56)
     .padding({ left: 18, right: 14 })
     .backgroundColor(ImmersiveMaterial.fallbackBackground())
     .borderRadius(10)

@@ -1,10 +1,16 @@
 import { VideoItem } from '../models/VideoItem';
-import { SearchService } from '../services/SearchService';
+import { AuthService } from '../services/AuthService';
+import { SearchSeason, SearchService, SearchUser } from '../services/SearchService';
 import { ImmersiveMaterial } from '../utils/ImmersiveMaterial';
 import router from '@ohos.router';
 import common from '@ohos.app.ability.common';
 import window from '@ohos.window';
 import { preferences } from '@kit.ArkData';
+
+class SearchTypeItem {
+  label: string = '';
+  value: string = '';
+}
 
 @Entry
 @Component
@@ -13,11 +19,28 @@ struct SearchPage {
   @State searchLoading: boolean = false;
   @State searchError: string = '';
   @State searchResults: VideoItem[] = [];
+  @State searchUsers: SearchUser[] = [];
+  @State searchSeasons: SearchSeason[] = [];
+  @State searchType: string = 'video';
   @State searchHistory: string[] = [];
   @State searchHistoryEnabled: boolean = false;
   @State searched: boolean = false;
   @State topInset: number = 0;
   private context: common.UIAbilityContext = getContext(this) as common.UIAbilityContext;
+  private typeItems: SearchTypeItem[] = SearchPage.buildTypeItems();
+
+  static buildTypeItems(): SearchTypeItem[] {
+    const items: SearchTypeItem[] = [];
+    const labels: string[] = ['视频', 'UP主', '番剧', '影视'];
+    const values: string[] = ['video', 'bili_user', 'media_bangumi', 'media_ft'];
+    for (let i = 0; i < labels.length; i++) {
+      const item: SearchTypeItem = new SearchTypeItem();
+      item.label = labels[i];
+      item.value = values[i];
+      items.push(item);
+    }
+    return items;
+  }
 
   aboutToAppear(): void {
     this.updateSystemInsets();
@@ -28,8 +51,6 @@ struct SearchPage {
     try {
       const mainWindow: window.Window = await window.getLastWindow(this.context);
       const systemArea: window.AvoidArea = mainWindow.getWindowAvoidArea(window.AvoidAreaType.TYPE_SYSTEM);
-      const navigationArea: window.AvoidArea =
-        mainWindow.getWindowAvoidArea(window.AvoidAreaType.TYPE_NAVIGATION_INDICATOR);
       this.topInset = px2vp(systemArea.topRect.height);
       mainWindow.on('avoidAreaChange', (data): void => {
         if (data.type === window.AvoidAreaType.TYPE_SYSTEM) {
@@ -53,6 +74,14 @@ struct SearchPage {
     }
   }
 
+  private switchType(value: string): void {
+    if (this.searchType === value) return;
+    this.searchType = value;
+    if (this.searchText.trim() !== '' && this.searched) {
+      this.submitVideoSearch(this.searchText);
+    }
+  }
+
   private async submitVideoSearch(keyword: string): Promise<void> {
     const value: string = keyword.trim();
     if (value === '' || this.searchLoading) return;
@@ -60,15 +89,21 @@ struct SearchPage {
     this.searchLoading = true;
     this.searchError = '';
     this.searchResults = [];
+    this.searchUsers = [];
+    this.searchSeasons = [];
     this.searched = true;
     try {
-      const results: VideoItem[] = await SearchService.searchVideo(value);
-      if (results.length === 0) {
-        this.showToast('没有找到相关视频');
-        return;
+      const session = AuthService.currentSession();
+      const cookie: string = session === null ? '' : session.cookie;
+      const batch = await SearchService.search(this.searchType, value, cookie);
+      this.searchResults = batch.videos;
+      this.searchUsers = batch.users;
+      this.searchSeasons = batch.seasons;
+      if (batch.videos.length + batch.users.length + batch.seasons.length > 0) {
+        await this.rememberSearch(value);
+      } else {
+        this.showToast('没有找到相关内容');
       }
-      this.searchResults = results;
-      await this.rememberSearch(value);
     } catch (error) {
       this.showToast('搜索失败，请稍后重试');
       console.error(`Pilihos video search failed: ${String(error)}`);
@@ -145,6 +180,21 @@ struct SearchPage {
     }
   }
 
+  private openSeasonDetail(season: SearchSeason): void {
+    router.pushUrl({
+      url: 'pages/AnimeDetail',
+      params: { seasonId: season.seasonId, title: season.title }
+    }).catch((error: Object): void => {
+      console.error('Pilihos season detail page failed: ' + String(error));
+    });
+  }
+
+  private formatCount(value: number): string {
+    if (value >= 100000000) return `${(value / 100000000).toFixed(2).replace(/\.00$/, '')}亿`;
+    if (value >= 10000) return `${(value / 10000).toFixed(1).replace(/\.0$/, '')}万`;
+    return `${value}`;
+  }
+
   private formatPlaybackTime(valueMs: number): string {
     const totalSeconds: number = Math.max(0, Math.floor(valueMs / 1000));
     const hours: number = Math.floor(totalSeconds / 3600);
@@ -156,12 +206,6 @@ struct SearchPage {
     return minuteText + ':' + secondText;
   }
 
-  private formatCount(value: number): string {
-    if (value >= 100000000) return `${(value / 100000000).toFixed(2).replace(/\.00$/, '')}亿`;
-    if (value >= 10000) return `${(value / 10000).toFixed(1).replace(/\.0$/, '')}万`;
-    return `${value}`;
-  }
-
   @Builder
   loadingIndicator(label: string, color: string) {
     Row({ space: 8 }) {
@@ -169,6 +213,21 @@ struct SearchPage {
       Text(label).fontSize(14).fontColor(color).textAlign(TextAlign.Center);
     }
     .justifyContent(FlexAlign.Center).alignItems(VerticalAlign.Center);
+  }
+
+  @Builder
+  typeTabs() {
+    Scroll() {
+      Row({ space: 26 }) {
+        ForEach(this.typeItems, (item: SearchTypeItem) => {
+          Text(item.label).fontSize(16)
+            .fontColor(this.searchType === item.value ? '#1677A8' : '#59616B')
+            .fontWeight(this.searchType === item.value ? FontWeight.Bold : FontWeight.Normal)
+            .onClick((): void => { this.switchType(item.value); });
+        }, (item: SearchTypeItem) => `type_${item.value}_${this.searchType === item.value}`);
+      }.padding({ left: 24, right: 24 });
+    }.width('100%').height(46)
+      .scrollable(ScrollDirection.Horizontal).scrollBar(BarState.Off);
   }
 
   @Builder
@@ -224,6 +283,62 @@ struct SearchPage {
     .onClick((): void => { this.openSearchResult(item); });
   }
 
+  @Builder
+  userResultCard(user: SearchUser) {
+    Row({ space: 12 }) {
+      if (user.face !== '') {
+        Image(user.face).width(52).height(52).borderRadius(26).objectFit(ImageFit.Cover);
+      } else {
+        Row().width(52).height(52).borderRadius(26).backgroundColor('#DCE3EF');
+      }
+      Column({ space: 5 }) {
+        Row({ space: 6 }) {
+          Text(user.uname === '' ? '未知用户' : user.uname).fontSize(16).fontColor('#20242A')
+            .fontWeight(FontWeight.Medium).maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis }).layoutWeight(1);
+          if (user.liveRoomId > 0) {
+            Text('直播中').fontSize(10).fontColor(Color.White)
+              .backgroundColor('#E6000044').borderRadius(4)
+              .padding({ left: 5, right: 5, top: 2, bottom: 2 });
+          }
+        }.width('100%');
+        Text(user.sign === '' ? '暂无简介' : user.sign).fontSize(12).fontColor('#8B9199')
+          .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis }).width('100%');
+        Row({ space: 12 }) {
+          Text(this.formatCount(user.fans) + ' 粉丝').fontSize(12).fontColor('#8B9199');
+          Text(this.formatCount(user.videoCount) + ' 投稿').fontSize(12).fontColor('#8B9199');
+          Text('LV' + String(user.level)).fontSize(10).fontColor(Color.White)
+            .backgroundColor(user.level >= 6 ? '#E661A0' : user.level >= 4 ? '#1677A8' : '#9AA4AE')
+            .borderRadius(3).padding({ left: 3, right: 3, top: 1, bottom: 1 });
+        }
+      }.layoutWeight(1).alignItems(HorizontalAlign.Start);
+    }
+    .width('100%').padding({ left: 16, right: 16, top: 10, bottom: 10 })
+    .backgroundColor(Color.White)
+    .onClick((): void => { this.showToast('UP主主页功能开发中'); });
+  }
+
+  @Builder
+  seasonResultCard(season: SearchSeason) {
+    Row({ space: 12 }) {
+      Image(season.cover).width('42%').aspectRatio(3 / 4).objectFit(ImageFit.Cover)
+        .borderRadius(10);
+      Column({ space: 7 }) {
+        Text(season.typeName).fontSize(10).fontColor('#1677A8')
+          .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+          .backgroundColor('#1A1677A8').borderRadius(4)
+          .width('100%').textAlign(TextAlign.Start);
+        Text(season.title).fontSize(16).fontColor('#20242A').maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis }).width('100%');
+        Text(season.indexShow === '' ? '暂无更新信息' : season.indexShow)
+          .fontSize(12).fontColor('#8B9199').width('100%');
+      }.layoutWeight(1).alignItems(HorizontalAlign.Start);
+    }
+    .width('100%').padding({ left: 16, right: 16, top: 10, bottom: 10 })
+    .backgroundColor(Color.White)
+    .onClick((): void => { this.openSeasonDetail(season); });
+  }
+
   build() {
     Column() {
       Row({ space: 8 }) {
@@ -236,7 +351,7 @@ struct SearchPage {
         .systemMaterial(ImmersiveMaterial.thin())
         .shadow({ radius: 8, color: '#25000000', offsetX: 0, offsetY: 2 })
         .onClick(() => { router.back(); });
-        Search({ placeholder: '搜索视频', value: this.searchText })
+        Search({ placeholder: '搜索', value: this.searchText })
           .layoutWeight(1).height(48).backgroundColor(ImmersiveMaterial.fallbackBackground())
           .borderRadius(24).systemMaterial(ImmersiveMaterial.thin())
           .shadow({ radius: 8, color: '#25000000', offsetX: 0, offsetY: 2 })
@@ -248,27 +363,13 @@ struct SearchPage {
           });
       }
       .width('100%').padding({ left: 10, right: 10, top: this.topInset + 8, bottom: 8 });
+      this.typeTabs();
       this.searchHistoryPanel();
-      if (this.searchResults.length > 0 && !this.searchLoading) {
-        Scroll() {
-          Row({ space: 28 }) {
-            Text('视频 ' + (this.searchResults.length >= 20 ? '20+' : String(this.searchResults.length)))
-              .fontSize(16).fontColor('#1677A8').fontWeight(FontWeight.Bold);
-            Text('番剧').fontSize(16).fontColor('#59616B');
-            Text('影视').fontSize(16).fontColor('#59616B');
-            Text('直播间').fontSize(16).fontColor('#59616B');
-            Text('用户').fontSize(16).fontColor('#59616B');
-          }.padding({ left: 24, right: 24 });
-        }.width('100%').height(48).scrollable(ScrollDirection.Horizontal).scrollBar(BarState.Off);
-        Scroll() {
-          Row({ space: 25 }) {
-            Text('默认排序').fontSize(15).fontColor('#1677A8').fontWeight(FontWeight.Bold);
-            Text('播放多').fontSize(15).fontColor('#59616B');
-            Text('新发布').fontSize(15).fontColor('#59616B');
-            Text('弹幕多').fontSize(15).fontColor('#59616B');
-            Text('收藏多').fontSize(15).fontColor('#59616B');
-          }.padding({ left: 24, right: 24 });
-        }.width('100%').height(42).scrollable(ScrollDirection.Horizontal).scrollBar(BarState.Off);
+      if (this.searchLoading) {
+        Column() {
+          this.loadingIndicator('正在搜索...', '#1677A8');
+        }.layoutWeight(1).width('100%').justifyContent(FlexAlign.Center);
+      } else if (this.searchResults.length > 0) {
         Scroll() {
           Column() {
             ForEach(this.searchResults, (item: VideoItem) => {
@@ -276,15 +377,26 @@ struct SearchPage {
             }, (item: VideoItem) => `${item.id}-${item.bvid}`);
           }.width('100%');
         }.layoutWeight(1).width('100%').scrollBar(BarState.Off);
-      } else if (this.searchLoading) {
-        Column() {
-          this.loadingIndicator('正在搜索视频...', '#1677A8');
-        }.layoutWeight(1).width('100%').justifyContent(FlexAlign.Center);
-      } else if (this.searchError !== '') {
-        Text(this.searchError).fontSize(14).fontColor('#8B9199').margin({ top: 18 });
+      } else if (this.searchUsers.length > 0) {
+        Scroll() {
+          Column() {
+            ForEach(this.searchUsers, (user: SearchUser) => {
+              this.userResultCard(user);
+            }, (user: SearchUser) => `user_${user.mid}`);
+          }.width('100%');
+        }.layoutWeight(1).width('100%').scrollBar(BarState.Off);
+      } else if (this.searchSeasons.length > 0) {
+        Scroll() {
+          Column() {
+            ForEach(this.searchSeasons, (season: SearchSeason) => {
+              this.seasonResultCard(season);
+            }, (season: SearchSeason) => `season_${season.seasonId}`);
+          }.width('100%');
+        }.layoutWeight(1).width('100%').scrollBar(BarState.Off);
       } else if (this.searched) {
         Column() {
-          Text('没有找到相关视频').fontSize(14).fontColor('#8B9199');
+          Text(this.searchError !== '' ? this.searchError : '没有找到相关内容')
+            .fontSize(14).fontColor('#8B9199');
         }.layoutWeight(1).width('100%').justifyContent(FlexAlign.Center);
       } else {
         Column() {

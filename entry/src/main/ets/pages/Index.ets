@@ -17,6 +17,7 @@ import { preferences } from '@kit.ArkData';
 import web_webview from '@ohos.web.webview';
 import { ImmersiveMaterial } from '../utils/ImmersiveMaterial';
 import { AdvancedFeatures } from '../utils/AdvancedFeatures';
+import { FilterWords } from '../utils/FilterWords';
 import { HotPage } from './HotPage';
 import { LivePage } from './LivePage';
 import { DynamicPage } from './DynamicPage';
@@ -160,6 +161,7 @@ struct Index {
     this.authSession = AuthService.currentSession();
     AdvancedFeatures.loadSettings(this.context);
     this.loadPlayerSettings();
+    FilterWords.load(this.context);
     this.restoreAuthSession();
     this.loadMineCover();
     this.loadRecommendations();
@@ -236,7 +238,8 @@ struct Index {
       if (batch.items.length > 0) {
         this.page = 0;
         this.recommendationIndex = batch.nextIndex;
-        this.videos = batch.items;
+        this.videos = batch.items.filter((item: VideoItem): boolean =>
+          !FilterWords.isVideoFiltered(item.title));
         this.lastLoadTriggerLength = -1;
         this.hasMoreRecommendations = true;
       }
@@ -461,7 +464,8 @@ struct Index {
     this.loadingMore = true;
     try {
       const batch: RecommendationBatch = await RecommendationService.loadBatch(this.recommendationIndex);
-      const next: VideoItem[] = batch.items;
+      const next: VideoItem[] = batch.items.filter((item: VideoItem): boolean =>
+        !FilterWords.isVideoFiltered(item.title));
       if (next.length > 0) {
         this.page += 1;
         const cursorAdvanced: boolean = batch.nextIndex !== this.recommendationIndex;
