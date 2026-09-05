@@ -6,6 +6,7 @@ export class VideoComment {
   userName: string = '';
   avatar: string = '';
   message: string = '';
+  level: number = 0;
   likeCount: number = 0;
   replyCount: number = 0;
   publishTime: number = 0;
@@ -33,25 +34,60 @@ export class ReplyService {
       throw new Error(String(result['message'] ?? '评论加载失败'));
     }
     const data: Record<string, Object> = (result['data'] as Record<string, Object>) ?? {};
+    const upper: Record<string, Object> = (data['upper'] ?? {}) as Record<string, Object>;
+    const upperMid: number = Number(upper['mid'] ?? 0);
     const rawReplies: Object[] = (data['replies'] as Object[]) ?? [];
     const items: VideoComment[] = [];
     rawReplies.forEach((raw: Object): void => {
-      const reply: Record<string, Object> = raw as Record<string, Object>;
-      const member: Record<string, Object> = (reply['member'] as Record<string, Object>) ?? {};
-      const content: Record<string, Object> = (reply['content'] as Record<string, Object>) ?? {};
-      const comment: VideoComment = new VideoComment();
-      comment.id = Number(reply['rpid'] ?? 0);
-      comment.userName = String(member['uname'] ?? '用户');
-      comment.avatar = String(member['avatar'] ?? '');
-      comment.message = String(content['message'] ?? '');
-      comment.likeCount = Number(reply['like'] ?? 0);
-      comment.replyCount = Number(reply['rcount'] ?? 0);
-      comment.publishTime = Number(reply['ctime'] ?? 0);
-      comment.isUp = Boolean(reply['up_action'] ?? false);
-      if (comment.message !== '') items.push(comment);
+      const comment: VideoComment | null = ReplyService.parseReply(raw, upperMid);
+      if (comment !== null && comment.message !== '') items.push(comment);
     });
     const pageInfo: Record<string, Object> = (data['page'] as Record<string, Object>) ?? {};
     const total: number = Number(pageInfo['count'] ?? item.commentCount);
     return { items: items, total: total, hasMore: page * 20 < total };
+  }
+
+  static async loadSubReplies(aid: number, rootId: number, cookie: string = '',
+    page: number = 1): Promise<CommentBatch> {
+    const query: Record<string, string> = {};
+    query['oid'] = String(aid);
+    query['type'] = '1';
+    query['root'] = String(rootId);
+    query['pn'] = String(page);
+    query['ps'] = '10';
+    const result: Record<string, Object> = await BiliHttpClient.getJson('/x/v2/reply/reply', query, cookie);
+    if (Number(result['code'] ?? -1) !== 0) {
+      throw new Error(String(result['message'] ?? '回复加载失败'));
+    }
+    const data: Record<string, Object> = (result['data'] as Record<string, Object>) ?? {};
+    const upper: Record<string, Object> = (data['upper'] ?? {}) as Record<string, Object>;
+    const upperMid: number = Number(upper['mid'] ?? 0);
+    const rawReplies: Object[] = (data['replies'] as Object[]) ?? [];
+    const items: VideoComment[] = [];
+    rawReplies.forEach((raw: Object): void => {
+      const comment: VideoComment | null = ReplyService.parseReply(raw, upperMid);
+      if (comment !== null && comment.message !== '') items.push(comment);
+    });
+    const pageInfo: Record<string, Object> = (data['page'] as Record<string, Object>) ?? {};
+    const total: number = Number(pageInfo['count'] ?? 0);
+    return { items: items, total: total, hasMore: page * 10 < total };
+  }
+
+  private static parseReply(raw: Object, upperMid: number): VideoComment | null {
+    const reply: Record<string, Object> = raw as Record<string, Object>;
+    const member: Record<string, Object> = (reply['member'] as Record<string, Object>) ?? {};
+    const content: Record<string, Object> = (reply['content'] as Record<string, Object>) ?? {};
+    const levelInfo: Record<string, Object> = (member['level_info'] ?? {}) as Record<string, Object>;
+    const comment: VideoComment = new VideoComment();
+    comment.id = Number(reply['rpid'] ?? 0);
+    comment.userName = String(member['uname'] ?? '用户');
+    comment.avatar = String(member['avatar'] ?? '');
+    comment.message = String(content['message'] ?? '');
+    comment.level = Number(levelInfo['current_level'] ?? 0);
+    comment.likeCount = Number(reply['like'] ?? 0);
+    comment.replyCount = Number(reply['rcount'] ?? 0);
+    comment.publishTime = Number(reply['ctime'] ?? 0);
+    comment.isUp = upperMid > 0 && Number(reply['mid'] ?? 0) === upperMid;
+    return comment;
   }
 }

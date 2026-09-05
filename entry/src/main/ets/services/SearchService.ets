@@ -64,7 +64,8 @@ export class SearchService {
     const text: string = String(value ?? '').trim();
     if (text === '') return 0;
     const parsed: number = Number(text);
-    if (!Number.isNaN(parsed) && parsed > 0) {
+    if (!Number.isNaN(parsed)) {
+      if (parsed <= 0) return 0;
       return parsed > 100000000000 ? Math.floor(parsed / 1000) : Math.floor(parsed);
     }
     const date: Date = new Date(text);

@@ -38,6 +38,50 @@ export class LiveService {
       .filter((room: LiveRoom): boolean => room.roomId > 0);
   }
 
+  static async loadFollowedLive(cookie: string, uid: string): Promise<LiveRoom[]> {
+    if (cookie === '' || uid === '' || uid === '0') return [];
+    const query: Record<string, string> = {};
+    query['vmid'] = uid;
+    query['ps'] = '50';
+    query['pn'] = '1';
+    const result: Record<string, Object> =
+      await BiliHttpClient.getJson('/x/relation/followings', query, cookie);
+    if (Number(result['code'] ?? -1) !== 0) {
+      throw new Error(String(result['message'] ?? '关注列表获取失败'));
+    }
+    const data: Record<string, Object> = (result['data'] ?? {}) as Record<string, Object>;
+    const rawList: Object[] = (data['list'] as Object[]) ?? [];
+    const mids: number[] = [];
+    rawList.forEach((raw: Object): void => {
+      const mid: number = Number((raw as Record<string, Object>)['mid'] ?? 0);
+      if (mid > 0) mids.push(mid);
+    });
+    if (mids.length === 0) return [];
+    const body: Record<string, Object> = {};
+    body['uids'] = mids;
+    const statusResult: Record<string, Object> = await BiliHttpClient.postJsonHost(
+      LiveService.liveHost, '/room/v1/Room/get_status_info_by_uids', body, cookie);
+    if (Number(statusResult['code'] ?? -1) !== 0) {
+      throw new Error(String(statusResult['message'] ?? '关注主播状态获取失败'));
+    }
+    const statusData: Record<string, Object> = (statusResult['data'] ?? {}) as Record<string, Object>;
+    const rooms: LiveRoom[] = [];
+    Object.keys(statusData).forEach((key: string): void => {
+      const info: Record<string, Object> = (statusData[key] ?? {}) as Record<string, Object>;
+      if (Number(info['live_status'] ?? 0) !== 1) return;
+      const room: LiveRoom = new LiveRoom();
+      room.roomId = Number(info['room_id'] ?? 0);
+      room.title = String(info['title'] ?? '');
+      room.uname = String(info['uname'] ?? '');
+      room.face = String(info['face'] ?? '');
+      room.online = Number(info['online'] ?? 0);
+      room.areaName = String(info['area_v2_name'] ?? '');
+      room.cover = String(info['cover_from_user'] ?? info['user_cover'] ?? info['keyframe'] ?? '');
+      if (room.roomId > 0) rooms.push(room);
+    });
+    return rooms;
+  }
+
   static async loadRoomStatus(roomId: number): Promise<LiveRoomStatus> {
     const query: Record<string, string> = {};
     query['room_id'] = String(roomId);

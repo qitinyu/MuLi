@@ -7,6 +7,7 @@
 6. [指向型菜单](https://developer.huawei.com/consumer/cn/doc/doccenter-capabilities/api/ts-universal-attributes-menu#%E7%A4%BA%E4%BE%8B4%E5%8F%B3%E9%94%AE%E5%BC%B9%E5%87%BA%E6%8C%87%E5%90%91%E5%9E%8B%E8%8F%9C%E5%8D%95)
 7. [setAVMetadata](https://developer.huawei.com/consumer/cn/doc/doccenter-capabilities/avsession-access-scene)
 8. [即时反馈气泡](https://developer.huawei.com/consumer/cn/doc/doccenter-capabilities/api/arkts-apis-uicontext-promptaction#showtoast)
+9. [文本框](https://developer.huawei.com/consumer/cn/doc/doccenter-capabilities/api/ts-basic-components-textinput)
 
 
 ### Pilihos V1.0.4
@@ -18,6 +19,13 @@
 - [✅] 番剧详情页 `AnimeDetail`：番剧排行（`pgc/web/rank/list`）+ 详情选集（`pgc/view/web/season`）+ 页内选集播放（`pgc/player/web/playurl`）
 - [✅] 动态页功能化 `DynamicPage`：完整动态流（视频/图文/纯文字/转发 + 互动数据 + 分页加载），原 Index 内联页签全部抽为独立 ets 组件
 - [✅] 热门/直播/番剧/动态四个页签页重写为真实数据（原为硬编码假数据或 mock），Index.ets 精简约 410 行
+- [✅] 修复热门/直播/动态页首次加载被自身 loading 守卫拦截的问题；匿名请求携带 buvid3 降低风控概率
+- [✅] 计数显示规则调整：0-9999 显示完整数字，≥10000 以万为单位（顺带修复原万位换算 10 倍误差）
+- [✅] 修复推荐页发布时间显示 00/1/1：时间戳为 0 时被 `new Date('0')` 解析成 2000-01-01
+- [✅] 热门卡片补充发布时间与弹幕量
+- [✅] 直播页分区：我的关注（需登录）/ 热门直播 / 其他直播
+- [✅] 评论区：头像顶对齐、昵称后 LV 徽章、移除右侧"UP主"字样（isUp 判定修正为比对 upper.mid）、点击评论图标展开楼中楼回复、右侧悬浮编辑气泡回复入口（发布能力后续接入）
+- [✅] 动态页评论图标支持直接跳转对应视频评论区
 - [ ] Index.ets 进一步组件化拆分：播放器、侧边栏、首页信息流拆为独立子组件
 - [ ] 搜索页增强：分类页签（番剧/影视/直播/用户）与排序选项接入真实筛选逻辑
 

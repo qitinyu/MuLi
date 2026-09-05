@@ -83,6 +83,13 @@ struct Index {
   @State bottomInset: number = 0;
   @State detailSection: number = 0;
   @State comments: VideoComment[] = [];
+  @State expandedCommentId: number = -1;
+  @State subReplies: VideoComment[] = [];
+  @State subLoading: boolean = false;
+  @State subPage: number = 1;
+  @State subHasMore: boolean = false;
+  @State showCommentInput: boolean = false;
+  @State commentInputText: string = '';
   @State commentLoading: boolean = false;
   @State commentError: string = '';
   @State commentPage: number = 1;
@@ -341,6 +348,49 @@ struct Index {
     }
   }
 
+  private toggleSubReplies(comment: VideoComment): void {
+    if (this.expandedCommentId === comment.id) {
+      this.expandedCommentId = -1;
+      this.subReplies = [];
+      this.subHasMore = false;
+      return;
+    }
+    this.expandedCommentId = comment.id;
+    this.loadSubReplies(comment.id, true);
+  }
+
+  private async loadSubReplies(rootId: number, refresh: boolean): Promise<void> {
+    if (this.subLoading) return;
+    this.subLoading = true;
+    const nextPage: number = refresh ? 1 : this.subPage + 1;
+    try {
+      const current: VideoItem = this.videos[this.currentIndex];
+      const session: AuthSession | null = this.authSession ?? AuthService.currentSession();
+      const batch: CommentBatch = await ReplyService.loadSubReplies(
+        current.aid, rootId, session === null ? '' : session.cookie, nextPage);
+      this.subReplies = refresh ? batch.items : this.subReplies.concat(batch.items);
+      this.subPage = nextPage;
+      this.subHasMore = batch.hasMore;
+    } catch (error) {
+      this.showPlaybackToast('回复加载失败，请稍后重试');
+      console.error(`Pilihos sub replies failed: ${String(error)}`);
+    } finally {
+      this.subLoading = false;
+    }
+  }
+
+  private submitCommentEntry(): void {
+    // 评论发布入口：编辑能力后续接入，先展示占位反馈
+    this.showPlaybackToast('评论发布功能开发中，敬请期待');
+  }
+
+  private levelColor(level: number): string {
+    if (level >= 8) return '#E04C4C';
+    if (level >= 6) return '#E661A0';
+    if (level >= 4) return '#1677A8';
+    return '#9AA4AE';
+  }
+
   private openVideoDetail(item: VideoItem, showComments: boolean = false): void {
     const index: number = this.videos.indexOf(item);
     if (index < 0 || item.placeholder) return;
@@ -358,6 +408,11 @@ struct Index {
     this.commentTotal = 0;
     this.commentHasMore = false;
     this.commentError = '';
+    this.expandedCommentId = -1;
+    this.subReplies = [];
+    this.subHasMore = false;
+    this.showCommentInput = false;
+    this.commentInputText = '';
     this.playbackCurrentMs = 0;
     this.playbackDurationMs = item.duration > 0 ? item.duration * 1000 : 0;
     this.playbackPaused = true;
@@ -550,8 +605,7 @@ struct Index {
 
   private formatCount(value: number): string {
     if (value >= 100000000) return `${(value / 100000000).toFixed(2).replace(/\.00$/, '')}亿`;
-    if (value >= 1000000) return `${(value / 100000).toFixed(2).replace(/\.00$/, '')}万`;
-    if (value >= 1000) return `${(value / 1000).toFixed(1).replace(/\.0$/, '')}千`;
+    if (value >= 10000) return `${(value / 10000).toFixed(1).replace(/\.0$/, '')}万`;
     return `${value}`;
   }
 
@@ -1271,7 +1325,8 @@ struct Index {
 
   @Builder
   detailPage() {
-    Column() {
+    Stack() {
+      Column() {
       Stack() {
         if (this.currentUrl === '' && this.videos[this.currentIndex].cover !== '') {
           Image(this.videos[this.currentIndex].cover)
@@ -1487,10 +1542,50 @@ struct Index {
         }.width('100%').alignItems(HorizontalAlign.Start)
           .padding({ left: 16, right: 16, top: 14, bottom: this.bottomInset + 30 });
       }.layoutWeight(1).width('100%').scrollBar(BarState.Off).backgroundColor(Color.White);
+      }
+      .width('100%').height('100%')
+      .padding({ top: this.topInset })
+      .backgroundColor(Color.Black);
+
+      if (this.detailSection === 1 && !this.showCommentInput) {
+        Button() {
+          Image($r('app.media.edit')).width(22).height(22).fillColor('#1677A8');
+        }
+        .type(ButtonType.ROUNDED_RECTANGLE).width(46).height(46)
+        .backgroundColor(Color.White).borderRadius(23)
+        .shadow({ radius: 8, color: '#25000000', offsetX: 0, offsetY: 2 })
+        .position({ right: 14, bottom: this.bottomInset + 96 })
+        .onClick(() => { this.showCommentInput = true; });
+      }
+      if (this.detailSection === 1 && this.showCommentInput) {
+        Row({ space: 8 }) {
+          Button() {
+            Image($r('app.media.fanhui_left')).width(18).height(18).fillColor('#59616B');
+          }
+          .type(ButtonType.ROUNDED_RECTANGLE).width(40).height(40)
+          .backgroundColor('#F1F3F5').borderRadius(20)
+          .onClick(() => {
+            this.showCommentInput = false;
+            this.commentInputText = '';
+          });
+          TextInput({ placeholder: '说点什么...', text: this.commentInputText })
+            .layoutWeight(1).height(40).fontSize(14).fontColor('#1E252D')
+            .backgroundColor('#F1F3F5').borderRadius(20)
+            .defaultFocus(true)
+            .onChange((value: string) => { this.commentInputText = value; })
+            .onSubmit((): void => { this.submitCommentEntry(); });
+          Button('发送').height(40).fontSize(14)
+            .onClick((): void => { this.submitCommentEntry(); });
+        }
+        .width('100%')
+        .padding({ left: 12, right: 12, top: 10, bottom: this.bottomInset + 12 })
+        .backgroundColor(Color.White)
+        .borderRadius({ topLeft: 14, topRight: 14 })
+        .shadow({ radius: 10, color: '#1A000000', offsetX: 0, offsetY: -2 })
+        .position({ left: 0, right: 0, bottom: 0 });
+      }
     }
     .width('100%').height('100%')
-    .padding({ top: this.topInset })
-    .backgroundColor(Color.Black)
     .bindSheet($$this.episodeListVisible, this.episodeSheet(), {
       height: SheetSize.FIT_CONTENT,
       dragBar: true,
@@ -1542,36 +1637,91 @@ struct Index {
 
   @Builder
   commentItem(comment: VideoComment) {
-    Row({ space: 10 }) {
-      if (comment.avatar !== '') {
-        Image(comment.avatar).width(38).height(38).borderRadius(19).objectFit(ImageFit.Cover);
-      } else {
-        Row().width(38).height(38).borderRadius(19).backgroundColor('#DCE3EF');
+    Column({ space: 8 }) {
+      Row({ space: 10 }) {
+        if (comment.avatar !== '') {
+          Image(comment.avatar).width(38).height(38).borderRadius(19).objectFit(ImageFit.Cover);
+        } else {
+          Row().width(38).height(38).borderRadius(19).backgroundColor('#DCE3EF');
+        }
+        Column({ space: 5 }) {
+          Row({ space: 5 }) {
+            Text(comment.userName).fontSize(13).fontColor('#59616B').fontWeight(FontWeight.Medium)
+              .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
+              .constraintSize({ maxWidth: '70%' });
+            Text('LV' + String(comment.level)).fontSize(9).fontColor(Color.White)
+              .backgroundColor(this.levelColor(comment.level))
+              .borderRadius(3).padding({ left: 3, right: 3, top: 1, bottom: 1 });
+          }.width('100%');
+          Text(comment.message).fontSize(15).fontColor('#1E252D').lineHeight(22).width('100%');
+          Row({ space: 14 }) {
+            Text(this.formatPublishTime(comment.publishTime)).fontSize(11).fontColor('#A0A6AD');
+            Row({ space: 3 }) {
+              Image($r('app.media.dianzan')).width(14).height(14);
+              Text(this.formatCount(comment.likeCount)).fontSize(11).fontColor('#858C94');
+            }
+            Row({ space: 3 }) {
+              Image($r('app.media.pl')).width(14).height(14)
+                .fillColor(this.expandedCommentId === comment.id ? '#1677A8' : '#858C94');
+              Text(this.formatCount(comment.replyCount)).fontSize(11)
+                .fontColor(this.expandedCommentId === comment.id ? '#1677A8' : '#858C94');
+            }
+              .onClick((): void => { this.toggleSubReplies(comment); });
+          }.width('100%');
+        }.layoutWeight(1).alignItems(HorizontalAlign.Start);
+      }.width('100%').alignItems(VerticalAlign.Top);
+      if (this.expandedCommentId === comment.id) {
+        Column({ space: 10 }) {
+          if (this.subLoading && this.subReplies.length === 0) {
+            this.loadingIndicator('正在加载回复', '#8B9199');
+          } else if (this.subReplies.length === 0) {
+            Text('暂无回复').fontSize(12).fontColor('#A0A6AD');
+          } else {
+            ForEach(this.subReplies, (reply: VideoComment) => {
+              this.subReplyItem(reply);
+            }, (reply: VideoComment) => `sub_${reply.id}`);
+            if (this.subHasMore) {
+              Text(this.subLoading ? '正在加载...' : '展开更多回复')
+                .fontSize(12).fontColor('#1677A8')
+                .onClick((): void => { this.loadSubReplies(comment.id, false); });
+            }
+          }
+        }
+        .width('100%')
+        .padding({ left: 48, top: 4, bottom: 4 })
+        .alignItems(HorizontalAlign.Start);
       }
-      Column({ space: 5 }) {
-        Row() {
-          Text(comment.userName).fontSize(13).fontColor('#59616B').fontWeight(FontWeight.Medium)
-            .layoutWeight(1);
-          if (comment.isUp) {
-            Text('UP主').fontSize(10).fontColor('#1677A8').backgroundColor('#E5F3FA')
-              .borderRadius(4).padding({ left: 4, right: 4, top: 2, bottom: 2 });
-          }
+    }.width('100%').padding({ top: 10, bottom: 10 })
+      .border({ width: { bottom: 1 }, color: '#E9EDF0' });
+  }
+
+  @Builder
+  subReplyItem(reply: VideoComment) {
+    Row({ space: 8 }) {
+      if (reply.avatar !== '') {
+        Image(reply.avatar).width(26).height(26).borderRadius(13).objectFit(ImageFit.Cover);
+      } else {
+        Row().width(26).height(26).borderRadius(13).backgroundColor('#DCE3EF');
+      }
+      Column({ space: 3 }) {
+        Row({ space: 5 }) {
+          Text(reply.userName).fontSize(12).fontColor('#59616B').fontWeight(FontWeight.Medium)
+            .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
+            .constraintSize({ maxWidth: '65%' });
+          Text('LV' + String(reply.level)).fontSize(8).fontColor(Color.White)
+            .backgroundColor(this.levelColor(reply.level))
+            .borderRadius(3).padding({ left: 3, right: 3, top: 1, bottom: 1 });
         }.width('100%');
-        Text(comment.message).fontSize(15).fontColor('#1E252D').lineHeight(22).width('100%');
-        Row({ space: 14 }) {
-          Text(this.formatPublishTime(comment.publishTime)).fontSize(11).fontColor('#A0A6AD');
+        Text(reply.message).fontSize(13).fontColor('#1E252D').lineHeight(19).width('100%');
+        Row({ space: 12 }) {
+          Text(this.formatPublishTime(reply.publishTime)).fontSize(10).fontColor('#A0A6AD');
           Row({ space: 3 }) {
-            Image($r('app.media.dianzan')).width(14).height(14);
-            Text(this.formatCount(comment.likeCount)).fontSize(11).fontColor('#858C94');
-          }
-          Row({ space: 3 }) {
-            Image($r('app.media.pl')).width(14).height(14);
-            Text(this.formatCount(comment.replyCount)).fontSize(11).fontColor('#858C94');
+            Image($r('app.media.dianzan')).width(12).height(12);
+            Text(this.formatCount(reply.likeCount)).fontSize(10).fontColor('#858C94');
           }
         }.width('100%');
       }.layoutWeight(1).alignItems(HorizontalAlign.Start);
-    }.width('100%').padding({ top: 10, bottom: 10 })
-      .border({ width: { bottom: 1 }, color: '#E9EDF0' });
+    }.width('100%').alignItems(VerticalAlign.Top);
   }
 
   @Builder
@@ -2053,8 +2203,8 @@ struct Index {
 	            } else if (this.contentTab === 3) {
               DynamicPage({
                 bottomInset: this.bottomInset,
-                onPlayVideo: (item: VideoItem): void => {
-                  this.openDynamicVideo(item, false);
+                onPlayVideo: (item: VideoItem, showComments: boolean): void => {
+                  this.openDynamicVideo(item, showComments);
                 }
               });
 	            } else {
@@ -2063,8 +2213,8 @@ struct Index {
           } else if (this.activeTab === 0) {
             DynamicPage({
               bottomInset: this.bottomInset,
-              onPlayVideo: (item: VideoItem): void => {
-                this.openDynamicVideo(item, false);
+              onPlayVideo: (item: VideoItem, showComments: boolean): void => {
+                this.openDynamicVideo(item, showComments);
               }
             });
           } else {

@@ -158,8 +158,7 @@ struct SearchPage {
 
   private formatCount(value: number): string {
     if (value >= 100000000) return `${(value / 100000000).toFixed(2).replace(/\.00$/, '')}亿`;
-    if (value >= 1000000) return `${(value / 100000).toFixed(2).replace(/\.00$/, '')}万`;
-    if (value >= 1000) return `${(value / 1000).toFixed(1).replace(/\.0$/, '')}千`;
+    if (value >= 10000) return `${(value / 10000).toFixed(1).replace(/\.0$/, '')}万`;
     return `${value}`;
   }
 

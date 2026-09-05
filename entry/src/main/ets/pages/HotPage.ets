@@ -55,8 +55,7 @@ export struct HotPage {
 
   private formatCount(value: number): string {
     if (value >= 100000000) return `${(value / 100000000).toFixed(2).replace(/\.00$/, '')}亿`;
-    if (value >= 1000000) return `${(value / 100000).toFixed(2).replace(/\.00$/, '')}万`;
-    if (value >= 1000) return `${(value / 1000).toFixed(1).replace(/\.0$/, '')}千`;
+    if (value >= 10000) return `${(value / 10000).toFixed(1).replace(/\.0$/, '')}万`;
     return `${value}`;
   }
 
@@ -65,24 +64,45 @@ export struct HotPage {
     Column({ space: 6 }) {
       Stack({ alignContent: Alignment.BottomStart }) {
         Image(item.cover).width('100%').aspectRatio(1.6).objectFit(ImageFit.Cover).borderRadius(8);
-        if (rank <= 3) {
-          Text(String(rank)).fontSize(14).fontWeight(FontWeight.Bold).fontColor(Color.White)
-            .width(26).height(26).textAlign(TextAlign.Center).lineHeight(26)
-            .backgroundColor(rank === 1 ? '#E6A23C' : rank === 2 ? '#98A2AE' : '#C77B4A')
-            .borderRadius({ topLeft: 8, bottomRight: 8 });
-        }
-        Text(this.formatDuration(item.duration)).fontSize(11).fontColor(Color.White)
-          .backgroundColor('#B0000000').padding({ left: 5, right: 5, top: 2, bottom: 2 })
-          .borderRadius(4).markAnchor({ x: '100%', y: '100%' })
-          .position({ right: 6, bottom: 6 });
+        Row() {
+          if (rank <= 3) {
+            Text(String(rank)).fontSize(13).fontWeight(FontWeight.Bold).fontColor(Color.White)
+              .width(24).height(24).textAlign(TextAlign.Center).lineHeight(24)
+              .backgroundColor(rank === 1 ? '#E6A23C' : rank === 2 ? '#98A2AE' : '#C77B4A')
+              .borderRadius(12);
+          }
+          Blank();
+          Text(this.formatDuration(item.duration)).fontSize(11).fontColor(Color.White)
+            .backgroundColor('#B0000000').padding({ left: 5, right: 5, top: 2, bottom: 2 })
+            .borderRadius(4);
+        }.width('100%').padding(6).alignItems(VerticalAlign.Center);
       }.width('100%');
       Text(item.title).fontSize(14).fontColor('#20242A').maxLines(2)
         .textOverflow({ overflow: TextOverflow.Ellipsis }).width('100%').lineHeight(20);
       Text(item.author === '' ? '未知用户' : item.author).fontSize(12).fontColor('#8B9199')
         .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis }).width('100%');
-      Text(this.formatCount(item.viewCount) + ' 播放').fontSize(11).fontColor('#A4A9AF').width('100%');
+      Row({ space: 10 }) {
+        Text(this.formatCount(item.viewCount) + ' 播放').fontSize(11).fontColor('#A4A9AF');
+        Row({ space: 3 }) {
+          Image($r('app.media.dm')).width(11).height(11);
+          Text(this.formatCount(item.danmuCount)).fontSize(11).fontColor('#A4A9AF');
+        }
+        Text(this.formatPublishTime(item.publishTime)).fontSize(11).fontColor('#A4A9AF')
+          .layoutWeight(1).textAlign(TextAlign.End)
+          .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis });
+      }.width('100%');
     }.width('100%')
       .onClick((): void => { this.openHotDetail(item); });
+  }
+
+  private formatPublishTime(timestamp: number): string {
+    if (timestamp <= 0) return '';
+    const seconds: number = Math.max(0, Math.floor(Date.now() / 1000) - timestamp);
+    if (seconds < 3600) return `${String(Math.max(1, Math.floor(seconds / 60)))}分钟前`;
+    if (seconds < 86400) return `${Math.floor(seconds / 3600)}小时前`;
+    if (seconds < 259200) return `${Math.floor(seconds / 86400)}天前`;
+    const date: Date = new Date(timestamp * 1000);
+    return `${date.getFullYear()}/${date.getMonth() + 1}/${date.getDate()}`;
   }
 
   private formatDuration(seconds: number): string {

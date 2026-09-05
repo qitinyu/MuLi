@@ -5,7 +5,8 @@ import { DynamicAuthor, DynamicEntry, DynamicFeedBatch, DynamicPic, DynamicServi
 @Component
 export struct DynamicPage {
   @Prop bottomInset: number = 8;
-  onPlayVideo: (item: VideoItem) => void = (_item: VideoItem) => {};
+  onPlayVideo: (item: VideoItem, showComments: boolean) => void =
+    (_item: VideoItem, _showComments: boolean) => {};
   @State entries: DynamicEntry[] = [];
   @State authors: DynamicAuthor[] = [];
   @State loading: boolean = true;
@@ -92,8 +93,7 @@ export struct DynamicPage {
 
   private formatCount(value: number): string {
     if (value >= 100000000) return `${(value / 100000000).toFixed(2).replace(/\.00$/, '')}亿`;
-    if (value >= 1000000) return `${(value / 100000).toFixed(2).replace(/\.00$/, '')}万`;
-    if (value >= 1000) return `${(value / 1000).toFixed(1).replace(/\.0$/, '')}千`;
+    if (value >= 10000) return `${(value / 10000).toFixed(1).replace(/\.0$/, '')}万`;
     return `${value}`;
   }
 
@@ -136,7 +136,7 @@ export struct DynamicPage {
     .padding(8)
     .backgroundColor('#F4F6F8')
     .borderRadius(8)
-    .onClick((): void => { this.onPlayVideo(item); });
+    .onClick((): void => { this.onPlayVideo(item, false); });
   }
 
   private formatDuration(seconds: number): string {
@@ -188,7 +188,14 @@ export struct DynamicPage {
         Row({ space: 5 }) {
           Image($r('app.media.pl')).width(16).height(16).fillColor('#8B9199');
           Text(this.formatCount(entry.stat.comment)).fontSize(12).fontColor('#8B9199');
-        };
+        }
+          .onClick((): void => {
+            if (entry.video !== null) {
+              this.onPlayVideo(entry.video, true);
+            } else if (entry.repostVideo !== null) {
+              this.onPlayVideo(entry.repostVideo, true);
+            }
+          });
         Row({ space: 5 }) {
           Image($r('app.media.share')).width(16).height(16).fillColor('#8B9199');
           Text(this.formatCount(entry.stat.share)).fontSize(12).fontColor('#8B9199');
