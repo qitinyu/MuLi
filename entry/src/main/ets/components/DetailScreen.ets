@@ -577,6 +577,18 @@ export struct DetailScreen {
   }
 
   @Builder
+  followedMenu() {
+    Column({ space: 2 }) {
+      Text('取消关注').fontSize(13).fontColor('#1E252D')
+        .width('100%').height(34).textAlign(TextAlign.Center)
+        .onClick((): void => {
+          this.onFollowAuthor(false);
+        });
+    }.width(124).padding({ top: 6, bottom: 6 }).backgroundColor('#F7F8FA')
+      .borderRadius(10).shadow({ radius: 10, color: '#33000000', offsetX: 0, offsetY: 3 });
+  }
+
+  @Builder
   followBubble(small: boolean) {
     Row({ space: 4 }) {
       Image($r('app.media.lista')).width(small ? 13 : 15).height(small ? 13 : 15)
@@ -588,20 +600,14 @@ export struct DetailScreen {
     .padding({ left: 10, right: 10, top: small ? 4 : 6, bottom: small ? 4 : 6 })
     .backgroundColor((this.videos[this.currentIndex].authorFollowed ?? false) ? '#F1F3F5' : '#E5F3FA')
     .borderRadius(16)
-    .bindMenu(this.followMenuVisible && !(this.videos[this.currentIndex].authorFollowed ?? false),
-      this.followOptionsMenu(), {
+    // 非受控菜单：点击气泡弹出；已关注弹"取消关注"，未关注弹关注方式三选项。
+    // 不使用 isShow 受控形式——面板随控制条显隐重建时残留状态会导致菜单乱弹。
+    .bindMenu((this.videos[this.currentIndex].authorFollowed ?? false)
+      ? this.followedMenu() : this.followOptionsMenu(), {
         placement: Placement.Bottom,
         enableArrow: false,
         showInSubWindow: true
-      })
-    .onClick((): void => {
-      if (this.videos[this.currentIndex].authorFollowed ?? false) {
-        this.onFollowAuthor(false);
-      } else {
-        // 首次关注：先弹出关注方式选择
-        this.followMenuVisible = !this.followMenuVisible;
-      }
-    });
+      });
   }
 
   @Builder
@@ -638,7 +644,7 @@ export struct DetailScreen {
                 .backgroundColor(Color.Black)
               }
             }
-            .width('100%').layoutWeight(1)
+            .width('100%').height('100%')
             .justifyContent(FlexAlign.Center)
             .alignItems(HorizontalAlign.Center)
             .backgroundColor(Color.Black)
