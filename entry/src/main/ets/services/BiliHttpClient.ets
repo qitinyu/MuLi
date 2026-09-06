@@ -107,6 +107,30 @@ export class BiliHttpClient {
     }
   }
 
+  /**
+   * 通用 POST 表单请求（互动接口：点赞/投币/收藏/评论等）
+   */
+  static async postForm(path: string, form: Record<string, string>, cookie: string): Promise<Record<string, Object>> {
+    const request: http.HttpRequest = http.createHttp();
+    const headers: Record<string, string> = BiliHttpClient.buildHeaders(cookie);
+    headers['Content-Type'] = 'application/x-www-form-urlencoded';
+    const body: string = Object.keys(form)
+      .map((key: string) => `${encodeURIComponent(key)}=${encodeURIComponent(form[key])}`)
+      .join('&');
+    try {
+      const response: http.HttpResponse = await request.request(`${BiliHttpClient.apiBase}${path}`, {
+        method: http.RequestMethod.POST,
+        header: headers,
+        extraData: body,
+        connectTimeout: 10000,
+        readTimeout: 15000
+      });
+      return JSON.parse(response.result as string) as Record<string, Object>;
+    } finally {
+      request.destroy();
+    }
+  }
+
   static async getAppJson(path: string, queryText: string): Promise<Record<string, Object>> {
     const request: http.HttpRequest = http.createHttp();
     try {

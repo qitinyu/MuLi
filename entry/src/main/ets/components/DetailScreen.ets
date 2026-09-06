@@ -42,6 +42,8 @@ export struct DetailScreen {
     (rootId: number, refresh: boolean): void => {};
   onSubmitComment: () => void = (): void => {};
   onSendDanmaku: () => void = (): void => {};
+  onDetailAction: (action: string) => void = (action: string): void => {};
+  onLikeComment: (comment: VideoComment) => void = (comment: VideoComment): void => {};
   onShowControls: () => void = (): void => {};
   onOpenLandscape: () => void = (): void => {};
 
@@ -54,23 +56,28 @@ export struct DetailScreen {
   }
 
   @Builder
-  detailAction(label: string, iconName: string) {
+  detailAction(label: string, iconName: string, active: boolean, action: () => void) {
     Column({ space: 3 }) {
       if (iconName === 'dianzan') {
-        Image($r('app.media.dianzan')).width(24).height(24);
+        Image($r('app.media.dianzan')).width(24).height(24)
+          .opacity(active ? 1 : 0.85);
       } else if (iconName === 'diancai') {
-        Image($r('app.media.diancai')).width(24).height(24);
+        Image($r('app.media.diancai')).width(24).height(24).opacity(active ? 1 : 0.85);
       } else if (iconName === 'toubi') {
-        Image($r('app.media.toubi')).width(24).height(24);
+        Image($r('app.media.toubi')).width(24).height(24)
+          .opacity(active ? 1 : 0.85);
       } else if (iconName === 'favorites') {
-        Image($r('app.media.favorites')).width(24).height(24);
+        Image($r('app.media.favorites')).width(24).height(24)
+          .opacity(active ? 1 : 0.85);
       } else if (iconName === 'watch_later') {
-        Image($r('app.media.watch_later')).width(24).height(24);
+        Image($r('app.media.watch_later')).width(24).height(24).opacity(active ? 1 : 0.85);
       } else {
-        Image($r('app.media.share')).width(24).height(24);
+        Image($r('app.media.share')).width(24).height(24).opacity(0.85);
       }
-      Text(label).fontSize(12).fontColor('#3E4854');
-    }.layoutWeight(1).alignItems(HorizontalAlign.Center);
+      Text(label).fontSize(12).fontColor(active ? '#F04B55' : '#3E4854')
+        .fontWeight(active ? FontWeight.Bold : FontWeight.Normal);
+    }.layoutWeight(1).alignItems(HorizontalAlign.Center)
+      .onClick(() => { action(); });
   }
 
   @Builder
@@ -197,9 +204,12 @@ export struct DetailScreen {
           Row({ space: 14 }) {
             Text(FormatUtils.formatPublishTime(comment.publishTime)).fontSize(11).fontColor('#A0A6AD');
             Row({ space: 3 }) {
-              Image($r('app.media.dianzan')).width(14).height(14);
-              Text(FormatUtils.formatCount(comment.likeCount)).fontSize(11).fontColor('#858C94');
+              Image($r('app.media.dianzan')).width(14).height(14)
+                ;
+              Text(FormatUtils.formatCount(comment.likeCount)).fontSize(11)
+                .fontColor(comment.liked ? '#F04B55' : '#858C94');
             }
+              .onClick((): void => { this.onLikeComment(comment); });
             Row({ space: 3 }) {
               Image($r('app.media.pl')).width(14).height(14)
                 .fillColor(this.expandedCommentId === comment.id ? '#1677A8' : '#858C94');
@@ -341,12 +351,18 @@ export struct DetailScreen {
             .justifyContent(FlexAlign.Start)
             .alignItems(VerticalAlign.Center);
           Row() {
-            this.detailAction('点赞', 'dianzan');
-            this.detailAction('点踩', 'diancai');
-            this.detailAction('投币', 'toubi');
-            this.detailAction('收藏', 'favorites');
-            this.detailAction('再看', 'watch_later');
-            this.detailAction('分享', 'share');
+            this.detailAction('点赞', 'dianzan', this.videos[this.currentIndex].liked ?? false,
+              (): void => { this.onDetailAction('like'); });
+            this.detailAction('点踩', 'diancai', false,
+              (): void => { this.onDetailAction('dislike'); });
+            this.detailAction('投币', 'toubi', this.videos[this.currentIndex].coined ?? false,
+              (): void => { this.onDetailAction('coin'); });
+            this.detailAction('收藏', 'favorites', this.videos[this.currentIndex].favored ?? false,
+              (): void => { this.onDetailAction('fav'); });
+            this.detailAction('再看', 'watch_later', false,
+              (): void => { this.onDetailAction('watchlater'); });
+            this.detailAction('分享', 'share', false,
+              (): void => { this.onDetailAction('share'); });
           }.width('100%').height(64).padding({ top: 12, bottom: 12 })
             .border({ width: { bottom: 1 }, color: '#E5E8EC' });
           ForEach(this.videos, (item: VideoItem) => {

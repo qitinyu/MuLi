@@ -22,4 +22,7 @@ export interface VideoItem {
   detailLoaded: boolean;
   videoWidth?: number;
   videoHeight?: number;
+  liked?: boolean;
+  coined?: boolean;
+  favored?: boolean;
 }

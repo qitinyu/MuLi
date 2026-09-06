@@ -5,6 +5,7 @@ import { ReplyService, VideoComment, CommentBatch } from '../services/ReplyServi
 import { PlaybackService, PlaybackResolveResult, QualityOption } from '../services/PlaybackService';
 import { BiliHttpClient } from '../services/BiliHttpClient';
 import { DanmakuService } from '../services/DanmakuService';
+import { InteractionService } from '../services/InteractionService';
 import { WbiService } from '../services/WbiService';
 import { AuthService, AuthSession } from '../services/AuthService';
 import router from '@ohos.router';
@@ -302,6 +303,18 @@ struct Index {
     try {
       const updated: VideoItem = await VideoDetailService.load(item);
       if (requestId !== this.detailRequest || this.videos[this.currentIndex] !== item) return;
+      // 登录状态下回显点赞/投币/收藏状态
+      const session: AuthSession | null = this.authSession ?? AuthService.currentSession();
+      if (session !== null && session.cookie !== '' && updated.aid > 0) {
+        try {
+          const state = await InteractionService.fetchVideoState(updated.aid, session.cookie);
+          updated.liked = state.liked;
+          updated.coined = state.coined;
+          updated.favored = state.favored;
+        } catch (stateError) {
+          console.warn(`Pilihos video user state failed: ${String(stateError)}`);
+        }
+      }
       this.videos = this.videos.map((candidate: VideoItem): VideoItem =>
         candidate.id === item.id ? updated : candidate);
     } catch (error) {
@@ -372,9 +385,167 @@ struct Index {
     }
   }
 
-  private submitCommentEntry(): void {
-    // 评论发布入口：编辑能力后续接入，先展示占位反馈
-    this.showPlaybackToast('评论发布功能开发中，敬请期待');
+  private requireSession(): AuthSession | null {
+    const session: AuthSession | null = this.authSession ?? AuthService.currentSession();
+    if (session === null || session.cookie === '' || session.csrf === '') {
+      this.showPlaybackToast('请先登录后再互动');
+      return null;
+    }
+    return session;
+  }
+
+  private patchCurrentVideo(patch: (item: VideoItem) => void): void {
+    const item: VideoItem = this.videos[this.currentIndex];
+    if (item.placeholder) return;
+    patch(item);
+    this.videos = this.videos.slice(0);
+  }
+
+  private shareCurrentVideo(): void {
+    const item: VideoItem = this.videos[this.currentIndex];
+    const uri: string = item.bvid !== '' ? `https://www.bilibili.com/video/${item.bvid}/` :
+      `https://www.bilibili.com/video/av${item.aid}/`;
+    const want: Want = { action: 'ohos.want.action.viewData', uri: uri };
+    this.context.startAbility(want).catch((error: BusinessError): void => {
+      console.error(`Pilihos share failed: ${error.code} ${error.message}`);
+      this.showPlaybackToast('分享失败 [错误码: ' + String(error.code) + ']');
+    });
+  }
+
+  private handleDetailAction(action: string): void {
+    if (action === 'like') {
+      this.toggleLike();
+    } else if (action === 'coin') {
+      this.coinVideo();
+    } else if (action === 'fav') {
+      this.toggleFavorite();
+    } else if (action === 'watchlater') {
+      this.addWatchLater();
+    } else if (action === 'dislike') {
+      this.showPlaybackToast('B站暂不支持视频点踩');
+    } else if (action === 'share') {
+      this.shareCurrentVideo();
+    }
+  }
+
+  private async toggleLike(): Promise<void> {
+    const session: AuthSession | null = this.requireSession();
+    if (session === null) return;
+    const item: VideoItem = this.videos[this.currentIndex];
+    if (item.aid <= 0) {
+      this.showPlaybackToast('视频信息加载中，请稍后');
+      return;
+    }
+    const on: boolean = !(item.liked ?? false);
+    try {
+      await InteractionService.like(item.aid, on, session.cookie, session.csrf);
+      this.patchCurrentVideo((target: VideoItem): void => {
+        target.liked = on;
+        target.likeCount = Math.max(0, target.likeCount + (on ? 1 : -1));
+      });
+      this.showPlaybackToast(on ? '已点赞' : '已取消点赞');
+    } catch (error) {
+      this.showPlaybackToast(`点赞失败: ${String(error)}`);
+    }
+  }
+
+  private async coinVideo(): Promise<void> {
+    const session: AuthSession | null = this.requireSession();
+    if (session === null) return;
+    const item: VideoItem = this.videos[this.currentIndex];
+    if (item.aid <= 0) {
+      this.showPlaybackToast('视频信息加载中，请稍后');
+      return;
+    }
+    if (item.coined ?? false) {
+      this.showPlaybackToast('已为该视频投过币');
+      return;
+    }
+    try {
+      await InteractionService.coin(item.aid, 1, false, session.cookie, session.csrf);
+      this.patchCurrentVideo((target: VideoItem): void => {
+        target.coined = true;
+      });
+      this.showPlaybackToast('投币成功，感谢支持');
+    } catch (error) {
+      this.showPlaybackToast(`投币失败: ${String(error)}`);
+    }
+  }
+
+  private async toggleFavorite(): Promise<void> {
+    const session: AuthSession | null = this.requireSession();
+    if (session === null) return;
+    const item: VideoItem = this.videos[this.currentIndex];
+    if (item.aid <= 0) {
+      this.showPlaybackToast('视频信息加载中，请稍后');
+      return;
+    }
+    const on: boolean = !(item.favored ?? false);
+    try {
+      await InteractionService.favorite(item.aid, on, session.cookie, session.csrf);
+      this.patchCurrentVideo((target: VideoItem): void => {
+        target.favored = on;
+      });
+      this.showPlaybackToast(on ? '已收藏到默认收藏夹' : '已取消收藏');
+    } catch (error) {
+      this.showPlaybackToast(`收藏失败: ${String(error)}`);
+    }
+  }
+
+  private async addWatchLater(): Promise<void> {
+    const session: AuthSession | null = this.requireSession();
+    if (session === null) return;
+    const item: VideoItem = this.videos[this.currentIndex];
+    if (item.aid <= 0) {
+      this.showPlaybackToast('视频信息加载中，请稍后');
+      return;
+    }
+    try {
+      await InteractionService.watchLater(item.aid, session.cookie, session.csrf);
+      this.showPlaybackToast('已加入稍后再看');
+    } catch (error) {
+      this.showPlaybackToast(`加入失败: ${String(error)}`);
+    }
+  }
+
+  private async submitComment(): Promise<void> {
+    const message: string = this.commentInputText.trim();
+    if (message === '') {
+      this.showPlaybackToast('先说点什么吧');
+      return;
+    }
+    const session: AuthSession | null = this.requireSession();
+    if (session === null) return;
+    const item: VideoItem = this.videos[this.currentIndex];
+    if (item.aid <= 0) {
+      this.showPlaybackToast('视频信息加载中，请稍后');
+      return;
+    }
+    try {
+      await InteractionService.addComment(item.aid, message, session.cookie, session.csrf);
+      this.commentInputText = '';
+      this.showCommentInput = false;
+      this.showPlaybackToast('评论发布成功');
+      this.loadComments(true);
+    } catch (error) {
+      this.showPlaybackToast(`评论发布失败: ${String(error)}`);
+    }
+  }
+
+  private async toggleCommentLike(comment: VideoComment): Promise<void> {
+    const session: AuthSession | null = this.requireSession();
+    if (session === null) return;
+    const item: VideoItem = this.videos[this.currentIndex];
+    if (item.aid <= 0) return;
+    const on: boolean = !comment.liked;
+    try {
+      await InteractionService.likeComment(comment, item.aid, on, session.cookie, session.csrf);
+      comment.liked = on;
+      comment.likeCount = Math.max(0, comment.likeCount + (on ? 1 : -1));
+      this.comments = this.comments.slice(0);
+    } catch (error) {
+      this.showPlaybackToast(`点赞失败: ${String(error)}`);
+    }
   }
 
   private async sendDanmaku(): Promise<void> {
@@ -741,8 +912,10 @@ struct Index {
           onLoadSubReplies: (rootId: number, refresh: boolean): void => {
             this.loadSubReplies(rootId, refresh);
           },
-          onSubmitComment: (): void => { this.submitCommentEntry(); },
+          onSubmitComment: (): void => { this.submitComment(); },
           onSendDanmaku: (): void => { this.sendDanmaku(); },
+          onDetailAction: (action: string): void => { this.handleDetailAction(action); },
+          onLikeComment: (comment: VideoComment): void => { this.toggleCommentLike(comment); },
           onRetry: (): void => { this.prepareCurrentVideo(); },
           onQualitySwitch: (qn: number): void => { this.switchPlaybackQuality(qn); },
           onBack: (): void => { this.onBackPress(); },

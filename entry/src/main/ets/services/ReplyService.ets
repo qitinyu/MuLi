@@ -11,6 +11,7 @@ export class VideoComment {
   replyCount: number = 0;
   publishTime: number = 0;
   isUp: boolean = false;
+  liked: boolean = false;
 }
 
 export interface CommentBatch {
@@ -88,6 +89,8 @@ export class ReplyService {
     comment.replyCount = Number(reply['rcount'] ?? 0);
     comment.publishTime = Number(reply['ctime'] ?? 0);
     comment.isUp = upperMid > 0 && Number(reply['mid'] ?? 0) === upperMid;
+    // action: 0 未点赞 / 1 已点赞（需携带登录 cookie）
+    comment.liked = Number(reply['action'] ?? 0) === 1;
     return comment;
   }
 }

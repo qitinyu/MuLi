@@ -733,7 +733,7 @@ struct Settings {
           Column({ space: 8 }) {
             Image($r('app.media.app_logo')).width(112).height(112).borderRadius(22);
             Text('Pilihos').fontSize(28).fontWeight(FontWeight.Bold);
-            Text('Version 1.0.5.6').fontSize(15).fontColor('#646A73');
+            Text('Version 1.0.5.7').fontSize(15).fontColor('#646A73');
           }
           .width('100%')
           .alignItems(HorizontalAlign.Center)
@@ -746,11 +746,10 @@ struct Settings {
           Row({ space: 10 }) {
             this.aboutInfoCard('软件协议', '本软件采用 MIT 开源协议');
             this.aboutInfoCard('版本日志',
-              'v1.0.5.6\n' +
-              '1. 修复点击视频闪退（状态贯通缺失） #4\n' +
-              '2. 材质改为真机毛玻璃（背景模糊） #4\n' +
-              '3. 修复搜索结果区被历史面板压缩 #4\n' +
-              'v1.0.5.5 材质底衬/搜索加固/控件隐藏\n' +
+              'v1.0.5.7\n' +
+              '1. 点赞/投币/收藏/再看接真接口 #1055\n' +
+              '2. 评论发布与评论点赞 #1056\n' +
+              'v1.0.5.6 闪退/毛玻璃/搜索结果区修复\n' +
               '完整更新日志(Pilihos Wiki]https://github.com/qitinyu/Pilihos/wiki/)');
           }.width('100%').justifyContent(FlexAlign.SpaceBetween);
 

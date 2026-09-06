@@ -65,6 +65,8 @@ export struct PlayerScreen {
     (rootId: number, refresh: boolean): void => {};
   onSubmitComment: () => void = (): void => {};
   onSendDanmaku: () => void = (): void => {};
+  onDetailAction: (action: string) => void = (action: string): void => {};
+  onLikeComment: (comment: VideoComment) => void = (comment: VideoComment): void => {};
   onRetry: () => void = (): void => {};
   onQualitySwitch: (qn: number) => void = (qn: number): void => {};
   onBack: () => void = (): void => {};
@@ -516,6 +518,8 @@ export struct PlayerScreen {
         },
         onSubmitComment: (): void => { this.onSubmitComment(); },
         onSendDanmaku: (): void => { this.onSendDanmaku(); },
+        onDetailAction: (action: string): void => { this.onDetailAction(action); },
+        onLikeComment: (comment: VideoComment): void => { this.onLikeComment(comment); },
         onShowControls: (): void => { this.showPlaybackControls(); },
         onOpenLandscape: (): void => { this.onOpenLandscape(); }
       });
