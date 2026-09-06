@@ -44,4 +44,15 @@ export class ImmersiveMaterial {
     const alpha: string = Math.round(clamped * 255).toString(16).padStart(2, '0');
     return `#${alpha}FFFFFF`;
   }
+
+  /**
+   * 深色材质底衬（参考点赞提示气泡的深色半透明观感），
+   * 用于首页底部迷你栏与中间页签栏。
+   */
+  static fallbackBackgroundDark(opacity: number = 1.0): ResourceColor {
+    const clamped: number = Math.max(0, Math.min(1, opacity));
+    const adjusted: number = Math.max(0.45, clamped * 0.75);
+    const alpha: string = Math.round(adjusted * 255).toString(16).padStart(2, '0');
+    return `#${alpha}1A1E26`;
+  }
 }

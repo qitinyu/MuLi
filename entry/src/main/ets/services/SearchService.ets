@@ -12,6 +12,7 @@ export class SearchUser {
   level: number = 0;
   liveRoomId: number = 0;
   followed: boolean = false;
+  liveStatus: boolean = false;
 }
 
 export class SearchSeason {

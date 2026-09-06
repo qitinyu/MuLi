@@ -310,61 +310,6 @@ struct Index {
     try {
       const updated: VideoItem = await VideoDetailService.load(item);
       if (requestId !== this.detailRequest || this.videos[this.currentIndex] !== item) return;
-      // 登录状态下回显点赞/投币/收藏状态
-      const session: AuthSession | null = this.authSession ?? AuthService.currentSession();
-      if (session !== null && session.cookie !== '' && updated.aid > 0) {
-        try {
-          const state = await InteractionService.fetchVideoState(updated.aid, session.cookie);
-          updated.liked = state.liked;
-          updated.coined = state.coined;
-          updated.favored = state.favored;
-        } catch (stateError) {
-          console.warn(`Pilihos video user state failed: ${String(stateError)}`);
-        }
-      }
-      // UP主关注状态与粉丝/投稿数
-      const authorMid: number = updated.authorMid ?? 0;
-      if (session !== null && session.cookie !== '' && authorMid > 0) {
-        try {
-          const attribute: number = await InteractionService.relationAttribute(authorMid, session.cookie);
-          updated.authorFollowed = attribute === 2 || attribute === 6 || attribute === 128;
-        } catch (relationError) {
-          updated.authorFollowed = FollowState.isFollowed(authorMid, updated.author);
-        }
-        try {
-          const cardQuery: Record<string, string> = {};
-          cardQuery['mid'] = String(authorMid);
-          const cardResult: Record<string, Object> =
-            await BiliHttpClient.getJson('/x/web-interface/card', cardQuery, session.cookie);
-          if (Number(cardResult['code'] ?? -1) === 0) {
-            const cardData: Record<string, Object> = (cardResult['data'] ?? {}) as Record<string, Object>;
-            const cardInfo: Record<string, Object> = (cardData['card'] ?? {}) as Record<string, Object>;
-            updated.authorFans = Number(cardData['follower'] ?? 0);
-            updated.authorVideos = Number(cardInfo['arc_count'] ?? 0);
-          }
-        } catch (cardError) {
-          console.warn(`Pilihos author card failed: ${String(cardError)}`);
-        }
-        // 投稿数：card 接口不带，取投稿列表第一页的 total
-        if ((updated.authorVideos ?? 0) <= 0) {
-          try {
-            const arcSigned: string = await WbiService.sign([
-              `mid=${authorMid}`, 'pn=1', 'ps=1', 'order=pubdate'
-            ]);
-            const arcResult: Record<string, Object> =
-              await BiliHttpClient.getJsonQuery('/x/space/wbi/arc/search', arcSigned, session.cookie);
-            if (Number(arcResult['code'] ?? -1) === 0) {
-              const arcData: Record<string, Object> = (arcResult['data'] ?? {}) as Record<string, Object>;
-              const arcPage: Record<string, Object> = (arcData['page'] ?? {}) as Record<string, Object>;
-              updated.authorVideos = Number(arcPage['count'] ?? 0);
-            }
-          } catch (arcError) {
-            console.warn(`Pilihos author arc count failed: ${String(arcError)}`);
-          }
-        }
-      } else if (authorMid > 0 || updated.author !== '') {
-        updated.authorFollowed = FollowState.isFollowed(authorMid, updated.author);
-      }
       this.videos = this.videos.map((candidate: VideoItem): VideoItem =>
         candidate.id === item.id ? updated : candidate);
     } catch (error) {
@@ -447,8 +392,101 @@ struct Index {
   private patchCurrentVideo(patch: (item: VideoItem) => void): void {
     const item: VideoItem = this.videos[this.currentIndex];
     if (item.placeholder) return;
-    patch(item);
-    this.videos = this.videos.slice(0);
+    // 不可变替换：保证状态绑定立即刷新（乐观高亮即时生效）
+    const copy: VideoItem = JSON.parse(JSON.stringify(item)) as VideoItem;
+    patch(copy);
+    this.videos = this.videos.map((candidate: VideoItem, index: number): VideoItem =>
+      index === this.currentIndex ? copy : candidate);
+  }
+
+  /**
+   * 互动状态与作者信息：openVideoDetail 必经路径（不受 detailLoaded 短路影响），
+   * 负责点赞/收藏回显、作者关注态、粉丝数与投稿数。
+   */
+  private async loadVideoContext(): Promise<void> {
+    const session: AuthSession | null = this.authSession ?? AuthService.currentSession();
+    let item: VideoItem = this.videos[this.currentIndex];
+    if (item.placeholder) return;
+    // 搜索/推荐条目可能缺 authorMid：补一次详情解析
+    if ((item.authorMid ?? 0) <= 0) {
+      try {
+        const fresh: VideoItem = await VideoDetailService.load(item);
+        if (this.videos[this.currentIndex] !== item) return;
+        this.videos = this.videos.map((candidate: VideoItem): VideoItem =>
+          candidate.id === item.id ? fresh : candidate);
+        item = fresh;
+      } catch (detailError) {
+        console.warn(`Pilihos video context detail failed: ${String(detailError)}`);
+      }
+    }
+    // 互动状态回显
+    if (session !== null && session.cookie !== '' && item.aid > 0) {
+      try {
+        const state = await InteractionService.fetchVideoState(item.aid, session.cookie);
+        this.patchCurrentVideo((target: VideoItem): void => {
+          target.liked = state.liked;
+          target.coined = state.coined;
+          target.favored = state.favored;
+        });
+      } catch (stateError) {
+        console.warn(`Pilihos video user state failed: ${String(stateError)}`);
+      }
+    }
+    // 作者关注态 + 粉丝数 + 投稿数
+    const authorMid: number = item.authorMid ?? 0;
+    if (session !== null && session.cookie !== '' && authorMid > 0) {
+      try {
+        const attribute: number = await InteractionService.relationAttribute(authorMid, session.cookie);
+        const followed: boolean = attribute === 2 || attribute === 6 || attribute === 128;
+        this.patchCurrentVideo((target: VideoItem): void => {
+          target.authorFollowed = followed;
+        });
+      } catch (relationError) {
+        const fallbackFollowed: boolean = FollowState.isFollowed(authorMid, item.author);
+        this.patchCurrentVideo((target: VideoItem): void => {
+          target.authorFollowed = fallbackFollowed;
+        });
+      }
+      try {
+        const cardQuery: Record<string, string> = {};
+        cardQuery['mid'] = String(authorMid);
+        const cardResult: Record<string, Object> =
+          await BiliHttpClient.getJson('/x/web-interface/card', cardQuery, session.cookie);
+        if (Number(cardResult['code'] ?? -1) === 0) {
+          const cardData: Record<string, Object> = (cardResult['data'] ?? {}) as Record<string, Object>;
+          const fans: number = Number(cardData['follower'] ?? 0);
+          this.patchCurrentVideo((target: VideoItem): void => {
+            target.authorFans = fans;
+          });
+        }
+      } catch (cardError) {
+        console.warn(`Pilihos author card failed: ${String(cardError)}`);
+      }
+      if ((item.authorVideos ?? 0) <= 0) {
+        try {
+          const arcSigned: string = await WbiService.sign([
+            `mid=${authorMid}`, 'pn=1', 'ps=1', 'order=pubdate'
+          ]);
+          const arcResult: Record<string, Object> =
+            await BiliHttpClient.getJsonQuery('/x/space/wbi/arc/search', arcSigned, session.cookie);
+          if (Number(arcResult['code'] ?? -1) === 0) {
+            const arcData: Record<string, Object> = (arcResult['data'] ?? {}) as Record<string, Object>;
+            const arcPage: Record<string, Object> = (arcData['page'] ?? {}) as Record<string, Object>;
+            const count: number = Number(arcPage['count'] ?? 0);
+            this.patchCurrentVideo((target: VideoItem): void => {
+              target.authorVideos = count;
+            });
+          }
+        } catch (arcError) {
+          console.warn(`Pilihos author arc count failed: ${String(arcError)}`);
+        }
+      }
+    } else if (authorMid > 0 || item.author !== '') {
+      const followed: boolean = FollowState.isFollowed(authorMid, item.author);
+      this.patchCurrentVideo((target: VideoItem): void => {
+        target.authorFollowed = followed;
+      });
+    }
   }
 
   private shareCurrentVideo(): void {
@@ -801,6 +839,7 @@ struct Index {
       this.showPlaybackToast(`已恢复上次进度 ${FormatUtils.formatPlaybackTime(savedMs)}`);
     }
     this.loadVideoDetail();
+    this.loadVideoContext();
     this.prepareCurrentVideo();
     if (showComments) this.loadComments(true);
   }
@@ -1050,7 +1089,7 @@ struct Index {
           .onClick((): void => { this.showPlaybackToast('新建收藏夹开发中'); });
       }.width('100%');
       if (this.favFolders.length === 0) {
-        Text('暂无收藏夹').fontSize(13).fontColor('#858C94')
+        Text('未获取到收藏夹，请尝试重新登录').fontSize(13).fontColor('#858C94')
           .width('100%').textAlign(TextAlign.Center)
           .padding({ top: 20, bottom: 20 });
       }
@@ -1171,7 +1210,7 @@ struct Index {
       .bindSheet($$this.favSheetVisible, this.favFolderSheet(), {
         height: SheetSize.FIT_CONTENT,
         dragBar: true,
-        showClose: true
+        showClose: false
       });
   }
 }

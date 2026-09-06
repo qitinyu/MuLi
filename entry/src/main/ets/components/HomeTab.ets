@@ -41,13 +41,13 @@ export struct HomeTab {
     Row() {
       Text(label)
         .fontSize(this.selectedTopTab === tabIndex ? 15 : 14)
-        .fontColor(this.selectedTopTab === tabIndex ? Color.Black : '#3E4854')
+        .fontColor(this.selectedTopTab === tabIndex ? Color.White : '#C7D0D6')
         .fontWeight(this.selectedTopTab === tabIndex ? FontWeight.Bold : FontWeight.Normal)
     }
       .justifyContent(FlexAlign.Center)
       .width(width)
       .height(40)
-      .backgroundColor(this.topTabsMerged ? Color.Transparent : ImmersiveMaterial.fallbackBackground(0.72))
+      .backgroundColor(this.topTabsMerged ? Color.Transparent : ImmersiveMaterial.fallbackBackgroundDark(0.85))
       .borderRadius(20)
       .shadow({ radius: this.topTabsMerged ? 0 : 5, color: '#22000000', offsetX: 0, offsetY: 2 })
       .onClick(action);
@@ -61,8 +61,8 @@ export struct HomeTab {
         this.topBubbleButton('推荐', 1, 66, () => { this.onSelectTab(1); });
         this.topBubbleButton('热门', 2, 62, () => { this.onSelectTab(2); });
       }.height(48).padding({ left: 4, right: 4 })
-        .backgroundColor(ImmersiveMaterial.fallbackBackground(0.72))
-        .borderRadius(24).backgroundBlurStyle(ImmersiveMaterial.blurStyle(), { colorMode: ThemeColorMode.LIGHT })
+        .backgroundColor(ImmersiveMaterial.fallbackBackgroundDark(0.85))
+        .borderRadius(24).backgroundBlurStyle(ImmersiveMaterial.blurStyle(), { colorMode: ThemeColorMode.DARK })
         .shadow({ radius: 6, color: '#25000000', offsetX: 0, offsetY: 2 });
     } else {
       Row({ space: 8 }) {
@@ -89,7 +89,7 @@ export struct HomeTab {
       .backgroundColor(ImmersiveMaterial.fallbackBackground(0.72))
       .padding(0)
       .borderRadius(24)
-      .backgroundBlurStyle(ImmersiveMaterial.blurStyle(), { colorMode: ThemeColorMode.LIGHT })
+      .backgroundBlurStyle(ImmersiveMaterial.blurStyle(), { colorMode: ThemeColorMode.DARK })
       .shadow({ radius: 6, color: '#25000000', offsetX: 0, offsetY: 2 })
       .onClick(action);
   }
@@ -180,7 +180,7 @@ export struct HomeTab {
           .width(48).height(48)
           .backgroundColor(ImmersiveMaterial.fallbackBackground(0.72))
           .borderRadius(24)
-          .backgroundBlurStyle(ImmersiveMaterial.blurStyle(), { colorMode: ThemeColorMode.LIGHT })
+          .backgroundBlurStyle(ImmersiveMaterial.blurStyle(), { colorMode: ThemeColorMode.DARK })
           .shadow({ radius: 6, color: '#25000000', offsetX: 0, offsetY: 2 })
           .onClick(() => { this.sidebar = 2; });
         }

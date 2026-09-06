@@ -2,6 +2,7 @@ import { VideoItem } from '../models/VideoItem';
 import { AuthService } from '../services/AuthService';
 import { SearchSeason, SearchService, SearchUser } from '../services/SearchService';
 import { InteractionService } from '../services/InteractionService';
+import { BiliHttpClient } from '../services/BiliHttpClient';
 import { WbiService } from '../services/WbiService';
 import { FormatUtils } from '../utils/FormatUtils';
 import { FollowState } from '../utils/FollowState';
@@ -141,7 +142,7 @@ struct SearchPage {
       this.searchSeasons = batch.seasons;
       if (batch.videos.length + batch.users.length + batch.seasons.length > 0) {
         await this.rememberSearch(value);
-        this.loadUserRelations();
+        this.loadUserStates();
       } else {
         this.showToast('没有找到相关内容');
       }
@@ -156,8 +157,41 @@ struct SearchPage {
   }
 
   /**
-   * 逐个核对搜索结果中 UP 主的关注状态（数量少，串行即可）
+   * 搜索结果 UP 主状态校准：关注态逐个核对；
+   * 开播状态用 get_status_info_by_uids 批量校验（room_id 有值不代表正在直播）
    */
+  private async loadLiveStatus(): Promise<void> {
+    const mids: number[] = this.searchUsers
+      .filter((user: SearchUser): boolean => user.liveRoomId > 0)
+      .map((user: SearchUser): number => user.mid);
+    if (mids.length === 0) return;
+    try {
+      const body: Record<string, Object> = {};
+      body['uids'] = mids;
+      const result: Record<string, Object> = await BiliHttpClient.postJsonHost(
+        'api.live.bilibili.com', '/room/v1/Room/get_status_info_by_uids', body, '');
+      if (Number(result['code'] ?? -1) !== 0) return;
+      const data: Record<string, Object> = (result['data'] ?? {}) as Record<string, Object>;
+      let changed: boolean = false;
+      this.searchUsers.forEach((user: SearchUser): void => {
+        if (user.liveRoomId <= 0) return;
+        const info: Record<string, Object> = (data[String(user.mid)] ?? {}) as Record<string, Object>;
+        const live: boolean = Number(info['live_status'] ?? 0) === 1;
+        if (live !== user.liveStatus) {
+          user.liveStatus = live;
+          changed = true;
+        }
+      });
+      if (changed) this.searchUsers = this.searchUsers.slice(0);
+    } catch (error) {
+      console.warn(`Pilihos live status check failed: ${String(error)}`);
+    }
+  }
+  private async loadUserStates(): Promise<void> {
+    this.loadLiveStatus();
+    await this.loadUserRelations();
+  }
+
   private async loadUserRelations(): Promise<void> {
     const session = AuthService.currentSession();
     if (session === null || session.cookie === '') return;
@@ -377,9 +411,10 @@ struct SearchPage {
   @Builder
   searchHistoryPanel() {
     if (this.searchHistoryEnabled && this.searchHistory.length > 0) {
-      Row() {
-        Text('搜索历史').fontSize(17).fontWeight(FontWeight.Medium).fontColor('#20242A').layoutWeight(1);
+      Row({ space: 10 }) {
+        Text('搜索历史').fontSize(17).fontWeight(FontWeight.Medium).fontColor('#20242A');
         Text('清空').fontSize(13).fontColor('#8B9199').onClick(() => { this.clearSearchHistory(); });
+        Blank().layoutWeight(1);
       }.width('100%').padding({ left: 18, right: 18, top: 16, bottom: 8 });
       // 注意：这里不能用 Grid——Grid 未设高度会占满整列，把下方内容压成 0 高度
       Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Start }) {
@@ -509,15 +544,15 @@ struct SearchPage {
           } else {
             Row().width(52).height(52).borderRadius(26).backgroundColor('#DCE3EF');
           }
-          if (user.liveRoomId > 0) {
-            // 直播中：头像外围红色标记框
+          if (user.liveStatus) {
+            // 正在直播：头像外围红色标记框
             Row()
               .width(58).height(58)
               .border({ width: 2, color: '#F04B55' })
               .borderRadius(29)
           }
         }.width(58).height(58);
-        if (user.liveRoomId > 0) {
+        if (user.liveStatus) {
           Text('直播中').fontSize(9).fontColor(Color.White)
             .backgroundColor('#F04B55')
             .padding({ left: 5, right: 5, top: 1, bottom: 1 })
@@ -663,7 +698,8 @@ struct SearchPage {
             this.hotPanel();
             this.searchHistoryPanel();
           }.width('100%');
-        }.layoutWeight(1).width('100%').scrollBar(BarState.Off);
+        }.layoutWeight(1).width('100%').scrollBar(BarState.Off)
+          .align(Alignment.TopStart);
       } else {
         // 第二层：筛选项 + 搜索结果
         this.typeTabs();

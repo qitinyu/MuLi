@@ -239,16 +239,16 @@ export struct MineSidebar {
 
       Row({ space: 14 }) {
         if (this.authSession !== null && this.authSession.face !== '') {
-          Image(this.authSession.face).width(88).height(88).borderRadius(44).objectFit(ImageFit.Cover)
+          Image(this.authSession.face).width(104).height(104).borderRadius(52).objectFit(ImageFit.Cover)
             .onClick(() => { this.onAvatarTap(); })
-            .gesture(LongPressGesture({ repeat: false }).onAction((): void => {
+            .gesture(LongPressGesture({ repeat: false, duration: 500 }).onAction((): void => {
               // 换头像（试行）：复用封面更换弹层
               this.showMineCoverSheet = true;
             }));
         } else {
-          Image($r('app.media.user_me')).width(88).height(88).borderRadius(44).objectFit(ImageFit.Contain)
+          Image($r('app.media.user_me')).width(104).height(104).borderRadius(52).objectFit(ImageFit.Contain)
             .onClick(() => { this.onAvatarTap(); })
-            .gesture(LongPressGesture({ repeat: false }).onAction((): void => {
+            .gesture(LongPressGesture({ repeat: false, duration: 500 }).onAction((): void => {
               this.showMineCoverSheet = true;
             }));
         }
@@ -262,7 +262,7 @@ export struct MineSidebar {
               .fontSize(11).fontWeight(FontWeight.Bold).fontColor('#FFFFFF')
               .backgroundColor('#F08A24').borderRadius(5)
               .padding({ left: 5, right: 5, top: 2, bottom: 2 })
-              .onClick((): void => { this.levelSheetVisible = true; });
+              .gesture(TapGesture().onAction((): void => { this.levelSheetVisible = true; }));
           }.width('100%');
           Text(this.authSession === null ? 'B币 -- · 硬币 --' :
             `B币 -- · 硬币 ${this.coinCount > 0 ? String(this.coinCount) : '--'}`)
@@ -278,8 +278,8 @@ export struct MineSidebar {
             .textOverflow({ overflow: TextOverflow.Ellipsis }).width('100%');
         }.alignItems(HorizontalAlign.Start).layoutWeight(1)
           .margin({ top: 22 });
-      }.width('100%').height(92)
-        .margin({ top: -36 })
+      }.width('100%')
+        .margin({ top: -52 })
         .alignItems(VerticalAlign.Top);
 
       Row({ space: 8 }) {
