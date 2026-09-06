@@ -135,7 +135,7 @@ export struct DetailScreen {
             Text(this.videos[this.currentIndex].author === '' ? '未知UP主' : this.videos[this.currentIndex].author)
               .fontSize(14).fontWeight(FontWeight.Bold).fontColor(Color.White)
               .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
-              .layoutWeight(1);
+              .constraintSize({ maxWidth: '72%' });
             if ((this.videos[this.currentIndex].authorLevel ?? 0) > 0) {
               Text('LV' + String(this.videos[this.currentIndex].authorLevel ?? 0))
                 .fontSize(7).fontColor(Color.White)

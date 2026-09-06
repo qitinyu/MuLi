@@ -228,7 +228,8 @@ export struct MineSidebar {
 
   @Builder
   levelSheet() {
-    Stack({ alignContent: Alignment.Center }) {
+    if (this.levelSheetVisible) {
+      Stack({ alignContent: Alignment.Center }) {
       Column({ space: 12 }) {
         // 顶部：当前所处等级分段
         Text(this.currentLevelSegment()).fontSize(18).fontWeight(FontWeight.Bold).fontColor('#F08A24');
@@ -257,6 +258,7 @@ export struct MineSidebar {
     .width('100%').height('100%')
     .backgroundColor('#66000000')
     .onClick((): void => { this.levelSheetVisible = false; });
+    }
   }
 
   build() {
@@ -292,7 +294,7 @@ export struct MineSidebar {
               .fontSize(11).fontWeight(FontWeight.Bold).fontColor('#FFFFFF')
               .backgroundColor('#F08A24').borderRadius(5)
               .padding({ left: 5, right: 5, top: 2, bottom: 2 })
-              .gesture(TapGesture().onAction((): void => { this.levelSheetVisible = true; }));
+              .onClick((): void => { this.levelSheetVisible = true; });
           }.width('100%');
           Text(this.authSession === null ? 'B币 -- · 硬币 --' :
             `B币 ${this.authSession.bcoin} · 硬币 ${this.authSession.coin}`)
@@ -341,9 +343,8 @@ export struct MineSidebar {
       dragBar: true,
       showClose: true
     })
-    .bindContentCover($$this.levelSheetVisible, this.levelSheet(), {
-      modalTransition: ModalTransition.DEFAULT
-    });
+    // 等级成长弹层：树内 overlay 条件渲染（bindContentCover 呈现在部分场景不弹出）
+    .overlay(this.levelSheet(), { align: Alignment.Center });
   }
 }
 

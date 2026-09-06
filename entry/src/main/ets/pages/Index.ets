@@ -1043,6 +1043,16 @@ struct Index {
       if (item.duration > 0) this.playbackDurationMs = item.duration * 1000;
       // 播放地址带有短期签名，详情页每次进入都重新获取；只有接口失败时才使用旧缓存。
       // targetQn>0 时请求指定清晰度（清晰度切换），否则使用设置中的默认质量。
+      if (targetQn <= 0) {
+        // 设置页与播放器分属两个页面：每次重读默认清晰度，保证设置修改即时生效
+        try {
+          const store: preferences.Preferences =
+            await preferences.getPreferences(this.context, 'pilihos_player');
+          this.defaultQuality = store.getSync('default_quality', 0) as number;
+        } catch (qualityError) {
+          console.warn(`Pilihos default quality reload failed: ${String(qualityError)}`);
+        }
+      }
       const effectiveQn: number = targetQn > 0 ? targetQn : this.defaultQuality;
       let urls: string[] = [];
       try {
@@ -1051,6 +1061,10 @@ struct Index {
         urls = resolved.urls;
         this.playbackQualities = resolved.qualities;
         this.currentQn = resolved.grantedQn;
+        // 主动切换的清晰度未被授予（如仅大会员可用）时给出降级提示
+        if (targetQn > 0 && resolved.grantedQn > 0 && resolved.grantedQn < targetQn) {
+          this.showPlaybackToast(`当前仅支持到 ${PlaybackService.qualityLabel(resolved.grantedQn)}`);
+        }
       } catch (resolveError) {
         if (item.playUrl === '') throw new Error(String(resolveError));
         console.warn(`Pilihos live playback URL resolve failed, using cached URL: ${String(resolveError)}`);

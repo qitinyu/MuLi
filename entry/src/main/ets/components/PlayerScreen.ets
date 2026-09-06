@@ -307,8 +307,9 @@ export struct PlayerScreen {
       this.holdSpeedActive = true;
       this.holdSpeedBase = this.playbackSpeed;
       this.playbackSpeed = 2;
+      // 仅加速瞬间提示一次，HUD 到时自动隐藏（不随 repeat 回调常驻刷新）
+      this.showHud('2倍速快进中');
     }
-    this.showHud('2倍速快进中');
   }
 
   private onHoldSpeedEnd(): void {
