@@ -59,6 +59,7 @@ export struct PlayerScreen {
   private startBrightness: number = 0.5;
   private startVolume: number = 8;
   private originalBrightness: number = -1;
+  private holdSpeedBase: number = 1.0;
   onOpenVideo: (item: VideoItem, showComments: boolean) => void =
     (item: VideoItem, showComments: boolean): void => {};
   onLoadComments: (refresh: boolean) => void = (refresh: boolean): void => {};
@@ -296,6 +297,19 @@ export struct PlayerScreen {
     return `${minutes}:${String(seconds).padStart(2, '0')}`;
   }
 
+  private onHoldSpeedStart(): void {
+    if (this.currentUrl === '') return;
+    this.holdSpeedBase = this.playbackSpeed;
+    this.playbackSpeed = 2;
+    this.showHud('2倍速快进中');
+  }
+
+  private onHoldSpeedEnd(): void {
+    if (this.playbackSpeed === 2 && this.holdSpeedBase !== 2) {
+      this.playbackSpeed = this.holdSpeedBase;
+    }
+  }
+
   private onSeekStart(): void {
     this.gestureMode = 'seek';
     this.seekBaseMs = this.playbackCurrentMs;
@@ -467,7 +481,15 @@ export struct PlayerScreen {
       .onActionUpdate((event: GestureEvent): void => { this.onVerticalUpdate(event); })
       .onActionEnd((event: GestureEvent): void => { this.onVerticalEnd(event); }))
     .gesture(TapGesture().onAction((): void => { this.showPlaybackControls(); }))
+    .gesture(TapGesture({ count: 2 }).onAction((): void => { this.togglePlayback(); }))
+    .gesture(LongPressGesture({ repeat: false, duration: 500 })
+      .onActionStart((event: GestureEvent): void => { this.onHoldSpeedStart(); })
+      .onActionEnd((event: GestureEvent): void => { this.onHoldSpeedEnd(); }))
     .gesture(TapGesture().onAction((): void => { this.togglePlaybackControls(); }))
+    .gesture(TapGesture({ count: 2 }).onAction((): void => { this.togglePlayback(); }))
+    .gesture(LongPressGesture({ repeat: false, duration: 500 })
+      .onActionStart((event: GestureEvent): void => { this.onHoldSpeedStart(); })
+      .onActionEnd((event: GestureEvent): void => { this.onHoldSpeedEnd(); }))
     .bindSheet($$this.episodeListVisible, this.landscapeEpisodeSheet(), {
       height: SheetSize.FIT_CONTENT,
       dragBar: true,
