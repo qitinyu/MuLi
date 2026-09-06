@@ -28,16 +28,20 @@ export interface SearchResultBatch {
 }
 
 export class SearchService {
-  static async search(type: string, keyword: string, cookie: string = ''): Promise<SearchResultBatch> {
+  static async search(type: string, keyword: string, cookie: string = '', order: string = ''): Promise<SearchResultBatch> {
     let lastError: string = '';
+    const baseParams: string[] = [
+      `search_type=${type}`,
+      `keyword=${keyword}`,
+      'page=1',
+      'page_size=20'
+    ];
+    if (order !== '' && type === 'video') {
+      baseParams.push(`order=${order}`);
+    }
     // 首选 WBI 签名接口；失败时回退到旧版接口
     try {
-      const signed: string = await WbiService.sign([
-        `search_type=${type}`,
-        `keyword=${keyword}`,
-        'page=1',
-        'page_size=20'
-      ]);
+      const signed: string = await WbiService.sign(baseParams);
       const result: Record<string, Object> =
         await BiliHttpClient.getJsonQuery('/x/web-interface/wbi/search/type', signed, cookie);
       const code: number = Number(result['code'] ?? -1);
@@ -49,10 +53,14 @@ export class SearchService {
       lastError = String(error);
       console.error('Pilihos wbi search failed, fallback to legacy: ' + lastError);
     }
-    const queryText: string = `search_type=${encodeURIComponent(type)}` +
-      `&keyword=${encodeURIComponent(keyword)}&page=1&page_size=20`;
+    const legacyQuery: string = baseParams.map((item: string): string => {
+      const eq: number = item.indexOf('=');
+      const key: string = item.substring(0, eq);
+      const value: string = item.substring(eq + 1);
+      return `${encodeURIComponent(key)}=${encodeURIComponent(value)}`;
+    }).join('&');
     const legacy: Record<string, Object> =
-      await BiliHttpClient.getJsonQuery('/x/web-interface/search/type', queryText, cookie);
+      await BiliHttpClient.getJsonQuery('/x/web-interface/search/type', legacyQuery, cookie);
     const legacyCode: number = Number(legacy['code'] ?? -1);
     if (legacyCode !== 0) {
       throw new Error(`搜索失败(${legacyCode}:${String(legacy['message'] ?? lastError)})`);

@@ -23,6 +23,7 @@ struct SearchPage {
   @State searchUsers: SearchUser[] = [];
   @State searchSeasons: SearchSeason[] = [];
   @State searchType: string = 'video';
+  @State searchOrder: string = '';
   @State searchHistory: string[] = [];
   @State searchHistoryEnabled: boolean = false;
   @State searched: boolean = false;
@@ -105,7 +106,7 @@ struct SearchPage {
     try {
       const session = AuthService.currentSession();
       const cookie: string = session === null ? '' : session.cookie;
-      const batch = await SearchService.search(this.searchType, value, cookie);
+      const batch = await SearchService.search(this.searchType, value, cookie, this.searchOrder);
       this.searchResults = batch.videos;
       this.searchUsers = batch.users;
       this.searchSeasons = batch.seasons;
@@ -326,7 +327,7 @@ struct SearchPage {
     }
     .width('100%').padding({ left: 16, right: 16, top: 10, bottom: 10 })
     .backgroundColor(Color.White)
-    .onClick((): void => { this.showToast('UP主主页功能开发中'); });
+    .onClick((): void => { router.pushUrl({ url: 'pages/UserSpace', params: { mid: user.mid, name: user.uname } }).catch((error: Object): void => { console.error('Pilihos user space push failed: ' + String(error)); }); });
   }
 
   @Builder
@@ -348,6 +349,34 @@ struct SearchPage {
     .width('100%').padding({ left: 16, right: 16, top: 10, bottom: 10 })
     .backgroundColor(Color.White)
     .onClick((): void => { this.openSeasonDetail(season); });
+  }
+
+  @Builder
+  sortRow() {
+    if (this.searchType === 'video' && this.searched) {
+      Scroll() {
+        Row({ space: 10 }) {
+          ForEach(SearchPage.orderItems(), (item: string[]) => {
+            Text(item[1]).fontSize(13)
+              .fontColor(this.searchOrder === item[0] ? '#1677A8' : '#59616B')
+              .fontWeight(this.searchOrder === item[0] ? FontWeight.Bold : FontWeight.Normal)
+              .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+              .backgroundColor(this.searchOrder === item[0] ? '#E5F3FA' : Color.White)
+              .borderRadius(14)
+              .onClick((): void => {
+                if (this.searchOrder === item[0]) return;
+                this.searchOrder = item[0];
+                this.submitVideoSearch(this.searchText);
+              });
+          }, (item: string[]) => item[0]);
+        }.padding({ left: 18, right: 18 });
+      }.width('100%').height(40)
+        .scrollable(ScrollDirection.Horizontal).scrollBar(BarState.Off);
+    }
+  }
+
+  static orderItems(): string[][] {
+    return [['', '默认排序'], ['click', '播放多'], ['pubdate', '最新发布'], ['dm', '弹幕最多']];
   }
 
   build() {
@@ -378,6 +407,7 @@ struct SearchPage {
       .width('100%').padding({ left: 10, right: 10, top: this.topInset + 8, bottom: 8 });
       this.typeTabs();
       this.searchHistoryPanel();
+      this.sortRow();
       if (this.searchLoading) {
         Column() {
           this.loadingIndicator('正在搜索...', '#1677A8');
