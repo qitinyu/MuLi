@@ -362,9 +362,13 @@ export struct PlayerScreen {
     if (this.currentUrl === '') return;
     const dy: number = event.offsetY;
     if (this.gestureMode === '') {
-      if (this.verticalExpanded && dy < -14) {
-        // 竖屏化：上滑切换下一个视频
-        this.gestureMode = 'swipeNext';
+      if (this.verticalExpanded) {
+        // 竖屏化：上下滑切换视频；位移未达阈值前不决策，避免首帧小位移误入亮度/音量模式
+        if (dy < -14) {
+          this.gestureMode = 'swipeNext';
+        } else if (dy > 14) {
+          this.gestureMode = 'swipePrev';
+        }
         return;
       }
       const localX: number = event.fingerList.length > 0 ? event.fingerList[0].localX : this.surfaceWidth / 2;
@@ -386,6 +390,8 @@ export struct PlayerScreen {
   private onVerticalEnd(event: GestureEvent): void {
     if (this.gestureMode === 'swipeNext' && event.offsetY < -50) {
       this.playNextRandom();
+    } else if (this.gestureMode === 'swipePrev' && event.offsetY > 50) {
+      this.playPrevVideo();
     }
     this.gestureMode = '';
   }
@@ -401,6 +407,20 @@ export struct PlayerScreen {
       return;
     }
     this.playRecommendedVideo();
+  }
+
+  /**
+   * 竖屏化下滑：回退到列表中的上一个视频（保持竖屏化状态）
+   */
+  private playPrevVideo(): void {
+    if (this.currentIndex <= 0) {
+      this.showPlaybackToast('已经是第一个视频');
+      return;
+    }
+    this.savePlaybackProgress();
+    this.currentIndex = this.currentIndex - 1;
+    this.playbackFinished = false;
+    this.onOpenVideo(this.videos[this.currentIndex], false);
   }
 
   @Builder
@@ -488,11 +508,6 @@ export struct PlayerScreen {
       .onActionUpdate((event: GestureEvent): void => { this.onVerticalUpdate(event); })
       .onActionEnd((event: GestureEvent): void => { this.onVerticalEnd(event); }))
     .gesture(TapGesture().onAction((): void => { this.showPlaybackControls(); }))
-    .gesture(TapGesture({ count: 2 }).onAction((): void => { this.togglePlayback(); }))
-    .gesture(LongPressGesture({ repeat: true, duration: 500 })
-      .onAction((event: GestureEvent): void => { this.onHoldSpeedTick(); })
-      .onActionEnd((event: GestureEvent): void => { this.onHoldSpeedEnd(); }))
-    .gesture(TapGesture().onAction((): void => { this.togglePlaybackControls(); }))
     .gesture(TapGesture({ count: 2 }).onAction((): void => { this.togglePlayback(); }))
     .gesture(LongPressGesture({ repeat: true, duration: 500 })
       .onAction((event: GestureEvent): void => { this.onHoldSpeedTick(); })
@@ -618,6 +633,11 @@ export struct PlayerScreen {
       .onActionStart((event: GestureEvent): void => { this.onVerticalStart(); })
       .onActionUpdate((event: GestureEvent): void => { this.onVerticalUpdate(event); })
       .onActionEnd((event: GestureEvent): void => { this.onVerticalEnd(event); }))
+    .gesture(TapGesture().onAction((): void => { this.togglePlaybackControls(); }))
+    .gesture(TapGesture({ count: 2 }).onAction((): void => { this.togglePlayback(); }))
+    .gesture(LongPressGesture({ repeat: true, duration: 500 })
+      .onAction((event: GestureEvent): void => { this.onHoldSpeedTick(); })
+      .onActionEnd((event: GestureEvent): void => { this.onHoldSpeedEnd(); }))
   }
 
   build() {

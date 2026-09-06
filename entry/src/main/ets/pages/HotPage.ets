@@ -163,7 +163,7 @@ export struct HotPage {
                 GridItem() {
                   this.hotCard(item, index + 1);
                 }
-              }, (item: VideoItem) => `hot_${item.aid}_${item.bvid}`);
+              }, (item: VideoItem) => `hot_${item.aid}_${item.bvid}_${this.followStamp}`);
               if (this.loadingMore) {
                 GridItem().height(48);
               }

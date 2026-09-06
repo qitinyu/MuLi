@@ -435,26 +435,15 @@ struct Index {
         console.warn(`Pilihos video user state failed: ${String(stateError)}`);
       }
     }
-    // 作者关注态 + 粉丝数 + 投稿数
+    // 作者关注态 + 粉丝数 + 投稿数；card 为公开接口，未登录也拉取等级/粉丝数
     const authorMid: number = item.authorMid ?? 0;
-    if (session !== null && session.cookie !== '' && authorMid > 0) {
-      try {
-        const attribute: number = await InteractionService.relationAttribute(authorMid, session.cookie);
-        const followed: boolean = attribute === 2 || attribute === 6 || attribute === 128;
-        this.patchCurrentVideo((target: VideoItem): void => {
-          target.authorFollowed = followed;
-        });
-      } catch (relationError) {
-        const fallbackFollowed: boolean = FollowState.isFollowed(authorMid, item.author);
-        this.patchCurrentVideo((target: VideoItem): void => {
-          target.authorFollowed = fallbackFollowed;
-        });
-      }
+    if (authorMid > 0) {
       try {
         const cardQuery: Record<string, string> = {};
         cardQuery['mid'] = String(authorMid);
         const cardResult: Record<string, Object> =
-          await BiliHttpClient.getJson('/x/web-interface/card', cardQuery, session.cookie);
+          await BiliHttpClient.getJson('/x/web-interface/card', cardQuery,
+            session !== null ? session.cookie : '');
         if (Number(cardResult['code'] ?? -1) === 0) {
           const cardData: Record<string, Object> = (cardResult['data'] ?? {}) as Record<string, Object>;
           const fans: number = Number(cardData['follower'] ?? 0);
@@ -468,6 +457,20 @@ struct Index {
         }
       } catch (cardError) {
         console.warn(`Pilihos author card failed: ${String(cardError)}`);
+      }
+    }
+    if (session !== null && session.cookie !== '' && authorMid > 0) {
+      try {
+        const attribute: number = await InteractionService.relationAttribute(authorMid, session.cookie);
+        const followed: boolean = attribute === 2 || attribute === 6 || attribute === 128;
+        this.patchCurrentVideo((target: VideoItem): void => {
+          target.authorFollowed = followed;
+        });
+      } catch (relationError) {
+        const fallbackFollowed: boolean = FollowState.isFollowed(authorMid, item.author);
+        this.patchCurrentVideo((target: VideoItem): void => {
+          target.authorFollowed = fallbackFollowed;
+        });
       }
       if ((item.authorVideos ?? 0) <= 0) {
         try {
@@ -895,7 +898,9 @@ struct Index {
     if (restored === null && current !== null) this.refreshAuthData();
     const cookie: string = this.authSession === null ? '' : this.authSession.cookie;
     if (cookie !== '') {
-      FollowState.refresh(cookie).then((): void => {
+      // 关注列表接口需要数字 mid，'self' 会请求失败导致卡片"已关注"永不显示
+      const selfMid: string = this.authSession !== null ? this.authSession.uid : '';
+      FollowState.refresh(cookie, selfMid).then((): void => {
         // 刷新卡片上的"已关注"标志
         this.followStamp += 1;
       });

@@ -9,17 +9,21 @@ export class FollowState {
   private static midSet: Set<number> = new Set<number>();
   private static nameSet: Set<string> = new Set<string>();
 
-  static async refresh(cookie: string): Promise<void> {
+  static async refresh(cookie: string, selfMid: string = ''): Promise<void> {
     if (cookie === '') return;
     for (let page: number = 1; page <= 4; page++) {
       try {
         const query: Record<string, string> = {};
-        query['vmid'] = 'self';
+        // 该接口需要数字 mid；传 'self' 会请求失败，导致"已关注"标志永不显示
+        query['vmid'] = selfMid !== '' ? selfMid : 'self';
         query['ps'] = '50';
         query['pn'] = String(page);
         const result: Record<string, Object> =
           await BiliHttpClient.getJson('/x/relation/followings', query, cookie);
-        if (Number(result['code'] ?? -1) !== 0) return;
+        if (Number(result['code'] ?? -1) !== 0) {
+          console.warn(`Pilihos follow list load failed: code=${String(result['code'] ?? -1)}`);
+          return;
+        }
         const data: Record<string, Object> = (result['data'] ?? {}) as Record<string, Object>;
         const list: Object[] = (data['list'] as Object[]) ?? [];
         if (list.length === 0) return;
