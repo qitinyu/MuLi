@@ -60,6 +60,7 @@ export struct PlayerScreen {
   private startVolume: number = 8;
   private originalBrightness: number = -1;
   private holdSpeedBase: number = 1.0;
+  private holdSpeedActive: boolean = false;
   onOpenVideo: (item: VideoItem, showComments: boolean) => void =
     (item: VideoItem, showComments: boolean): void => {};
   onLoadComments: (refresh: boolean) => void = (refresh: boolean): void => {};
@@ -297,16 +298,22 @@ export struct PlayerScreen {
     return `${minutes}:${String(seconds).padStart(2, '0')}`;
   }
 
-  private onHoldSpeedStart(): void {
+  private onHoldSpeedTick(): void {
     if (this.currentUrl === '') return;
-    this.holdSpeedBase = this.playbackSpeed;
-    this.playbackSpeed = 2;
+    if (!this.holdSpeedActive) {
+      this.holdSpeedActive = true;
+      this.holdSpeedBase = this.playbackSpeed;
+      this.playbackSpeed = 2;
+    }
     this.showHud('2倍速快进中');
   }
 
   private onHoldSpeedEnd(): void {
-    if (this.playbackSpeed === 2 && this.holdSpeedBase !== 2) {
-      this.playbackSpeed = this.holdSpeedBase;
+    if (this.holdSpeedActive) {
+      this.holdSpeedActive = false;
+      if (this.playbackSpeed === 2 && this.holdSpeedBase !== 2) {
+        this.playbackSpeed = this.holdSpeedBase;
+      }
     }
   }
 
@@ -482,13 +489,13 @@ export struct PlayerScreen {
       .onActionEnd((event: GestureEvent): void => { this.onVerticalEnd(event); }))
     .gesture(TapGesture().onAction((): void => { this.showPlaybackControls(); }))
     .gesture(TapGesture({ count: 2 }).onAction((): void => { this.togglePlayback(); }))
-    .gesture(LongPressGesture({ repeat: false, duration: 500 })
-      .onActionStart((event: GestureEvent): void => { this.onHoldSpeedStart(); })
+    .gesture(LongPressGesture({ repeat: true, duration: 500 })
+      .onAction((event: GestureEvent): void => { this.onHoldSpeedTick(); })
       .onActionEnd((event: GestureEvent): void => { this.onHoldSpeedEnd(); }))
     .gesture(TapGesture().onAction((): void => { this.togglePlaybackControls(); }))
     .gesture(TapGesture({ count: 2 }).onAction((): void => { this.togglePlayback(); }))
-    .gesture(LongPressGesture({ repeat: false, duration: 500 })
-      .onActionStart((event: GestureEvent): void => { this.onHoldSpeedStart(); })
+    .gesture(LongPressGesture({ repeat: true, duration: 500 })
+      .onAction((event: GestureEvent): void => { this.onHoldSpeedTick(); })
       .onActionEnd((event: GestureEvent): void => { this.onHoldSpeedEnd(); }))
     .bindSheet($$this.episodeListVisible, this.landscapeEpisodeSheet(), {
       height: SheetSize.FIT_CONTENT,
