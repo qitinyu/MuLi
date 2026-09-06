@@ -1,9 +1,9 @@
-import { uiMaterial } from '@kit.ArkUI';
 import { AdvancedFeatures } from './AdvancedFeatures';
 
 /**
  * 沉浸光感材质管理器
- * 支持 API 24+ 设备：API26 自动使用系统材质，API24 自动降级为纯色背景
+ * 统一通过 backgroundBlurStyle 呈现毛玻璃效果（系统 uiMaterial 材质在真机上
+ * 渲染过薄或不渲染，导致卡片不可见），白色底衬仅作轻度提亮。
  */
 export class ImmersiveMaterial {
   private static strength: number = 1;
@@ -21,83 +21,26 @@ export class ImmersiveMaterial {
   }
 
   /**
-   * 获取 none 材质（不透明材质）
-   * 用于API24/25或关闭高级功能时的底部栏材质
+   * 组件背景毛玻璃样式：真机稳定渲染的"沉浸光感"实现
    */
-  static none(): uiMaterial.Material {
-    return uiMaterial.Material.empty;
+  static blurStyle(): BlurStyle {
+    return BlurStyle.COMPONENT_THIN;
   }
 
   /**
-   * 获取 thin 材质
-   * 强度设置：
-   * - 弱（0）：不透明材质
-   * - 中（1）/强（2）：模糊亚克力（真机上 THIN/ULTRA_THIN 过薄会导致内容不可见，统一降为 REGULAR）
-   */
-  static thin(): uiMaterial.Material {
-    // 强度0：不透明材质
-    if (ImmersiveMaterial.strength === 0 || !ImmersiveMaterial.isAvailable()) {
-      return uiMaterial.Material.empty;
-    }
-
-    // 强度1/2：模糊亚克力
-    return new uiMaterial.ImmersiveMaterial({
-      style: uiMaterial.ImmersiveStyle.REGULAR,
-      colorInvert: true,
-      applyShadow: true,
-      interactive: true,
-      lightEffect: { color: Color.White }
-    });
-  }
-
-  /**
-   * 获取 ultraThin 材质
-   * 强度设置同 thin：真机上 ULTRA_THIN 材质过薄，统一降为 REGULAR
-   */
-  static ultraThin(): uiMaterial.Material {
-    // 强度0：不透明材质
-    if (ImmersiveMaterial.strength === 0 || !ImmersiveMaterial.isAvailable()) {
-      return uiMaterial.Material.empty;
-    }
-
-    // 强度1/2：模糊亚克力
-    return new uiMaterial.ImmersiveMaterial({
-      style: uiMaterial.ImmersiveStyle.REGULAR,
-      colorInvert: true,
-      applyShadow: true,
-      interactive: true,
-      lightEffect: { color: Color.White }
-    });
-  }
-
-  /**
-   * API 24/25 降级方案：获取半透明背景色
-   * 当沉浸式材质不可用时，使用此方法获取替代背景
+   * 组件背景底衬：材质开启时给轻度白色提亮（避免完全透底），
+   * API 24/25 或关闭时用较实的白色替代模糊。
    * @param opacity 透明度 0.0-1.0，默认 0.85
    */
   static fallbackBackground(opacity: number = 1.0): ResourceColor {
+    const clamped: number = Math.max(0, Math.min(1, opacity));
     if (ImmersiveMaterial.isAvailable() && ImmersiveMaterial.strength > 0) {
-      // API26：系统材质负责模糊，但真机上材质可能渲染过薄，
-      // 保留一层白色底衬保证内容始终可见。
-      const adjusted: number = Math.max(0.5, opacity * 0.72);
+      // 材质负责模糊，底衬只轻度提亮
+      const adjusted: number = Math.max(0.32, clamped * 0.45);
       const alpha: string = Math.round(adjusted * 255).toString(16).padStart(2, '0');
       return `#${alpha}FFFFFF`;
     }
-
-    // API 24/25 或开关关闭或强度为0，使用不透明纯色，避免透明材质穿透。
-    const alpha = Math.round(Math.max(0, Math.min(1, opacity)) * 255).toString(16).padStart(2, '0');
+    const alpha: string = Math.round(clamped * 255).toString(16).padStart(2, '0');
     return `#${alpha}FFFFFF`;
-  }
-
-  /**
-   * 获取阴影样式（API 24/25 降级时使用）
-   */
-  static fallbackShadow(radius: number = 6): ShadowOptions {
-    return {
-      radius: radius,
-      color: '#25000000',
-      offsetX: 0,
-      offsetY: 2
-    };
   }
 }

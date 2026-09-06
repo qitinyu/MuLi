@@ -115,7 +115,7 @@ export struct MineSidebar {
     .width('100%').aspectRatio(1)
     .backgroundColor(ImmersiveMaterial.fallbackBackground())
     .borderRadius(12)
-    .systemMaterial(ImmersiveMaterial.thin())
+    .backgroundBlurStyle(ImmersiveMaterial.blurStyle(), { colorMode: ThemeColorMode.LIGHT })
     .shadow({ radius: 6, color: '#18000000', offsetX: 0, offsetY: 2 })
     .onClick(() => {
       if (iconName === 'software_settings') {
@@ -133,7 +133,7 @@ export struct MineSidebar {
         }
         .type(ButtonType.ROUNDED_RECTANGLE).width(44).height(44)
         .backgroundColor(ImmersiveMaterial.fallbackBackground())
-        .systemMaterial(ImmersiveMaterial.thin())
+        .backgroundBlurStyle(ImmersiveMaterial.blurStyle(), { colorMode: ThemeColorMode.LIGHT })
         .borderRadius(22)
         .shadow({ radius: 6, color: '#25000000', offsetX: 0, offsetY: 2 })
         .position({ top: 12, right: 12 })
@@ -237,7 +237,7 @@ export struct MessageSidebar {
         .width(52).height(52)
         .backgroundColor(ImmersiveMaterial.fallbackBackground())
         .borderRadius(26)
-        .systemMaterial(ImmersiveMaterial.thin())
+        .backgroundBlurStyle(ImmersiveMaterial.blurStyle(), { colorMode: ThemeColorMode.LIGHT })
         .shadow({ radius: 6, color: '#22000000', offsetX: 0, offsetY: 2 });
         if (count !== '') {
           Text(count).fontSize(10).fontColor(Color.White).backgroundColor('#C51D2A')
@@ -281,7 +281,7 @@ export struct MessageSidebar {
         }
         .type(ButtonType.ROUNDED_RECTANGLE).width(42).height(42)
         .backgroundColor(ImmersiveMaterial.fallbackBackground())
-        .systemMaterial(ImmersiveMaterial.thin())
+        .backgroundBlurStyle(ImmersiveMaterial.blurStyle(), { colorMode: ThemeColorMode.LIGHT })
         .shadow({ radius: 6, color: '#25000000', offsetX: 0, offsetY: 2 })
         .onClick(() => { this.sidebar = 0; });
         Text('消息').fontSize(14).fontWeight(FontWeight.Bold).fontColor(Color.Black).layoutWeight(1);

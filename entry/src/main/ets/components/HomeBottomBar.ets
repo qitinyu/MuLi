@@ -23,7 +23,7 @@ export struct HomeBottomBar {
     }
     .type(ButtonType.ROUNDED_RECTANGLE).width(52).height(52)
     .backgroundColor(ImmersiveMaterial.fallbackBackground()).borderRadius(26)
-    .systemMaterial(ImmersiveMaterial.ultraThin())
+    .backgroundBlurStyle(ImmersiveMaterial.blurStyle(), { colorMode: ThemeColorMode.LIGHT })
     .shadow({ radius: 8, color: '#25000000', offsetX: 0, offsetY: 2 })
     .onClick(() => { this.onOpenSearch(); });
   }
@@ -35,7 +35,7 @@ export struct HomeBottomBar {
     }
     .type(ButtonType.ROUNDED_RECTANGLE).width(52).height(52)
     .backgroundColor(ImmersiveMaterial.fallbackBackground()).borderRadius(26)
-    .systemMaterial(ImmersiveMaterial.ultraThin())
+    .backgroundBlurStyle(ImmersiveMaterial.blurStyle(), { colorMode: ThemeColorMode.LIGHT })
     .shadow({ radius: 8, color: '#25000000', offsetX: 0, offsetY: 2 })
     .onClick(() => { this.actionMenuVisible = !this.actionMenuVisible; })
     .gesture(LongPressGesture({ repeat: false }).onAction((): void => {
@@ -106,7 +106,7 @@ export struct HomeBottomBar {
       .layoutWeight(1).height(58).padding({ left: 6, right: 6 })
       .backgroundColor(ImmersiveMaterial.fallbackBackground(0.82))
       .borderRadius(30)
-      .systemMaterial(ImmersiveMaterial.ultraThin());
+      .backgroundBlurStyle(ImmersiveMaterial.blurStyle(), { colorMode: ThemeColorMode.LIGHT });
 
       if (this.floatBallSwapped) {
         this.searchBall();
@@ -141,7 +141,7 @@ export struct HomeActionMenu {
         }.width(124).height(38)
           .type(ButtonType.ROUNDED_RECTANGLE).borderRadius(18)
           .backgroundColor(ImmersiveMaterial.fallbackBackground())
-          .systemMaterial(ImmersiveMaterial.thin())
+          .backgroundBlurStyle(ImmersiveMaterial.blurStyle(), { colorMode: ThemeColorMode.LIGHT })
           .shadow({ radius: 6, color: '#25000000', offsetX: 0, offsetY: 2 })
           .onClick(() => {
             this.actionMenuVisible = false;
@@ -154,7 +154,7 @@ export struct HomeActionMenu {
         }.width(124).height(38)
           .type(ButtonType.ROUNDED_RECTANGLE).borderRadius(18)
           .backgroundColor(ImmersiveMaterial.fallbackBackground())
-          .systemMaterial(ImmersiveMaterial.thin())
+          .backgroundBlurStyle(ImmersiveMaterial.blurStyle(), { colorMode: ThemeColorMode.LIGHT })
           .shadow({ radius: 6, color: '#25000000', offsetX: 0, offsetY: 2 })
           .onClick(() => {
             this.compactGrid = !this.compactGrid;

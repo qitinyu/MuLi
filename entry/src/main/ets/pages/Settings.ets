@@ -365,7 +365,7 @@ struct Settings {
       }
       .width('86%').padding(20)
       .backgroundColor(ImmersiveMaterial.fallbackBackground()).borderRadius(12)
-      .systemMaterial(ImmersiveMaterial.thin())
+      .backgroundBlurStyle(ImmersiveMaterial.blurStyle(), { colorMode: ThemeColorMode.LIGHT })
       .shadow({ radius: 18, color: '#40000000', offsetX: 0, offsetY: 6 });
     }
     .width('100%').height('100%')
@@ -428,7 +428,7 @@ struct Settings {
     .width('100%').height(86)
     .padding({ left: 18, right: 16 })
       .backgroundColor(Color.White).borderRadius(10)
-      .systemMaterial(ImmersiveMaterial.thin())
+      .backgroundBlurStyle(ImmersiveMaterial.blurStyle(), { colorMode: ThemeColorMode.LIGHT })
     .shadow({ radius: 4, color: '#16000000', offsetX: 0, offsetY: 1 })
     .onClick(() => {
       if (page === 'about') this.showAbout = true;
@@ -454,7 +454,7 @@ struct Settings {
               .onChange((value: boolean) => { this.setBottomBarPinned(value); });
           }.width('100%').padding({ left: 16, right: 14, top: 10, bottom: 10 })
             .backgroundColor(ImmersiveMaterial.fallbackBackground()).borderRadius(10)
-            .systemMaterial(ImmersiveMaterial.thin())
+            .backgroundBlurStyle(ImmersiveMaterial.blurStyle(), { colorMode: ThemeColorMode.LIGHT })
             .shadow({ radius: 4, color: '#16000000', offsetX: 0, offsetY: 1 });
           Row({ space: 12 }) {
             Column({ space: 5 }) {
@@ -467,7 +467,7 @@ struct Settings {
               .onChange((value: boolean) => { this.setPortraitBadge(value); });
           }.width('100%').padding({ left: 16, right: 14, top: 10, bottom: 10 })
             .backgroundColor(ImmersiveMaterial.fallbackBackground()).borderRadius(10)
-            .systemMaterial(ImmersiveMaterial.thin())
+            .backgroundBlurStyle(ImmersiveMaterial.blurStyle(), { colorMode: ThemeColorMode.LIGHT })
             .shadow({ radius: 4, color: '#16000000', offsetX: 0, offsetY: 1 });
           Row({ space: 12 }) {
             Column({ space: 5 }) {
@@ -479,7 +479,7 @@ struct Settings {
               .onChange((value: boolean) => { this.setFloatBallSwapped(value); });
           }.width('100%').height(76).padding({ left: 16, right: 14, top: 10, bottom: 10 })
             .backgroundColor(ImmersiveMaterial.fallbackBackground()).borderRadius(10)
-            .systemMaterial(ImmersiveMaterial.thin())
+            .backgroundBlurStyle(ImmersiveMaterial.blurStyle(), { colorMode: ThemeColorMode.LIGHT })
             .shadow({ radius: 4, color: '#16000000', offsetX: 0, offsetY: 1 });
           Row({ space: 12 }) {
             Column({ space: 5 }) {
@@ -491,7 +491,7 @@ struct Settings {
               .onChange((value: boolean) => { this.setTopTabsMerged(value); });
           }.width('100%').height(76).padding({ left: 16, right: 14, top: 10, bottom: 10 })
             .backgroundColor(ImmersiveMaterial.fallbackBackground()).borderRadius(10)
-            .systemMaterial(ImmersiveMaterial.thin())
+            .backgroundBlurStyle(ImmersiveMaterial.blurStyle(), { colorMode: ThemeColorMode.LIGHT })
             .shadow({ radius: 4, color: '#16000000', offsetX: 0, offsetY: 1 });
         }.width('100%').padding({ left: 18, right: 18, top: 6, bottom: this.bottomInset + 18 })
           .alignItems(HorizontalAlign.Start).justifyContent(FlexAlign.Start);
@@ -518,7 +518,7 @@ struct Settings {
               .fontWeight(FontWeight.Medium);
           }.width('100%').height(76).padding({ left: 16, right: 14, top: 10, bottom: 10 })
             .backgroundColor(ImmersiveMaterial.fallbackBackground()).borderRadius(10)
-            .systemMaterial(ImmersiveMaterial.thin())
+            .backgroundBlurStyle(ImmersiveMaterial.blurStyle(), { colorMode: ThemeColorMode.LIGHT })
             .shadow({ radius: 4, color: '#16000000', offsetX: 0, offsetY: 1 })
             .onClick(() => { this.cycleDefaultQuality(); });
           this.filterCard('视频过滤词', this.videoFilterSummary,
@@ -536,7 +536,7 @@ struct Settings {
               .onChange((value: boolean) => { this.setKeepRefreshContent(value); });
           }.width('100%').height(76).padding({ left: 16, right: 14, top: 10, bottom: 10 })
             .backgroundColor(ImmersiveMaterial.fallbackBackground()).borderRadius(10)
-            .systemMaterial(ImmersiveMaterial.thin())
+            .backgroundBlurStyle(ImmersiveMaterial.blurStyle(), { colorMode: ThemeColorMode.LIGHT })
             .shadow({ radius: 4, color: '#16000000', offsetX: 0, offsetY: 1 });
         }.width('100%').padding({ left: 18, right: 18, top: 6, bottom: this.bottomInset + 18 })
           .alignItems(HorizontalAlign.Start).justifyContent(FlexAlign.Start);
@@ -563,7 +563,7 @@ struct Settings {
               .onChange((value: boolean) => { this.setSearchHistoryEnabled(value); });
           }.width('100%').height(76).padding({ left: 16, right: 14, top: 10, bottom: 10 })
             .backgroundColor(ImmersiveMaterial.fallbackBackground()).borderRadius(10)
-            .systemMaterial(ImmersiveMaterial.thin())
+            .backgroundBlurStyle(ImmersiveMaterial.blurStyle(), { colorMode: ThemeColorMode.LIGHT })
             .shadow({ radius: 4, color: '#16000000', offsetX: 0, offsetY: 1 });
         }.width('100%').padding({ left: 18, right: 18, top: 6, bottom: this.bottomInset + 18 })
           .alignItems(HorizontalAlign.Start).justifyContent(FlexAlign.Start);
@@ -591,7 +591,7 @@ struct Settings {
       .onClick((): void => { this.openFilterEditor(kind); });
     }.width('100%').padding({ left: 16, right: 14, top: 10, bottom: 10 })
       .backgroundColor(ImmersiveMaterial.fallbackBackground()).borderRadius(10)
-      .systemMaterial(ImmersiveMaterial.thin())
+      .backgroundBlurStyle(ImmersiveMaterial.blurStyle(), { colorMode: ThemeColorMode.LIGHT })
       .shadow({ radius: 4, color: '#16000000', offsetX: 0, offsetY: 1 })
       .alignItems(VerticalAlign.Center)
       .onClick((): void => { this.openFilterEditor(kind); });
@@ -655,7 +655,7 @@ struct Settings {
             }.width('100%').alignItems(VerticalAlign.Center);
           }.width('100%').padding({ left: 16, right: 14, top: 12, bottom: 12 })
             .backgroundColor(ImmersiveMaterial.fallbackBackground()).borderRadius(10)
-            .systemMaterial(ImmersiveMaterial.thin())
+            .backgroundBlurStyle(ImmersiveMaterial.blurStyle(), { colorMode: ThemeColorMode.LIGHT })
             .shadow({ radius: 4, color: '#16000000', offsetX: 0, offsetY: 1 });
 
           if (AdvancedFeatures.isApi26Supported()) {
@@ -674,7 +674,7 @@ struct Settings {
                 .fontSize(13).fontColor('#858C94').layoutWeight(1);
             }.width('100%').padding({ left: 16, right: 14, top: 12, bottom: 12 })
               .backgroundColor(ImmersiveMaterial.fallbackBackground()).borderRadius(10)
-              .systemMaterial(ImmersiveMaterial.thin())
+              .backgroundBlurStyle(ImmersiveMaterial.blurStyle(), { colorMode: ThemeColorMode.LIGHT })
               .shadow({ radius: 4, color: '#16000000', offsetX: 0, offsetY: 1 });
           }
         }.width('100%').padding({ left: 18, right: 18, top: 6, bottom: this.bottomInset + 18 })
@@ -698,7 +698,7 @@ struct Settings {
         .onChange((value: boolean) => { onChange(value); });
     }.width('100%').height(76).padding({ left: 16, right: 14, top: 10, bottom: 10 })
       .backgroundColor(ImmersiveMaterial.fallbackBackground()).borderRadius(10)
-      .systemMaterial(ImmersiveMaterial.thin())
+      .backgroundBlurStyle(ImmersiveMaterial.blurStyle(), { colorMode: ThemeColorMode.LIGHT })
       .shadow({ radius: 4, color: '#16000000', offsetX: 0, offsetY: 1 });
   }
 
@@ -717,7 +717,7 @@ struct Settings {
     .padding({ left: 16, right: 14 })
     .backgroundColor(ImmersiveMaterial.fallbackBackground())
     .borderRadius(10)
-    .systemMaterial(ImmersiveMaterial.thin())
+    .backgroundBlurStyle(ImmersiveMaterial.blurStyle(), { colorMode: ThemeColorMode.LIGHT })
     .shadow({ radius: 4, color: '#16000000', offsetX: 0, offsetY: 1 })
     .onClick(() => {
       if (openAbout) this.showAbout = true;
@@ -733,7 +733,7 @@ struct Settings {
           Column({ space: 8 }) {
             Image($r('app.media.app_logo')).width(112).height(112).borderRadius(22);
             Text('Pilihos').fontSize(28).fontWeight(FontWeight.Bold);
-            Text('Version 1.0.5.5').fontSize(15).fontColor('#646A73');
+            Text('Version 1.0.5.6').fontSize(15).fontColor('#646A73');
           }
           .width('100%')
           .alignItems(HorizontalAlign.Center)
@@ -746,11 +746,11 @@ struct Settings {
           Row({ space: 10 }) {
             this.aboutInfoCard('软件协议', '本软件采用 MIT 开源协议');
             this.aboutInfoCard('版本日志',
-              'v1.0.5.5\n' +
-              '1. 真机修复：材质过薄导致卡片不可见 #1\n' +
-              '2. 搜索：去右侧按钮，回车链路加固 #2\n' +
-              '3. 进入视频控制条 2 秒自动隐藏 #3\n' +
-              'v1.0.5.1-054 拆分/清晰度/记忆/弹幕/手势\n' +
+              'v1.0.5.6\n' +
+              '1. 修复点击视频闪退（状态贯通缺失） #4\n' +
+              '2. 材质改为真机毛玻璃（背景模糊） #4\n' +
+              '3. 修复搜索结果区被历史面板压缩 #4\n' +
+              'v1.0.5.5 材质底衬/搜索加固/控件隐藏\n' +
               '完整更新日志(Pilihos Wiki]https://github.com/qitinyu/Pilihos/wiki/)');
           }.width('100%').justifyContent(FlexAlign.SpaceBetween);
 
@@ -789,7 +789,7 @@ struct Settings {
     .padding({ left: 18, right: 14 })
     .backgroundColor(ImmersiveMaterial.fallbackBackground())
     .borderRadius(10)
-    .systemMaterial(ImmersiveMaterial.thin())
+    .backgroundBlurStyle(ImmersiveMaterial.blurStyle(), { colorMode: ThemeColorMode.LIGHT })
     .shadow({ radius: 4, color: '#16000000', offsetX: 0, offsetY: 1 })
     .onClick(() => { this.showInfo(label, message); });
   }
@@ -805,7 +805,7 @@ struct Settings {
     .padding({ left: 18, right: 14 })
     .backgroundColor(ImmersiveMaterial.fallbackBackground())
     .borderRadius(10)
-    .systemMaterial(ImmersiveMaterial.thin())
+    .backgroundBlurStyle(ImmersiveMaterial.blurStyle(), { colorMode: ThemeColorMode.LIGHT })
     .shadow({ radius: 4, color: '#16000000', offsetX: 0, offsetY: 1 })
     .onClick(() => { this.openUrl(url); });
   }

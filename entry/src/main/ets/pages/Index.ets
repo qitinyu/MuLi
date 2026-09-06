@@ -79,7 +79,7 @@ struct Index {
   @Provide defaultQuality: number = 0;
   @Provide playbackQualities: QualityOption[] = [];
   @Provide currentQn: number = 0;
-  @State qualityMenuVisible: boolean = false;
+  @Provide qualityMenuVisible: boolean = false;
   @Provide playbackCurrentMs: number = 0;
   @Provide playbackDurationMs: number = 0;
   @Provide playbackPaused: boolean = true;
@@ -799,7 +799,7 @@ struct Index {
         }
         .width('100%').height('100%')
         .backgroundColor(ImmersiveMaterial.fallbackBackground())
-        .systemMaterial(ImmersiveMaterial.thin())
+        .backgroundBlurStyle(ImmersiveMaterial.blurStyle(), { colorMode: ThemeColorMode.LIGHT })
         .transition({ type: TransitionType.Insert, opacity: 0.0 });
       }
     }.width('100%').height('100%')

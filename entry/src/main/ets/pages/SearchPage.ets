@@ -249,22 +249,21 @@ struct SearchPage {
         Text('搜索历史').fontSize(17).fontWeight(FontWeight.Medium).fontColor('#20242A').layoutWeight(1);
         Text('清空').fontSize(13).fontColor('#8B9199').onClick(() => { this.clearSearchHistory(); });
       }.width('100%').padding({ left: 18, right: 18, top: 16, bottom: 8 });
-      Grid() {
+      // 注意：这里不能用 Grid——Grid 未设高度会占满整列，把下方结果区压成 0 高度
+      Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Start }) {
         ForEach(this.searchHistory, (keyword: string) => {
-          GridItem() {
-            Text(keyword).fontSize(keyword.length > 8 ? 12 : 14).fontColor('#59616B')
-              .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
-              .width('100%').textAlign(TextAlign.Center)
-              .padding({ left: 10, right: 10, top: 8, bottom: 8 })
-              .backgroundColor('#F1F4F6').borderRadius(16)
-              .gesture(LongPressGesture({ repeat: false }).onAction(() => {
-                this.deleteSearchHistory(keyword);
-              }))
-              .onClick(() => { this.useSearchHistory(keyword); });
-          }
+          Text(keyword).fontSize(keyword.length > 8 ? 12 : 14).fontColor('#59616B')
+            .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
+            .width('31%').textAlign(TextAlign.Center)
+            .padding({ left: 10, right: 10, top: 8, bottom: 8 })
+            .margin({ right: '2%', bottom: 8 })
+            .backgroundColor('#F1F4F6').borderRadius(16)
+            .gesture(LongPressGesture({ repeat: false }).onAction(() => {
+              this.deleteSearchHistory(keyword);
+            }))
+            .onClick(() => { this.useSearchHistory(keyword); });
         }, (keyword: string) => keyword);
-      }.columnsTemplate('1fr 1fr 1fr').columnsGap(8).rowsGap(8)
-        .width('100%').padding({ left: 18, right: 18, bottom: 8 });
+      }.width('100%').padding({ left: 18, right: 18, bottom: 8 });
     }
   }
 
@@ -360,12 +359,12 @@ struct SearchPage {
         .type(ButtonType.ROUNDED_RECTANGLE).width(48).height(48)
         .backgroundColor(ImmersiveMaterial.fallbackBackground())
         .borderRadius(24)
-        .systemMaterial(ImmersiveMaterial.thin())
+        .backgroundBlurStyle(ImmersiveMaterial.blurStyle(), { colorMode: ThemeColorMode.LIGHT })
         .shadow({ radius: 8, color: '#25000000', offsetX: 0, offsetY: 2 })
         .onClick(() => { router.back(); });
         Search({ placeholder: '搜索', value: this.searchText })
           .layoutWeight(1).height(48).backgroundColor(ImmersiveMaterial.fallbackBackground())
-          .borderRadius(24).systemMaterial(ImmersiveMaterial.thin())
+          .borderRadius(24).backgroundBlurStyle(ImmersiveMaterial.blurStyle(), { colorMode: ThemeColorMode.LIGHT })
           .shadow({ radius: 8, color: '#25000000', offsetX: 0, offsetY: 2 })
           .focusable(true)
           .defaultFocus(true)

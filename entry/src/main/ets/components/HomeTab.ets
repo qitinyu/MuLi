@@ -60,7 +60,7 @@ export struct HomeTab {
         this.topBubbleButton('热门', 2, 62, () => { this.onSelectTab(2); });
       }.height(48).padding({ left: 4, right: 4 })
         .backgroundColor(ImmersiveMaterial.fallbackBackground(0.72))
-        .borderRadius(24).systemMaterial(ImmersiveMaterial.thin())
+        .borderRadius(24).backgroundBlurStyle(ImmersiveMaterial.blurStyle(), { colorMode: ThemeColorMode.LIGHT })
         .shadow({ radius: 6, color: '#25000000', offsetX: 0, offsetY: 2 });
     } else {
       Row({ space: 8 }) {
@@ -87,7 +87,7 @@ export struct HomeTab {
       .backgroundColor(ImmersiveMaterial.fallbackBackground(0.72))
       .padding(0)
       .borderRadius(24)
-      .systemMaterial(ImmersiveMaterial.thin())
+      .backgroundBlurStyle(ImmersiveMaterial.blurStyle(), { colorMode: ThemeColorMode.LIGHT })
       .shadow({ radius: 6, color: '#25000000', offsetX: 0, offsetY: 2 })
       .onClick(action);
   }
@@ -170,7 +170,7 @@ export struct HomeTab {
           .width(48).height(48)
           .backgroundColor(ImmersiveMaterial.fallbackBackground(0.72))
           .borderRadius(24)
-          .systemMaterial(ImmersiveMaterial.thin())
+          .backgroundBlurStyle(ImmersiveMaterial.blurStyle(), { colorMode: ThemeColorMode.LIGHT })
           .shadow({ radius: 6, color: '#25000000', offsetX: 0, offsetY: 2 })
           .onClick(() => { this.sidebar = 2; });
         }
