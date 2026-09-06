@@ -76,11 +76,21 @@ struct MyFav {
     this.loading = true;
     this.loadError = '';
     try {
+      let mid: number = Number(session.uid);
+      if (!(mid > 0)) {
+        // uid 缺失时经 nav 接口取自身 mid
+        const navResult: Record<string, Object> =
+          await BiliHttpClient.getJson('/x/web-interface/nav', {}, session.cookie);
+        if (Number(navResult['code'] ?? -1) === 0) {
+          const navData: Record<string, Object> = (navResult['data'] ?? {}) as Record<string, Object>;
+          mid = Number(navData['mid'] ?? 0);
+        }
+      }
       const query: Record<string, string> = {};
       query['pn'] = '1';
       query['ps'] = '50';
       query['up_type'] = '0';
-      query['mid'] = String(session.uid);
+      query['mid'] = String(mid);
       const result: Record<string, Object> =
         await BiliHttpClient.getJson('/x/v3/fav/folder/created/list', query, session.cookie);
       const code: number = Number(result['code'] ?? -1);

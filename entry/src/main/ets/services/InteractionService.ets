@@ -66,6 +66,7 @@ export class InteractionService {
     const listQuery: Record<string, string> = {};
     listQuery['rid'] = String(aid);
     listQuery['type'] = '2';
+    listQuery['up_type'] = '0';
     const listResult: Record<string, Object> = await BiliHttpClient.getJson(
       '/x/v3/fav/folder/created/list-all', listQuery, cookie);
     if (Number(listResult['code'] ?? -1) !== 0) {

@@ -116,6 +116,7 @@ struct Index {
   @Provide commentHasMore: boolean = false;
   @State useAdvancedMaterial: boolean = false;
   @State favSheetVisible: boolean = false;
+  @State playModeSheetVisible: boolean = false;
   @State favFolders: FavFolder[] = [];
   private savedGridOffset: number = 0;
   private context: common.UIAbilityContext = getContext(this) as common.UIAbilityContext;
@@ -541,8 +542,8 @@ struct Index {
       this.detailSection = 1;
       this.verticalExpanded = false;
     } else if (action === 'settings') {
-      this.detailSection = 2;
-      this.verticalExpanded = false;
+      // 竖屏化内：底部弹出播放模式设置，不跳转子页
+      this.playModeSheetVisible = true;
     } else if (action === 'openauthor') {
       this.openAuthorSpace();
     }
@@ -1123,6 +1124,36 @@ struct Index {
   }
 
   @Builder
+  playModeRowSheet(label: string, mode: number, enabled: boolean) {
+    Row() {
+      Text(label).fontSize(15).fontColor(enabled ? '#1E252D' : '#A4A9AF').layoutWeight(1);
+      Checkbox({ name: 'sheet_' + label, group: 'sheet_playmode' })
+        .select(this.playMode === mode)
+        .selectedColor('#1677A8')
+        .enabled(enabled)
+        .onChange((value: boolean) => {
+          if (value) {
+            this.setPlayMode(mode);
+          }
+        });
+    }.width('100%').height(46);
+  }
+
+  @Builder
+  playModeSheet() {
+    Column({ space: 10 }) {
+      Text('视频播放').fontSize(17).fontWeight(FontWeight.Bold).width('100%');
+      this.playModeRowSheet('单集循环', 1, true);
+      this.playModeRowSheet('随机连播', 2, true);
+      this.playModeRowSheet('合集循环', 3, false);
+      Text('单集循环：播完自动重播本视频；随机连播：竖屏化时播完自动播放下一个推荐视频')
+        .fontSize(11).fontColor('#858C94').lineHeight(16).width('100%');
+    }
+    .width('100%')
+    .padding({ left: 20, right: 20, top: 16, bottom: this.bottomInset + 16 });
+  }
+
+  @Builder
   favFolderSheet() {
     Column({ space: 12 }) {
       Row() {
@@ -1248,6 +1279,13 @@ struct Index {
           TransitionEffect.translate({ x: -260 }).combine(TransitionEffect.OPACITY)
         ).animation({ duration: 320, curve: Curve.EaseOut }));
       }
+      Row()
+        .width(0).height(0)
+        .bindSheet($$this.playModeSheetVisible, this.playModeSheet(), {
+          height: SheetSize.FIT_CONTENT,
+          dragBar: true,
+          showClose: false
+        });
     }.width('100%').height('100%')
       .backgroundColor('#F7F8FA')
       .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])

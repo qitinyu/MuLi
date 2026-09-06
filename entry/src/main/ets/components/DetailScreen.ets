@@ -92,7 +92,7 @@ export struct DetailScreen {
 
   @Builder
   verticalActionCount(iconName: string, count: number, active: boolean, action: () => void,
-    longPress: () => void = (): void => {}) {
+    longPress: () => void = (): void => {}, label: string = '') {
     Column({ space: 3 }) {
       if (iconName === 'dianzan') {
         Image($r('app.media.dianzan')).width(24).height(24)
@@ -106,9 +106,9 @@ export struct DetailScreen {
       } else {
         Image($r('app.media.pl')).width(24).height(24).fillColor(Color.White);
       }
-      Text(count > 0 ? FormatUtils.formatCount(count) : '说点什么')
-        .fontSize(10).fontColor(active ? '#F04B55' : '#DDE5EA').maxLines(1);
-    }.width(52)
+      Text(label !== '' ? label : (count > 0 ? FormatUtils.formatCount(count) : '-'))
+        .fontSize(9).fontColor(active ? '#F04B55' : '#DDE5EA').maxLines(1);
+    }.width(40)
       .alignItems(HorizontalAlign.Center)
       .onClick((): void => { action(); })
       .gesture(LongPressGesture({ repeat: false }).onAction((): void => { longPress(); }));
@@ -169,9 +169,9 @@ export struct DetailScreen {
           (): void => { this.onDetailAction('fav'); },
           (): void => { this.onDetailAction('favsheet'); });
         this.verticalActionCount('pl', this.videos[this.currentIndex].commentCount,
-          false, (): void => { this.onDetailAction('comments'); });
+          false, (): void => { this.onDetailAction('comments'); }, (): void => {}, '评论');
         this.verticalActionCount('sphsz', 0,
-          false, (): void => { this.onDetailAction('settings'); });
+          false, (): void => { this.onDetailAction('settings'); }, (): void => {}, '设置');
       }.width('100%');
     }
     .width('100%')
@@ -668,10 +668,7 @@ export struct DetailScreen {
               .backgroundColor(Color.Black)
             }
             .width('100%').height('100%')
-            .backgroundColor(Color.Black)
-            .onClick((): void => {
-              this.onToggleControls();
-            });
+            .backgroundColor(Color.Black);
             // 信息面板：控制条显示期间自动让位隐藏
             if (!this.playbackControlsVisible) {
               this.verticalPanel();
@@ -683,8 +680,7 @@ export struct DetailScreen {
           Stack() {
             this.videoArea();
           }
-          .width('100%').layoutWeight(this.videoWeight).backgroundColor(Color.Black)
-          .onClick((): void => { this.onToggleControls(); });
+          .width('100%').layoutWeight(this.videoWeight).backgroundColor(Color.Black);
           Column() {
             this.detailTabs();
             this.detailBody();
@@ -703,8 +699,7 @@ export struct DetailScreen {
           Stack() {
             this.videoArea();
           }
-          .width('100%').aspectRatio(this.currentAspect()).backgroundColor(Color.Black)
-          .onClick((): void => { this.onToggleControls(); });
+          .width('100%').aspectRatio(this.currentAspect()).backgroundColor(Color.Black);
           this.detailTabs();
           this.detailBody();
         }

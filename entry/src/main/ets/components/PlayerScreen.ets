@@ -75,6 +75,7 @@ export struct PlayerScreen {
   onQualitySwitch: (qn: number) => void = (qn: number): void => {};
   onBack: () => void = (): void => {};
   onBackHome: () => void = (): void => {};
+  onToggleControls: () => void = (): void => {};
   onOpenLandscape: () => void = (): void => {};
   onCloseLandscape: () => void = (): void => {};
 
@@ -450,7 +451,7 @@ export struct PlayerScreen {
       .onActionStart((event: GestureEvent): void => { this.onGestureStart(event); })
       .onActionUpdate((event: GestureEvent): void => { this.onGestureUpdate(event); })
       .onActionEnd((event: GestureEvent): void => { this.onGestureEnd(event); }))
-    .onClick((): void => { this.showPlaybackControls(); })
+    .onClick((): void => { this.onToggleControls(); })
     .bindSheet($$this.episodeListVisible, this.landscapeEpisodeSheet(), {
       height: SheetSize.FIT_CONTENT,
       dragBar: true,
@@ -593,6 +594,7 @@ export struct PlayerScreen {
         onFollowGroup: (): void => { this.onFollowGroup(); },
         onSetPlayMode: (mode: number): void => { this.onSetPlayMode(mode); },
         onShowControls: (): void => { this.showPlaybackControls(); },
+        onToggleControls: (): void => { this.togglePlaybackControls(); },
         onOpenLandscape: (): void => { this.onOpenLandscape(); }
       });
     }
