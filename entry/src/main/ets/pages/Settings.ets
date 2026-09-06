@@ -699,7 +699,7 @@ struct Settings {
           Column({ space: 8 }) {
             Image($r('app.media.app_logo')).width(112).height(112).borderRadius(22);
             Text('Pilihos').fontSize(28).fontWeight(FontWeight.Bold);
-            Text('Version 1.0.4.12').fontSize(15).fontColor('#646A73');
+            Text('Version 1.0.5.1').fontSize(15).fontColor('#646A73');
           }
           .width('100%')
           .alignItems(HorizontalAlign.Center)
@@ -712,15 +712,11 @@ struct Settings {
           Row({ space: 10 }) {
             this.aboutInfoCard('软件协议', '本软件采用 MIT 开源协议');
             this.aboutInfoCard('版本日志',
-              'v1.0.4.12\n' +
-              '1. 搜索独立化与分类搜索 #1041\n' +
-              '2. 页签真实数据化与详情页 #1042\n' +
-              '3. 动态页功能化 #1043\n' +
-              '4. 评论区改版 #1044\n' +
-              '5. 直播分区与关注卡片 #1045\n' +
-              '6. 播放区自适应与竖屏化 #1046-1047\n' +
-              '7. 续播与控件优化 #1048-1049\n' +
-              '8. 竖屏标记/过滤词/底部常驻 #10410-10412\n' +
+              'v1.0.5.1\n' +
+              '1. Index.ets 组件化拆分（2554→741 行） #10510\n' +
+              '2. 新增 8 个界面组件与格式化工具 #10510\n' +
+              '3. 清理 XComponent 时代死代码 #10510\n' +
+              '1.0.4 共 12 项见更新日志\n' +
               '完整更新日志(Pilihos Wiki]https://github.com/qitinyu/Pilihos/wiki/)');
           }.width('100%').justifyContent(FlexAlign.SpaceBetween);
 
