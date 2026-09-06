@@ -296,10 +296,31 @@ export struct PlayerScreen {
     return `${minutes}:${String(seconds).padStart(2, '0')}`;
   }
 
-  private onGestureStart(_event: GestureEvent): void {
-    this.gestureMode = '';
+  private onSeekStart(): void {
+    this.gestureMode = 'seek';
     this.seekBaseMs = this.playbackCurrentMs;
     this.seekPreviewMs = this.playbackCurrentMs;
+  }
+
+  private onSeekUpdate(event: GestureEvent): void {
+    if (this.currentUrl === '' || this.gestureMode !== 'seek') return;
+    const duration: number = this.playbackDurationMs;
+    this.seekPreviewMs = Math.max(0, Math.min(this.seekBaseMs + event.offsetX * 150,
+      duration > 0 ? duration : this.seekBaseMs + event.offsetX * 150));
+    const forward: boolean = this.seekPreviewMs >= this.seekBaseMs;
+    this.showHud(`${forward ? '快进' : '快退'} ${this.formatHudTime(this.seekPreviewMs)} / ${this.formatHudTime(this.playbackDurationMs)}`);
+  }
+
+  private onSeekEnd(): void {
+    if (this.gestureMode === 'seek') {
+      this.seekPlayback(this.seekPreviewMs);
+      this.showPlaybackControls();
+    }
+    this.gestureMode = '';
+  }
+
+  private onVerticalStart(): void {
+    this.gestureMode = '';
     audio.getAudioManager().getVolume(audio.AudioVolumeType.MEDIA).then((volume: number): void => {
       this.startVolume = volume;
     }).catch((): void => {
@@ -316,33 +337,19 @@ export struct PlayerScreen {
     });
   }
 
-  private onGestureUpdate(event: GestureEvent): void {
+  private onVerticalUpdate(event: GestureEvent): void {
     if (this.currentUrl === '') return;
-    const dx: number = event.offsetX;
     const dy: number = event.offsetY;
     if (this.gestureMode === '') {
-      if (this.verticalExpanded && dy < -14 && Math.abs(dy) > Math.abs(dx)) {
+      if (this.verticalExpanded && dy < -14) {
         // 竖屏化：上滑切换下一个视频
         this.gestureMode = 'swipeNext';
         return;
       }
-      if (Math.abs(dx) > 14 && Math.abs(dx) > Math.abs(dy)) {
-        this.gestureMode = 'seek';
-      } else if (Math.abs(dy) > 14) {
-        const localX: number = event.fingerList.length > 0 ? event.fingerList[0].localX : this.surfaceWidth / 2;
-        this.gestureMode = localX < this.surfaceWidth / 2 ? 'brightness' : 'volume';
-      } else {
-        return;
-      }
+      const localX: number = event.fingerList.length > 0 ? event.fingerList[0].localX : this.surfaceWidth / 2;
+      this.gestureMode = localX < this.surfaceWidth / 2 ? 'brightness' : 'volume';
     }
-    if (this.gestureMode === 'seek') {
-      // 水平滑：预览目标进度，抬手时统一 seek
-      const duration: number = this.playbackDurationMs;
-      this.seekPreviewMs = Math.max(0, Math.min(this.seekBaseMs + dx * 150,
-        duration > 0 ? duration : this.seekBaseMs + dx * 150));
-      const forward: boolean = this.seekPreviewMs >= this.seekBaseMs;
-      this.showHud(`${forward ? '快进' : '快退'} ${this.formatHudTime(this.seekPreviewMs)} / ${this.formatHudTime(this.playbackDurationMs)}`);
-    } else if (this.gestureMode === 'brightness') {
+    if (this.gestureMode === 'brightness') {
       const brightness: number = Math.max(0.05, Math.min(1, this.startBrightness - dy / 500));
       window.getLastWindow(getContext(this) as common.UIAbilityContext).then((win: window.Window): void => {
         win.setWindowBrightness(brightness);
@@ -355,11 +362,8 @@ export struct PlayerScreen {
     }
   }
 
-  private onGestureEnd(event: GestureEvent): void {
-    if (this.gestureMode === 'seek') {
-      this.seekPlayback(this.seekPreviewMs);
-      this.showPlaybackControls();
-    } else if (this.gestureMode === 'swipeNext' && event.offsetY < -50) {
+  private onVerticalEnd(event: GestureEvent): void {
+    if (this.gestureMode === 'swipeNext' && event.offsetY < -50) {
       this.playNextRandom();
     }
     this.gestureMode = '';
@@ -454,10 +458,14 @@ export struct PlayerScreen {
     .onAreaChange((_oldArea: Area, newArea: Area): void => {
       this.surfaceWidth = Number(newArea.width);
     })
-    .gesture(PanGesture({ fingers: 1, direction: PanDirection.All })
-      .onActionStart((event: GestureEvent): void => { this.onGestureStart(event); })
-      .onActionUpdate((event: GestureEvent): void => { this.onGestureUpdate(event); })
-      .onActionEnd((event: GestureEvent): void => { this.onGestureEnd(event); }))
+    .gesture(PanGesture({ fingers: 1, direction: PanDirection.Horizontal })
+      .onActionStart((event: GestureEvent): void => { this.onSeekStart(); })
+      .onActionUpdate((event: GestureEvent): void => { this.onSeekUpdate(event); })
+      .onActionEnd((event: GestureEvent): void => { this.onSeekEnd(); }))
+    .gesture(PanGesture({ fingers: 1, direction: PanDirection.Vertical })
+      .onActionStart((event: GestureEvent): void => { this.onVerticalStart(); })
+      .onActionUpdate((event: GestureEvent): void => { this.onVerticalUpdate(event); })
+      .onActionEnd((event: GestureEvent): void => { this.onVerticalEnd(event); }))
     .gesture(TapGesture().onAction((): void => { this.showPlaybackControls(); }))
     .gesture(TapGesture().onAction((): void => { this.togglePlaybackControls(); }))
     .bindSheet($$this.episodeListVisible, this.landscapeEpisodeSheet(), {
@@ -573,10 +581,14 @@ export struct PlayerScreen {
     .onAreaChange((_oldArea: Area, newArea: Area): void => {
       this.surfaceWidth = Number(newArea.width);
     })
-    .gesture(PanGesture({ fingers: 1, direction: PanDirection.All })
-      .onActionStart((event: GestureEvent): void => { this.onGestureStart(event); })
-      .onActionUpdate((event: GestureEvent): void => { this.onGestureUpdate(event); })
-      .onActionEnd((event: GestureEvent): void => { this.onGestureEnd(event); }))
+    .gesture(PanGesture({ fingers: 1, direction: PanDirection.Horizontal })
+      .onActionStart((event: GestureEvent): void => { this.onSeekStart(); })
+      .onActionUpdate((event: GestureEvent): void => { this.onSeekUpdate(event); })
+      .onActionEnd((event: GestureEvent): void => { this.onSeekEnd(); }))
+    .gesture(PanGesture({ fingers: 1, direction: PanDirection.Vertical })
+      .onActionStart((event: GestureEvent): void => { this.onVerticalStart(); })
+      .onActionUpdate((event: GestureEvent): void => { this.onVerticalUpdate(event); })
+      .onActionEnd((event: GestureEvent): void => { this.onVerticalEnd(event); }))
   }
 
   build() {
