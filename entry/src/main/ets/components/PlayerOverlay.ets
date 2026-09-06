@@ -15,6 +15,7 @@ export struct PlayerOverlay {
   @Consume playbackQualities: QualityOption[];
   @Consume currentQn: number;
   @Consume qualityMenuVisible: boolean;
+  @Consume landscapePlayback: boolean;
   @Consume playbackFinished: boolean;
   @Consume recommendedPlaybackIndex: number;
   @Consume videos: VideoItem[];
@@ -170,10 +171,13 @@ export struct PlayerOverlay {
               this.subtitlesEnabled = !this.subtitlesEnabled;
               this.onShowControls();
             });
-            this.playbackTool('qp', () => {
-              this.onOpenLandscape();
-              this.onShowControls();
-            });
+            if (!this.landscapePlayback) {
+              // 横屏内 qp 与右上/底部按钮重复，仅在竖屏显示
+              this.playbackTool('qp', () => {
+                this.onOpenLandscape();
+                this.onShowControls();
+              });
+            }
           }.width('100%').justifyContent(FlexAlign.SpaceBetween).padding({ left: 4, right: 14 });
         }.width('100%').padding({ left: 10, right: 10, top: 8, bottom: 2 });
       }.width('100%').height(78).alignContent(Alignment.Bottom)

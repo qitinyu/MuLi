@@ -37,6 +37,14 @@ export class PlaybackService {
     }
     const qualities: QualityOption[] = [];
     if (preferredQn > 0) {
+      // 优先走 html5 通道（durl 合流最稳定），失败再试 WBI 通道
+      const html5Candidates: string[] = [];
+      const html5Granted: number =
+        await PlaybackService.resolveHtml5Candidates(item, cookie, html5Candidates, qualities,
+          [String(preferredQn), '80', '64', '32', '16']);
+      if (html5Candidates.length > 0) {
+        return { urls: html5Candidates, qualities: qualities, grantedQn: html5Granted };
+      }
       const preferred: PlaybackResolveResult =
         await PlaybackService.resolveWbiQuality(item, cookie, preferredQn, qualities);
       if (preferred.urls.length > 0) {
@@ -159,7 +167,8 @@ export class PlaybackService {
   }
 
   private static async resolveHtml5Candidates(item: VideoItem, cookie: string, candidates: string[],
-    qualities: QualityOption[]): Promise<void> {
+    qualities: QualityOption[], qnList: string[] = ['16', '32', '64']): Promise<number> {
+    let grantedQn: number = 0;
     try {
       const query: Record<string, string> = {};
       if (item.bvid !== '') {
@@ -173,7 +182,7 @@ export class PlaybackService {
       query['fourk'] = '0';
       query['platform'] = 'html5';
       query['high_quality'] = '1';
-      for (const quality of ['16', '32', '64']) {
+      for (const quality of qnList) {
         query['qn'] = quality;
         const result: Record<string, Object> = await BiliHttpClient.getJson('/x/player/playurl', query, cookie);
         if (Number(result['code'] ?? -1) !== 0) {
@@ -184,12 +193,14 @@ export class PlaybackService {
         const durl: Object[] = (data['durl'] as Object[]) ?? [];
         PlaybackService.collectDurlCandidates(durl, candidates);
         PlaybackService.collectQualities(data, qualities);
-        console.info(`Pilihos html5 playback fallback: qn=${quality}, durl=${durl.length}`);
+        grantedQn = Number(data['quality'] ?? 0);
+        console.info(`Pilihos html5 playback fallback: qn=${quality}, granted=${grantedQn}, durl=${durl.length}`);
         if (candidates.length > 0) break;
       }
     } catch (error) {
       console.warn(`Pilihos html5 playback fallback failed: ${String(error)}`);
     }
+    return grantedQn;
   }
 
   private static collectDurlCandidates(durl: Object[], candidates: string[]): void {

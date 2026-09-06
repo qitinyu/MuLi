@@ -67,10 +67,13 @@ export struct PlayerScreen {
   onSendDanmaku: () => void = (): void => {};
   onDetailAction: (action: string) => void = (action: string): void => {};
   onLikeComment: (comment: VideoComment) => void = (comment: VideoComment): void => {};
+  onFollowAuthor: (on: boolean) => void = (on: boolean): void => {};
+  onFollowGroup: () => void = (): void => {};
   onRetry: () => void = (): void => {};
   onQualitySwitch: (qn: number) => void = (qn: number): void => {};
   onBack: () => void = (): void => {};
   onOpenLandscape: () => void = (): void => {};
+  onCloseLandscape: () => void = (): void => {};
 
   private showPlaybackToast(message: string): void {
     try {
@@ -174,6 +177,13 @@ export struct PlayerScreen {
 
   private onNativeVideoError(error: BusinessError): void {
     const message: string = `${error.code} ${error.message}`;
+    // 清晰度切换失败时自动回退默认清晰度重试一次
+    if (this.currentQn > 0) {
+      console.warn(`Pilihos quality switch failed, reverting: qn=${this.currentQn}, ${message}`);
+      this.currentQn = 0;
+      this.onRetry();
+      return;
+    }
     this.playbackReady = false;
     this.playbackStarting = false;
     this.videoMounted = false;
@@ -386,7 +396,7 @@ export struct PlayerScreen {
       .backgroundColor('#66000000')
       .position({ right: 16, bottom: 90 })
       .visibility(this.playbackControlsVisible ? Visibility.Visible : Visibility.None)
-      .onClick(() => { this.onOpenLandscape(); });
+      .onClick(() => { this.onCloseLandscape(); });
       if (this.hudVisible) {
         Text(this.hudText)
           .fontSize(14).fontColor(Color.White)
@@ -403,7 +413,22 @@ export struct PlayerScreen {
       .onActionUpdate((event: GestureEvent): void => { this.onGestureUpdate(event); })
       .onActionEnd((event: GestureEvent): void => { this.onGestureEnd(event); }))
     .gesture(TapGesture({ count: 2 }).onAction((): void => { this.togglePlayback(); }))
-    .onClick((): void => { this.showPlaybackControls(); });
+    .onClick((): void => { this.showPlaybackControls(); })
+    .bindSheet($$this.episodeListVisible, this.landscapeEpisodeSheet(), {
+      height: SheetSize.FIT_CONTENT,
+      dragBar: true,
+      showClose: true
+    });
+  }
+
+  @Builder
+  landscapeEpisodeSheet() {
+    Column() {
+      Text('暂无更多选集')
+        .fontSize(14).fontColor('#30363D').width('100%').textAlign(TextAlign.Center)
+        .padding({ top: 18, bottom: 24 });
+    }.width('100%').padding({ bottom: this.bottomInset + 8 })
+      .backgroundColor('#F7F8FA');
   }
 
   @Builder
@@ -520,6 +545,8 @@ export struct PlayerScreen {
         onSendDanmaku: (): void => { this.onSendDanmaku(); },
         onDetailAction: (action: string): void => { this.onDetailAction(action); },
         onLikeComment: (comment: VideoComment): void => { this.onLikeComment(comment); },
+        onFollowAuthor: (on: boolean): void => { this.onFollowAuthor(on); },
+        onFollowGroup: (): void => { this.onFollowGroup(); },
         onShowControls: (): void => { this.showPlaybackControls(); },
         onOpenLandscape: (): void => { this.onOpenLandscape(); }
       });

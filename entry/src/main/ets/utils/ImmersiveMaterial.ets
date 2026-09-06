@@ -21,10 +21,11 @@ export class ImmersiveMaterial {
   }
 
   /**
-   * 组件背景毛玻璃样式：真机稳定渲染的"沉浸光感"实现
+   * 组件背景毛玻璃样式：真机稳定渲染的"沉浸光感"实现，
+   * 参考系统弹窗/toast 的厚毛玻璃观感
    */
   static blurStyle(): BlurStyle {
-    return BlurStyle.COMPONENT_THIN;
+    return BlurStyle.COMPONENT_THICK;
   }
 
   /**
@@ -36,7 +37,7 @@ export class ImmersiveMaterial {
     const clamped: number = Math.max(0, Math.min(1, opacity));
     if (ImmersiveMaterial.isAvailable() && ImmersiveMaterial.strength > 0) {
       // 材质负责模糊，底衬只轻度提亮
-      const adjusted: number = Math.max(0.32, clamped * 0.45);
+      const adjusted: number = Math.max(0.25, clamped * 0.35);
       const alpha: string = Math.round(adjusted * 255).toString(16).padStart(2, '0');
       return `#${alpha}FFFFFF`;
     }

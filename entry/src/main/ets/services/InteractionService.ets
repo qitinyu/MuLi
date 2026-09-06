@@ -7,6 +7,13 @@ export interface VideoUserState {
   favored: boolean;
 }
 
+export class FavFolder {
+  id: number = 0;
+  title: string = '';
+  mediaCount: number = 0;
+  favoured: boolean = false;
+}
+
 /**
  * 互动接口封装：点赞/投币/收藏/再看、评论发布与评论点赞（web 端，cookie+csrf）。
  */
@@ -105,6 +112,49 @@ export class InteractionService {
       'action': on ? '1' : '0',
       'csrf': csrf
     }, cookie);
+    InteractionService.ensureOk(result);
+  }
+
+  /**
+   * 用户创建的收藏夹列表（含当前视频是否已在夹内）
+   */
+  static async listFavFolders(aid: number, cookie: string): Promise<FavFolder[]> {
+    const query: Record<string, string> = {};
+    query['rid'] = String(aid);
+    query['type'] = '2';
+    const listResult: Record<string, Object> = await BiliHttpClient.getJson(
+      '/x/v3/fav/folder/created/list-all', query, cookie);
+    if (Number(listResult['code'] ?? -1) !== 0) {
+      throw new Error(String(listResult['message'] ?? '收藏夹获取失败'));
+    }
+    const data: Record<string, Object> = (listResult['data'] ?? {}) as Record<string, Object>;
+    const list: Object[] = (data['list'] as Object[]) ?? [];
+    const folders: FavFolder[] = [];
+    list.forEach((raw: Object): void => {
+      const record: Record<string, Object> = raw as Record<string, Object>;
+      const folder: FavFolder = new FavFolder();
+      folder.id = Number(record['id'] ?? 0);
+      folder.title = String(record['title'] ?? '');
+      folder.mediaCount = Number(record['media_count'] ?? 0);
+      folder.favoured = Number(record['favoured'] ?? 0) === 1;
+      if (folder.id > 0) folders.push(folder);
+    });
+    return folders;
+  }
+
+  static async addToFolder(aid: number, folderId: number, on: boolean,
+    cookie: string, csrf: string): Promise<void> {
+    const form: Record<string, string> = {};
+    form['rid'] = String(aid);
+    form['type'] = '2';
+    form['csrf'] = csrf;
+    if (on) {
+      form['add_media_ids'] = String(folderId);
+    } else {
+      form['del_media_ids'] = String(folderId);
+    }
+    const result: Record<string, Object> =
+      await BiliHttpClient.postForm('/x/api/v3/fav/resource/deal', form, cookie);
     InteractionService.ensureOk(result);
   }
 

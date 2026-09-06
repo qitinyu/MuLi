@@ -25,4 +25,10 @@ export interface VideoItem {
   liked?: boolean;
   coined?: boolean;
   favored?: boolean;
+  coinCount?: number;
+  favoriteCount?: number;
+  authorMid?: number;
+  authorFollowed?: boolean;
+  authorFans?: number;
+  authorVideos?: number;
 }

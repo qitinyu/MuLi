@@ -19,6 +19,8 @@ import { AdvancedFeatures } from '../utils/AdvancedFeatures';
 import { FilterWords } from '../utils/FilterWords';
 import { FormatUtils } from '../utils/FormatUtils';
 import { PlaybackMemory } from '../utils/PlaybackMemory';
+import { FollowState } from '../utils/FollowState';
+import { FavFolder } from '../services/InteractionService';
 import { HomeTab } from '../components/HomeTab';
 import { HomeBottomBar, HomeActionMenu } from '../components/HomeBottomBar';
 import { MineSidebar, MessageSidebar } from '../components/Sidebars';
@@ -110,6 +112,9 @@ struct Index {
   @Provide commentTotal: number = 0;
   @Provide commentHasMore: boolean = false;
   @State useAdvancedMaterial: boolean = false;
+  @State favSheetVisible: boolean = false;
+  @State favFolders: FavFolder[] = [];
+  private savedGridOffset: number = 0;
   private context: common.UIAbilityContext = getContext(this) as common.UIAbilityContext;
   private playbackRequest: number = 0;
   private detailRequest: number = 0;
@@ -315,6 +320,32 @@ struct Index {
           console.warn(`Pilihos video user state failed: ${String(stateError)}`);
         }
       }
+      // UP主关注状态与粉丝/投稿数
+      const authorMid: number = updated.authorMid ?? 0;
+      if (session !== null && session.cookie !== '' && authorMid > 0) {
+        try {
+          const attribute: number = await InteractionService.relationAttribute(authorMid, session.cookie);
+          updated.authorFollowed = attribute === 2 || attribute === 6 || attribute === 128;
+        } catch (relationError) {
+          updated.authorFollowed = FollowState.isFollowed(authorMid, updated.author);
+        }
+        try {
+          const cardQuery: Record<string, string> = {};
+          cardQuery['mid'] = String(authorMid);
+          const cardResult: Record<string, Object> =
+            await BiliHttpClient.getJson('/x/web-interface/card', cardQuery, session.cookie);
+          if (Number(cardResult['code'] ?? -1) === 0) {
+            const cardData: Record<string, Object> = (cardResult['data'] ?? {}) as Record<string, Object>;
+            const cardInfo: Record<string, Object> = (cardData['card'] ?? {}) as Record<string, Object>;
+            updated.authorFans = Number(cardData['follower'] ?? 0);
+            updated.authorVideos = Number(cardInfo['arc_count'] ?? 0);
+          }
+        } catch (cardError) {
+          console.warn(`Pilihos author card failed: ${String(cardError)}`);
+        }
+      } else if (authorMid > 0 || updated.author !== '') {
+        updated.authorFollowed = FollowState.isFollowed(authorMid, updated.author);
+      }
       this.videos = this.videos.map((candidate: VideoItem): VideoItem =>
         candidate.id === item.id ? updated : candidate);
     } catch (error) {
@@ -416,15 +447,84 @@ struct Index {
     if (action === 'like') {
       this.toggleLike();
     } else if (action === 'coin') {
-      this.coinVideo();
+      this.showPlaybackToast('投币功能即将接入官方接口');
     } else if (action === 'fav') {
       this.toggleFavorite();
+    } else if (action === 'favsheet') {
+      this.openFavSheet();
     } else if (action === 'watchlater') {
       this.addWatchLater();
-    } else if (action === 'dislike') {
-      this.showPlaybackToast('B站暂不支持视频点踩');
     } else if (action === 'share') {
       this.shareCurrentVideo();
+    } else if (action === 'comments') {
+      this.detailSection = 1;
+      this.verticalExpanded = false;
+    } else if (action === 'openauthor') {
+      this.openAuthorSpace();
+    }
+  }
+
+  private openAuthorSpace(): void {
+    const item: VideoItem = this.videos[this.currentIndex];
+    if ((item.authorMid ?? 0) <= 0) {
+      this.showPlaybackToast('UP主信息加载中');
+      return;
+    }
+    router.pushUrl({
+      url: 'pages/UserSpace',
+      params: { mid: item.authorMid, name: item.author }
+    }).catch((error: BusinessError): void => {
+      console.error('Pilihos author space failed: ' + String(error));
+    });
+  }
+
+  private async followAuthor(on: boolean): Promise<void> {
+    const session: AuthSession | null = this.requireSession();
+    if (session === null) return;
+    const item: VideoItem = this.videos[this.currentIndex];
+    const mid: number = item.authorMid ?? 0;
+    if (mid <= 0) return;
+    try {
+      await InteractionService.follow(mid, on, session.cookie, session.csrf, '11');
+      FollowState.setFollowed(mid, item.author, on);
+      this.patchCurrentVideo((target: VideoItem): void => {
+        target.authorFollowed = on;
+      });
+      this.showPlaybackToast(on ? `已关注 ${item.author}` : '已取消关注');
+    } catch (error) {
+      this.showPlaybackToast(`关注操作失败: ${String(error)}`);
+    }
+  }
+
+  private async openFavSheet(): Promise<void> {
+    const session: AuthSession | null = this.requireSession();
+    if (session === null) return;
+    const item: VideoItem = this.videos[this.currentIndex];
+    if (item.aid <= 0) return;
+    try {
+      this.favFolders = await InteractionService.listFavFolders(item.aid, session.cookie);
+      this.favSheetVisible = true;
+    } catch (error) {
+      this.showPlaybackToast(`收藏夹获取失败: ${String(error)}`);
+    }
+  }
+
+  private async toggleFavFolder(folder: FavFolder): Promise<void> {
+    const session: AuthSession | null = this.requireSession();
+    if (session === null) return;
+    const item: VideoItem = this.videos[this.currentIndex];
+    if (item.aid <= 0) return;
+    const on: boolean = !folder.favoured;
+    try {
+      await InteractionService.addToFolder(item.aid, folder.id, on, session.cookie, session.csrf);
+      folder.favoured = on;
+      this.favFolders = this.favFolders.slice(0);
+      this.patchCurrentVideo((target: VideoItem): void => {
+        target.favored = this.favFolders.some((entry: FavFolder): boolean => entry.favoured);
+      });
+      this.showPlaybackToast(on ? `已收藏到「${folder.title}」` : `已从「${folder.title}」移除`);
+    } catch (error) {
+      this.showPlaybackToast(`收藏操作失败: ${String(error)}`);
     }
   }
 
@@ -436,39 +536,21 @@ struct Index {
       this.showPlaybackToast('视频信息加载中，请稍后');
       return;
     }
+    // 先乐观更新 UI，接口失败再回滚
     const on: boolean = !(item.liked ?? false);
+    this.patchCurrentVideo((target: VideoItem): void => {
+      target.liked = on;
+      target.likeCount = Math.max(0, target.likeCount + (on ? 1 : -1));
+    });
     try {
       await InteractionService.like(item.aid, on, session.cookie, session.csrf);
-      this.patchCurrentVideo((target: VideoItem): void => {
-        target.liked = on;
-        target.likeCount = Math.max(0, target.likeCount + (on ? 1 : -1));
-      });
       this.showPlaybackToast(on ? '已点赞' : '已取消点赞');
     } catch (error) {
-      this.showPlaybackToast(`点赞失败: ${String(error)}`);
-    }
-  }
-
-  private async coinVideo(): Promise<void> {
-    const session: AuthSession | null = this.requireSession();
-    if (session === null) return;
-    const item: VideoItem = this.videos[this.currentIndex];
-    if (item.aid <= 0) {
-      this.showPlaybackToast('视频信息加载中，请稍后');
-      return;
-    }
-    if (item.coined ?? false) {
-      this.showPlaybackToast('已为该视频投过币');
-      return;
-    }
-    try {
-      await InteractionService.coin(item.aid, 1, false, session.cookie, session.csrf);
       this.patchCurrentVideo((target: VideoItem): void => {
-        target.coined = true;
+        target.liked = !on;
+        target.likeCount = Math.max(0, target.likeCount + (on ? -1 : 1));
       });
-      this.showPlaybackToast('投币成功，感谢支持');
-    } catch (error) {
-      this.showPlaybackToast(`投币失败: ${String(error)}`);
+      this.showPlaybackToast(`点赞失败: ${String(error)}`);
     }
   }
 
@@ -497,14 +579,13 @@ struct Index {
     if (session === null) return;
     const item: VideoItem = this.videos[this.currentIndex];
     if (item.aid <= 0) {
-      this.showPlaybackToast('视频信息加载中，请稍后');
       return;
     }
+    // 静默加入稍后再看，不打扰播放
     try {
       await InteractionService.watchLater(item.aid, session.cookie, session.csrf);
-      this.showPlaybackToast('已加入稍后再看');
     } catch (error) {
-      this.showPlaybackToast(`加入失败: ${String(error)}`);
+      this.showPlaybackToast(`加入再看失败: ${String(error)}`);
     }
   }
 
@@ -634,6 +715,11 @@ struct Index {
     const index: number = this.videos.indexOf(item);
     if (index < 0 || item.placeholder) return;
     this.savePlaybackProgress();
+    // 记忆推荐流位置，返回时恢复
+    if (this.activeTab === 1 && this.contentTab === 1) {
+      const offset: OffsetResult = this.homeGridScroller.currentOffset();
+      this.savedGridOffset = offset.yOffset;
+    }
     this.currentIndex = index;
     this.detailSection = showComments ? 1 : 0;
     this.detailExpanded = false;
@@ -667,6 +753,8 @@ struct Index {
     this.playbackQualities = [];
     this.showVertical = true;
     // 播放记忆：恢复上次进度，prepared 后自动 seek（看完的视频从头播放）
+    // 清掉上一支视频遗留的续播位置，避免新视频从中途"乱跳"
+    this.pendingResumeMs = 0;
     const savedMs: number = PlaybackMemory.progressOf(item.aid);
     if (savedMs > 5000 && (item.duration <= 0 || savedMs < item.duration * 1000 - 5000)) {
       this.pendingResumeMs = savedMs;
@@ -703,6 +791,10 @@ struct Index {
     const restored: AuthSession | null = await AuthService.restoreSession(this.context);
     this.authSession = restored ?? current;
     if (restored === null && current !== null) this.refreshAuthData();
+    const cookie: string = this.authSession === null ? '' : this.authSession.cookie;
+    if (cookie !== '') {
+      FollowState.refresh(cookie);
+    }
   }
 
   private async loadMoreRecommendations(): Promise<void> {
@@ -891,12 +983,61 @@ struct Index {
     this.playerError = '';
     this.showVertical = false;
     this.closeLandscapePlayback();
+    // 推荐流滚动位置恢复（等 Grid 重新挂载后执行）
+    const restoreOffset: number = this.savedGridOffset;
+    if (restoreOffset > 0) {
+      setTimeout((): void => {
+        this.homeGridScroller.scrollTo({ xOffset: 0, yOffset: restoreOffset });
+      }, 150);
+    }
     return true;
   }
 
   private playbackCookie(): string {
     const session: AuthSession | null = this.authSession ?? AuthService.currentSession();
     return session === null ? '' : session.cookie;
+  }
+
+  @Builder
+  favFolderSheet() {
+    Column({ space: 12 }) {
+      Row() {
+        Text('收藏夹').fontSize(18).fontWeight(FontWeight.Bold).layoutWeight(1);
+        Image($r('app.media.newfiles')).width(22).height(22)
+          .onClick((): void => { this.showPlaybackToast('新建收藏夹开发中'); });
+      }.width('100%');
+      if (this.favFolders.length === 0) {
+        Text('暂无收藏夹').fontSize(13).fontColor('#858C94')
+          .width('100%').textAlign(TextAlign.Center)
+          .padding({ top: 20, bottom: 20 });
+      }
+      Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Start }) {
+        ForEach(this.favFolders, (folder: FavFolder) => {
+          Column({ space: 5 }) {
+            Stack() {
+              Image($r('app.media.files')).width(38).height(38).opacity(folder.favoured ? 1 : 0.75);
+              if (folder.favoured) {
+                Text('已收').fontSize(9).fontColor(Color.White).backgroundColor('#F04B55')
+                  .borderRadius(6).padding({ left: 4, right: 4, top: 1, bottom: 1 })
+                  .position({ right: -4, top: -4 });
+              }
+            }.width(44).height(44);
+            Text(folder.title).fontSize(12).maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis }).width('100%')
+              .textAlign(TextAlign.Center);
+            Text(`${folder.mediaCount} 条内容`).fontSize(10).fontColor('#858C94');
+          }
+          .width('31%')
+          .margin({ right: '2%', bottom: 10 })
+          .padding({ top: 10, bottom: 10 })
+          .borderRadius(10)
+          .backgroundColor('#F7F8FA')
+          .onClick((): void => { this.toggleFavFolder(folder); });
+        }, (folder: FavFolder) => `fav_${folder.id}_${folder.favoured}`);
+      }.width('100%');
+    }
+    .width('100%')
+    .padding({ left: 16, right: 16, top: 16, bottom: this.bottomInset + 16 });
   }
 
   build() {
@@ -916,10 +1057,13 @@ struct Index {
           onSendDanmaku: (): void => { this.sendDanmaku(); },
           onDetailAction: (action: string): void => { this.handleDetailAction(action); },
           onLikeComment: (comment: VideoComment): void => { this.toggleCommentLike(comment); },
+          onFollowAuthor: (on: boolean): void => { this.followAuthor(on); },
+          onFollowGroup: (): void => { this.showPlaybackToast('分组管理开发中，敬请期待'); },
           onRetry: (): void => { this.prepareCurrentVideo(); },
           onQualitySwitch: (qn: number): void => { this.switchPlaybackQuality(qn); },
           onBack: (): void => { this.onBackPress(); },
-          onOpenLandscape: (): void => { this.openLandscapePlayback(); }
+          onOpenLandscape: (): void => { this.openLandscapePlayback(); },
+          onCloseLandscape: (): void => { this.closeLandscapePlayback(); }
         });
       } else {
         Stack({ alignContent: Alignment.Start }) {
@@ -977,6 +1121,11 @@ struct Index {
       }
     }.width('100%').height('100%')
       .backgroundColor('#F7F8FA')
-      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM]);
+      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
+      .bindSheet($$this.favSheetVisible, this.favFolderSheet(), {
+        height: SheetSize.FIT_CONTENT,
+        dragBar: true,
+        showClose: true
+      });
   }
 }
