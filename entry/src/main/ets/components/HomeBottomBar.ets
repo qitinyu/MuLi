@@ -22,8 +22,8 @@ export struct HomeBottomBar {
       Image($r('app.media.ic_public_search_filled')).width(24).height(24);
     }
     .type(ButtonType.ROUNDED_RECTANGLE).width(52).height(52)
-    .backgroundColor(ImmersiveMaterial.fallbackBackgroundDark(0.95)).borderRadius(26)
-    .backgroundBlurStyle(ImmersiveMaterial.blurStyle(), { colorMode: ThemeColorMode.DARK })
+    .backgroundColor(ImmersiveMaterial.fallbackBackground()).borderRadius(26)
+    .backgroundBlurStyle(ImmersiveMaterial.blurStyle(), { colorMode: ThemeColorMode.LIGHT })
     .shadow({ radius: 8, color: '#25000000', offsetX: 0, offsetY: 2 })
     .onClick(() => { this.onOpenSearch(); });
   }
@@ -34,8 +34,8 @@ export struct HomeBottomBar {
       Image($r('app.media.more')).width(24).height(24);
     }
     .type(ButtonType.ROUNDED_RECTANGLE).width(52).height(52)
-    .backgroundColor(ImmersiveMaterial.fallbackBackgroundDark(0.95)).borderRadius(26)
-    .backgroundBlurStyle(ImmersiveMaterial.blurStyle(), { colorMode: ThemeColorMode.DARK })
+    .backgroundColor(ImmersiveMaterial.fallbackBackground()).borderRadius(26)
+    .backgroundBlurStyle(ImmersiveMaterial.blurStyle(), { colorMode: ThemeColorMode.LIGHT })
     .shadow({ radius: 8, color: '#25000000', offsetX: 0, offsetY: 2 })
     .onClick(() => { this.actionMenuVisible = !this.actionMenuVisible; })
     .gesture(LongPressGesture({ repeat: false }).onAction((): void => {
@@ -57,7 +57,7 @@ export struct HomeBottomBar {
               .height(this.activeTab === 0 ? 22 : 20)
               .fillColor(this.activeTab === 0 ? '#1677A8' : '#3E4854');
             Text('动态').fontSize(11)
-              .fontColor(this.activeTab === 0 ? '#4FC3F7' : '#DDE5EA')
+              .fontColor(this.activeTab === 0 ? '#1677A8' : '#3E4854')
               .fontWeight(this.activeTab === 0 ? FontWeight.Bold : FontWeight.Normal);
           }.alignItems(HorizontalAlign.Center);
         }
@@ -75,7 +75,7 @@ export struct HomeBottomBar {
               .height(this.activeTab === 1 ? 22 : 20)
               .fillColor(this.activeTab === 1 ? '#1677A8' : '#3E4854');
             Text('首页').fontSize(11)
-              .fontColor(this.activeTab === 1 ? '#4FC3F7' : '#DDE5EA')
+              .fontColor(this.activeTab === 1 ? '#1677A8' : '#3E4854')
               .fontWeight(this.activeTab === 1 ? FontWeight.Bold : FontWeight.Normal);
           }.alignItems(HorizontalAlign.Center);
         }
@@ -95,7 +95,7 @@ export struct HomeBottomBar {
               .height(this.activeTab === 2 ? 22 : 20)
               .fillColor(this.activeTab === 2 ? '#1677A8' : '#3E4854');
             Text('番剧').fontSize(11)
-              .fontColor(this.activeTab === 2 ? '#4FC3F7' : '#DDE5EA')
+              .fontColor(this.activeTab === 2 ? '#1677A8' : '#3E4854')
               .fontWeight(this.activeTab === 2 ? FontWeight.Bold : FontWeight.Normal);
           }.alignItems(HorizontalAlign.Center);
         }
@@ -104,9 +104,9 @@ export struct HomeBottomBar {
         .onClick(() => { this.activeTab = 2; this.loadError = ''; });
       }
       .layoutWeight(1).height(58).padding({ left: 6, right: 6 })
-      .backgroundColor(ImmersiveMaterial.fallbackBackgroundDark(0.9))
+      .backgroundColor(ImmersiveMaterial.fallbackBackground(0.82))
       .borderRadius(30)
-      .backgroundBlurStyle(ImmersiveMaterial.blurStyle(), { colorMode: ThemeColorMode.DARK });
+      .backgroundBlurStyle(ImmersiveMaterial.blurStyle(), { colorMode: ThemeColorMode.LIGHT });
 
       if (this.floatBallSwapped) {
         this.searchBall();
@@ -141,7 +141,7 @@ export struct HomeActionMenu {
         }.width(124).height(38)
           .type(ButtonType.ROUNDED_RECTANGLE).borderRadius(18)
           .backgroundColor(ImmersiveMaterial.fallbackBackground())
-          .backgroundBlurStyle(ImmersiveMaterial.blurStyle(), { colorMode: ThemeColorMode.DARK })
+          .backgroundBlurStyle(ImmersiveMaterial.blurStyle(), { colorMode: ThemeColorMode.LIGHT })
           .shadow({ radius: 6, color: '#25000000', offsetX: 0, offsetY: 2 })
           .onClick(() => {
             this.actionMenuVisible = false;
@@ -154,7 +154,7 @@ export struct HomeActionMenu {
         }.width(124).height(38)
           .type(ButtonType.ROUNDED_RECTANGLE).borderRadius(18)
           .backgroundColor(ImmersiveMaterial.fallbackBackground())
-          .backgroundBlurStyle(ImmersiveMaterial.blurStyle(), { colorMode: ThemeColorMode.DARK })
+          .backgroundBlurStyle(ImmersiveMaterial.blurStyle(), { colorMode: ThemeColorMode.LIGHT })
           .shadow({ radius: 6, color: '#25000000', offsetX: 0, offsetY: 2 })
           .onClick(() => {
             this.compactGrid = !this.compactGrid;
