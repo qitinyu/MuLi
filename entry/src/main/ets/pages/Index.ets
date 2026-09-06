@@ -4,6 +4,7 @@ import { RecommendationService, RecommendationBatch } from '../services/Recommen
 import { ReplyService, VideoComment, CommentBatch } from '../services/ReplyService';
 import { PlaybackService, PlaybackResolveResult, QualityOption } from '../services/PlaybackService';
 import { BiliHttpClient } from '../services/BiliHttpClient';
+import { DanmakuService } from '../services/DanmakuService';
 import { WbiService } from '../services/WbiService';
 import { AuthService, AuthSession } from '../services/AuthService';
 import router from '@ohos.router';
@@ -376,6 +377,29 @@ struct Index {
     this.showPlaybackToast('评论发布功能开发中，敬请期待');
   }
 
+  private async sendDanmaku(): Promise<void> {
+    const text: string = this.danmakuText.trim();
+    if (text === '') return;
+    const session: AuthSession | null = this.authSession ?? AuthService.currentSession();
+    if (session === null) {
+      this.showPlaybackToast('登录后才能发送弹幕');
+      return;
+    }
+    const item: VideoItem = this.videos[this.currentIndex];
+    if (item.cid <= 0) {
+      this.showPlaybackToast('弹幕通道未就绪，请稍后重试');
+      return;
+    }
+    try {
+      await DanmakuService.send(session.cookie, session.csrf, item.cid, text, this.playbackCurrentMs);
+      this.danmakuText = '';
+      this.showPlaybackToast('弹幕发送成功，审核通过后显示');
+    } catch (error) {
+      this.showPlaybackToast(`弹幕发送失败: ${String(error)}`);
+      console.error(`Pilihos danmaku send failed: ${String(error)}`);
+    }
+  }
+
   private switchPlaybackQuality(qn: number): void {
     if (qn === this.currentQn || this.currentUrl === '') return;
     // 清晰度切换：记录当前进度，新流 prepared 后自动续播
@@ -718,6 +742,7 @@ struct Index {
             this.loadSubReplies(rootId, refresh);
           },
           onSubmitComment: (): void => { this.submitCommentEntry(); },
+          onSendDanmaku: (): void => { this.sendDanmaku(); },
           onRetry: (): void => { this.prepareCurrentVideo(); },
           onQualitySwitch: (qn: number): void => { this.switchPlaybackQuality(qn); },
           onBack: (): void => { this.onBackPress(); },

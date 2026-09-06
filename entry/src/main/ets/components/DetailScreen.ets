@@ -41,6 +41,7 @@ export struct DetailScreen {
   onLoadSubReplies: (rootId: number, refresh: boolean) => void =
     (rootId: number, refresh: boolean): void => {};
   onSubmitComment: () => void = (): void => {};
+  onSendDanmaku: () => void = (): void => {};
   onShowControls: () => void = (): void => {};
   onOpenLandscape: () => void = (): void => {};
 
@@ -127,7 +128,8 @@ export struct DetailScreen {
           .backgroundColor('#F1F3F5').borderRadius(18)
           .padding({ left: 12, right: 38 })
           .enabled(this.danmakuEnabled)
-          .onChange((value: string) => { this.danmakuText = value; });
+          .onChange((value: string) => { this.danmakuText = value; })
+          .onSubmit((): void => { this.onSendDanmaku(); });
         Button() {
           Image($r('app.media.dmg')).width(20).height(20)
             .opacity(this.danmakuEnabled ? 1 : 0.38);

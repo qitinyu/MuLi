@@ -9,6 +9,7 @@ import { FormatUtils } from '../utils/FormatUtils';
 import { loadingIndicator } from '../utils/CommonBuilders';
 import { PlayerOverlay } from './PlayerOverlay';
 import { DetailScreen } from './DetailScreen';
+import { DanmakuOverlay } from './DanmakuOverlay';
 
 /**
  * 播放器宿主：承载横屏/竖屏两套播放画面与原生 Video 事件处理；
@@ -39,6 +40,7 @@ export struct PlayerScreen {
   @Consume videos: VideoItem[];
   @Consume currentIndex: number;
   @Consume pendingResumeMs: number;
+  @Consume danmakuEnabled: boolean;
   @Consume bottomInset: number;
   private nativeVideoController: VideoController = new VideoController();
   private playbackControlsTimer: number = 0;
@@ -49,6 +51,7 @@ export struct PlayerScreen {
   onLoadSubReplies: (rootId: number, refresh: boolean) => void =
     (rootId: number, refresh: boolean): void => {};
   onSubmitComment: () => void = (): void => {};
+  onSendDanmaku: () => void = (): void => {};
   onRetry: () => void = (): void => {};
   onQualitySwitch: (qn: number) => void = (qn: number): void => {};
   onBack: () => void = (): void => {};
@@ -217,6 +220,14 @@ export struct PlayerScreen {
           }
         }.justifyContent(FlexAlign.Center).width('100%').height('100%');
       }
+      if (this.danmakuEnabled && this.currentUrl !== '') {
+        DanmakuOverlay({
+          cid: this.videos[this.currentIndex].cid,
+          playing: !this.playbackPaused,
+          positionMs: this.playbackCurrentMs,
+          speedFactor: this.playbackSpeed
+        })
+      }
       PlayerOverlay({
         episodeListVisible: $episodeListVisible,
         onSeek: (valueMs: number): void => { this.seekPlayback(valueMs); },
@@ -298,6 +309,14 @@ export struct PlayerScreen {
         }
       }.justifyContent(FlexAlign.Center).width('100%').height('100%');
     }
+    if (this.danmakuEnabled && this.currentUrl !== '') {
+      DanmakuOverlay({
+        cid: this.videos[this.currentIndex].cid,
+        playing: !this.playbackPaused,
+        positionMs: this.playbackCurrentMs,
+        speedFactor: this.playbackSpeed
+      })
+    }
     PlayerOverlay({
       episodeListVisible: $episodeListVisible,
       onSeek: (valueMs: number): void => { this.seekPlayback(valueMs); },
@@ -307,7 +326,7 @@ export struct PlayerScreen {
       onReplay: (): void => { this.replayFinishedVideo(); },
       onPlayRecommended: (): void => { this.playRecommendedVideo(); },
       onShare: (): void => { this.shareCurrentVideo(); },
-        onQualitySwitch: (qn: number): void => { this.onQualitySwitch(qn); }
+      onQualitySwitch: (qn: number): void => { this.onQualitySwitch(qn); }
     });
     Button() {
       Image($r('app.media.left_syb')).width(24).height(24);
@@ -335,6 +354,7 @@ export struct PlayerScreen {
           this.onLoadSubReplies(rootId, refresh);
         },
         onSubmitComment: (): void => { this.onSubmitComment(); },
+        onSendDanmaku: (): void => { this.onSendDanmaku(); },
         onShowControls: (): void => { this.showPlaybackControls(); },
         onOpenLandscape: (): void => { this.onOpenLandscape(); }
       });

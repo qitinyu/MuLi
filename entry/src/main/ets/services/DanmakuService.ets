@@ -1,0 +1,115 @@
+import http from '@ohos.net.http';
+import { BiliHttpClient } from './BiliHttpClient';
+import { FilterWords } from '../utils/FilterWords';
+
+export interface DanmakuItem {
+  timeMs: number;
+  mode: number; // 1=滚动 4=底部 5=顶部
+  color: number; // 0xRRGGBB
+  text: string;
+}
+
+/**
+ * 弹幕管线：拉取分段 XML 弹幕流、按弹幕过滤词过滤、提交新弹幕。
+ */
+export class DanmakuService {
+  static async load(cid: number): Promise<DanmakuItem[]> {
+    if (cid <= 0) return [];
+    const request: http.HttpRequest = http.createHttp();
+    try {
+      const response: http.HttpResponse = await request.request(
+        `https://comment.bilibili.com/${cid}.xml`, {
+          method: http.RequestMethod.GET,
+          header: {
+            'User-Agent': BiliHttpClient.browserUserAgent,
+            'Referer': 'https://www.bilibili.com/'
+          },
+          connectTimeout: 10000,
+          readTimeout: 15000
+        });
+      const xml: string = response.result as string;
+      return DanmakuService.parseXml(xml);
+    } finally {
+      request.destroy();
+    }
+  }
+
+  static parseXml(xml: string): DanmakuItem[] {
+    const items: DanmakuItem[] = [];
+    const pattern: RegExp = /<d p="([^"]*)"[^>]*>([^<]*)<\/d>/g;
+    let match: RegExpExecArray | null = pattern.exec(xml);
+    while (match !== null) {
+      const fields: string[] = match[1].split(',');
+      const text: string = DanmakuService.decodeEntities(match[2]).trim();
+      if (fields.length >= 4 && text !== '') {
+        const mode: number = Number(fields[1]);
+        // 仅支持滚动/底部/顶部三种常规模式，跳过高级弹幕与代码弹幕
+        if ((mode === 1 || mode === 4 || mode === 5) && !FilterWords.isDanmakuFiltered(text)) {
+          items.push({
+            timeMs: Math.floor(Number(fields[0]) * 1000),
+            mode: mode,
+            color: Number(fields[3]) & 0xFFFFFF,
+            text: text
+          });
+        }
+      }
+      match = pattern.exec(xml);
+    }
+    items.sort((a: DanmakuItem, b: DanmakuItem): number => a.timeMs - b.timeMs);
+    console.info(`Pilihos danmaku loaded: ${items.length} items after filter`);
+    return items;
+  }
+
+  static async send(cookie: string, csrf: string, cid: number, message: string,
+    progressMs: number): Promise<void> {
+    if (cid <= 0) throw new Error('视频 cid 缺失');
+    if (cookie === '' || csrf === '') throw new Error('登录凭证缺失，请重新登录');
+    const request: http.HttpRequest = http.createHttp();
+    const body: string = [
+      `oid=${cid}`,
+      'type=1',
+      `msg=${encodeURIComponent(message)}`,
+      `csrf=${encodeURIComponent(csrf)}`,
+      `csrf_token=${encodeURIComponent(csrf)}`,
+      `progress=${Math.max(0, Math.floor(progressMs))}`,
+      'color=16777215',
+      'fontsize=25',
+      'pool=0',
+      'mode=1',
+      `rnd=${Math.floor(Date.now() / 1000)}`,
+      'plat=1'
+    ].join('&');
+    try {
+      const response: http.HttpResponse = await request.request(
+        'https://api.bilibili.com/x/v2/reply/dm', {
+          method: http.RequestMethod.POST,
+          header: {
+            'User-Agent': BiliHttpClient.browserUserAgent,
+            'Referer': 'https://www.bilibili.com/',
+            'Origin': 'https://www.bilibili.com',
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Cookie': cookie
+          },
+          extraData: body,
+          connectTimeout: 10000,
+          readTimeout: 15000
+        });
+      const result: Record<string, Object> = JSON.parse(response.result as string) as Record<string, Object>;
+      const code: number = Number(result['code'] ?? -1);
+      if (code !== 0) {
+        throw new Error(`${code}: ${String(result['message'] ?? '发送失败')}`);
+      }
+    } finally {
+      request.destroy();
+    }
+  }
+
+  private static decodeEntities(text: string): string {
+    return text
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, '\'')
+      .replace(/&amp;/g, '&');
+  }
+}
