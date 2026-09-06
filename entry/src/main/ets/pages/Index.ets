@@ -85,6 +85,7 @@ struct Index {
   @Provide playbackQualities: QualityOption[] = [];
   @Provide currentQn: number = 0;
   @Provide qualityMenuVisible: boolean = false;
+  @Provide playMode: number = 0;
   @Provide playbackCurrentMs: number = 0;
   @Provide playbackDurationMs: number = 0;
   @Provide playbackPaused: boolean = true;
@@ -213,6 +214,7 @@ struct Index {
       const store: preferences.Preferences = await preferences.getPreferences(this.context, 'pilihos_player');
       this.keepRefreshContent = store.getSync('keep_refresh_content', false) as boolean;
       this.defaultQuality = store.getSync('default_quality', 0) as number;
+      this.playMode = store.getSync('play_mode', 0) as number;
       const appearanceStore: preferences.Preferences = await preferences.getPreferences(this.context, 'pilihos_ui');
       this.floatBallSwapped = appearanceStore.getSync('float_ball_swapped', false) as boolean;
       this.topTabsMerged = appearanceStore.getSync('top_tabs_merged', false) as boolean;
@@ -510,6 +512,18 @@ struct Index {
     }
   }
 
+  private async setPlayMode(mode: number): Promise<void> {
+    this.playMode = mode;
+    try {
+      const store: preferences.Preferences =
+        await preferences.getPreferences(this.context, 'pilihos_player');
+      store.putSync('play_mode', mode);
+      store.flushSync();
+    } catch (error) {
+      console.error('Pilihos play mode save failed: ' + String(error));
+    }
+  }
+
   private handleDetailAction(action: string): void {
     if (action === 'like') {
       this.toggleLike();
@@ -525,6 +539,9 @@ struct Index {
       this.shareCurrentVideo();
     } else if (action === 'comments') {
       this.detailSection = 1;
+      this.verticalExpanded = false;
+    } else if (action === 'settings') {
+      this.detailSection = 2;
       this.verticalExpanded = false;
     } else if (action === 'openauthor') {
       this.openAuthorSpace();
@@ -929,6 +946,12 @@ struct Index {
     }
   }
 
+  private backToHome(): void {
+    if (!this.showVertical) return;
+    this.savePlaybackProgress();
+    this.exitPlaybackToHome();
+  }
+
   private async closeLandscapePlayback(): Promise<void> {
     this.pendingResumeMs = this.playbackCurrentMs;
     this.landscapePlayback = false;
@@ -1056,6 +1079,14 @@ struct Index {
     }
     if (!this.showVertical) return false;
     this.savePlaybackProgress();
+    this.exitPlaybackToHome();
+    return true;
+  }
+
+  /**
+   * 一键退出播放回首页（fanhui_left 逐级返回，home 直接回首页）
+   */
+  private exitPlaybackToHome(): void {
     this.playbackRequest += 1;
     this.currentUrl = '';
     this.playbackUrls = [];
@@ -1065,7 +1096,10 @@ struct Index {
     this.playbackReady = false;
     this.playerError = '';
     this.showVertical = false;
-    this.closeLandscapePlayback();
+    this.landscapePlayback = false;
+    this.verticalExpanded = false;
+    this.sidebar = 0;
+    this.setPreferredOrientationPortrait();
     // 推荐流滚动位置恢复（等 Grid 重新挂载后执行）
     const restoreOffset: number = this.savedGridOffset;
     if (restoreOffset > 0) {
@@ -1073,7 +1107,14 @@ struct Index {
         this.homeGridScroller.scrollTo({ xOffset: 0, yOffset: restoreOffset });
       }, 150);
     }
-    return true;
+  }
+
+  private setPreferredOrientationPortrait(): void {
+    window.getLastWindow(this.context).then((mainWindow: window.Window): void => {
+      mainWindow.setPreferredOrientation(window.Orientation.PORTRAIT);
+    }).catch((error: BusinessError): void => {
+      console.warn('Pilihos portrait orientation failed: ' + String(error));
+    });
   }
 
   private playbackCookie(): string {
@@ -1145,6 +1186,8 @@ struct Index {
           onRetry: (): void => { this.prepareCurrentVideo(); },
           onQualitySwitch: (qn: number): void => { this.switchPlaybackQuality(qn); },
           onBack: (): void => { this.onBackPress(); },
+          onBackHome: (): void => { this.backToHome(); },
+          onSetPlayMode: (mode: number): void => { this.setPlayMode(mode); },
           onOpenLandscape: (): void => { this.openLandscapePlayback(); },
           onCloseLandscape: (): void => { this.closeLandscapePlayback(); }
         });

@@ -106,6 +106,13 @@ export struct MineSidebar {
     }
   }
 
+  private openMyFav(): void {
+    this.sidebar = 0;
+    router.pushUrl({ url: 'pages/MyFav' }).catch((error: BusinessError): void => {
+      console.error('Pilihos my fav page failed: ' + String(error));
+    });
+  }
+
   private openSoftwareSettings(): void {
     this.sidebar = 0;
     router.pushUrl({ url: 'pages/Settings' }).catch((error: BusinessError): void => {
@@ -177,6 +184,8 @@ export struct MineSidebar {
     .onClick(() => {
       if (iconName === 'software_settings') {
         this.openSoftwareSettings();
+      } else if (iconName === 'favorites') {
+        this.openMyFav();
       }
     });
   }

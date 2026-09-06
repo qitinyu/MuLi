@@ -42,6 +42,7 @@ export struct PlayerScreen {
   @Consume videos: VideoItem[];
   @Consume currentIndex: number;
   @Consume pendingResumeMs: number;
+  @Consume playMode: number;
   @Consume danmakuEnabled: boolean;
   @Consume bottomInset: number;
   private nativeVideoController: VideoController = new VideoController();
@@ -68,10 +69,12 @@ export struct PlayerScreen {
   onDetailAction: (action: string) => void = (action: string): void => {};
   onLikeComment: (comment: VideoComment) => void = (comment: VideoComment): void => {};
   onFollowAuthor: (on: boolean) => void = (on: boolean): void => {};
+  onSetPlayMode: (mode: number) => void = (mode: number): void => {};
   onFollowGroup: () => void = (): void => {};
   onRetry: () => void = (): void => {};
   onQualitySwitch: (qn: number) => void = (qn: number): void => {};
   onBack: () => void = (): void => {};
+  onBackHome: () => void = (): void => {};
   onOpenLandscape: () => void = (): void => {};
   onCloseLandscape: () => void = (): void => {};
 
@@ -101,6 +104,15 @@ export struct PlayerScreen {
 
   private markPlaybackFinished(): void {
     if (this.playbackFinished || !this.showVertical) return;
+    // 播放模式：单集循环 / 随机连播（竖屏化连播）
+    if (this.playMode === 1) {
+      this.replayFinishedVideo();
+      return;
+    }
+    if (this.playMode === 2) {
+      this.playRecommendedVideo();
+      return;
+    }
     this.playbackFinished = true;
     this.playbackPaused = true;
     this.recommendedPlaybackIndex = this.randomRecommendationIndex();
@@ -336,7 +348,7 @@ export struct PlayerScreen {
       this.seekPreviewMs = Math.max(0, Math.min(this.seekBaseMs + dx * 150,
         duration > 0 ? duration : this.seekBaseMs + dx * 150));
       const forward: boolean = this.seekPreviewMs >= this.seekBaseMs;
-      this.showHud(`${forward ? '快进' : '快退'} ${this.formatHudTime(this.seekPreviewMs)} / ${this.formatHudTime(this.seekBaseMs)}`);
+      this.showHud(`${forward ? '快进' : '快退'} ${this.formatHudTime(this.seekPreviewMs)} / ${this.formatHudTime(this.playbackDurationMs)}`);
     } else if (this.gestureMode === 'brightness') {
       const brightness: number = Math.max(0.05, Math.min(1, this.startBrightness - dy / 500));
       window.getLastWindow(getContext(this) as common.UIAbilityContext).then((win: window.Window): void => {
@@ -415,6 +427,14 @@ export struct PlayerScreen {
       .position({ left: 16, top: 16 })
       .visibility(this.playbackControlsVisible ? Visibility.Visible : Visibility.None)
       .onClick(() => { this.onBack(); });
+      Button() {
+        Image($r('app.media.home')).width(22).height(22).fillColor(Color.White);
+      }
+      .type(ButtonType.ROUNDED_RECTANGLE).width(44).height(44)
+      .backgroundColor('#66000000').borderRadius(22)
+      .position({ left: 68, top: 16 })
+      .visibility(this.playbackControlsVisible ? Visibility.Visible : Visibility.None)
+      .onClick(() => { this.onBackHome(); });
       if (this.hudVisible) {
         Text(this.hudText)
           .fontSize(14).fontColor(Color.White)
@@ -430,7 +450,6 @@ export struct PlayerScreen {
       .onActionStart((event: GestureEvent): void => { this.onGestureStart(event); })
       .onActionUpdate((event: GestureEvent): void => { this.onGestureUpdate(event); })
       .onActionEnd((event: GestureEvent): void => { this.onGestureEnd(event); }))
-    .gesture(TapGesture({ count: 2 }).onAction((): void => { this.togglePlayback(); }))
     .onClick((): void => { this.showPlaybackControls(); })
     .bindSheet($$this.episodeListVisible, this.landscapeEpisodeSheet(), {
       height: SheetSize.FIT_CONTENT,
@@ -526,6 +545,14 @@ export struct PlayerScreen {
     .position({ left: 10, top: 10 })
     .visibility(this.playbackControlsVisible ? Visibility.Visible : Visibility.None)
     .onClick(() => { this.onBack(); });
+    Button() {
+      Image($r('app.media.home')).width(20).height(20).fillColor(Color.White);
+    }
+    .type(ButtonType.ROUNDED_RECTANGLE).width(42).height(42)
+    .backgroundColor('#66000000').borderRadius(21)
+    .position({ left: 58, top: 10 })
+    .visibility(this.playbackControlsVisible ? Visibility.Visible : Visibility.None)
+    .onClick(() => { this.onBackHome(); });
     if (this.hudVisible) {
       Text(this.hudText)
         .fontSize(14).fontColor(Color.White)
@@ -541,7 +568,6 @@ export struct PlayerScreen {
       .onActionStart((event: GestureEvent): void => { this.onGestureStart(event); })
       .onActionUpdate((event: GestureEvent): void => { this.onGestureUpdate(event); })
       .onActionEnd((event: GestureEvent): void => { this.onGestureEnd(event); }))
-    .gesture(TapGesture({ count: 2 }).onAction((): void => { this.togglePlayback(); }))
   }
 
   build() {
@@ -565,6 +591,7 @@ export struct PlayerScreen {
         onLikeComment: (comment: VideoComment): void => { this.onLikeComment(comment); },
         onFollowAuthor: (on: boolean): void => { this.onFollowAuthor(on); },
         onFollowGroup: (): void => { this.onFollowGroup(); },
+        onSetPlayMode: (mode: number): void => { this.onSetPlayMode(mode); },
         onShowControls: (): void => { this.showPlaybackControls(); },
         onOpenLandscape: (): void => { this.onOpenLandscape(); }
       });

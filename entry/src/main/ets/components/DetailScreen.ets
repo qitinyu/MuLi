@@ -33,6 +33,7 @@ export struct DetailScreen {
   @Consume subHasMore: boolean;
   @Consume playbackCurrentMs: number;
   @Consume playbackControlsVisible: boolean;
+  @Consume playMode: number;
   @Consume portraitBadge: boolean;
   private panStartWeight: number = 8;
   onOpenRelated: (item: VideoItem, showComments: boolean) => void =
@@ -47,6 +48,7 @@ export struct DetailScreen {
   onLikeComment: (comment: VideoComment) => void = (comment: VideoComment): void => {};
   onFollowAuthor: (on: boolean) => void = (on: boolean): void => {};
   onFollowGroup: () => void = (): void => {};
+  onSetPlayMode: (mode: number) => void = (mode: number): void => {};
   onShowControls: () => void = (): void => {};
   onToggleControls: () => void = (): void => {};
   @State followMenuVisible: boolean = false;
@@ -168,13 +170,12 @@ export struct DetailScreen {
           (): void => { this.onDetailAction('favsheet'); });
         this.verticalActionCount('pl', this.videos[this.currentIndex].commentCount,
           false, (): void => { this.onDetailAction('comments'); });
+        this.verticalActionCount('sphsz', 0,
+          false, (): void => { this.onDetailAction('settings'); });
       }.width('100%');
     }
     .width('100%')
-    .padding({ left: 12, right: 12, top: 12, bottom: 12 })
-    .backgroundColor('#C2141418')
-    .borderRadius(16)
-    .margin({ left: 10, right: 10, bottom: 10 });
+    .padding({ left: 12, right: 12, top: 12, bottom: this.bottomInset + 12 });
   }
 
   @Builder
@@ -524,13 +525,41 @@ export struct DetailScreen {
   }
 
   @Builder
+  playModeRow(label: string, mode: number, enabled: boolean) {
+    Row() {
+      Text(label).fontSize(15).fontColor(enabled ? '#1E252D' : '#A4A9AF').layoutWeight(1);
+      Checkbox({ name: label, group: 'playmode' })
+        .select(this.playMode === mode)
+        .selectedColor('#1677A8')
+        .enabled(enabled)
+        .onChange((value: boolean) => {
+          if (value) {
+            this.onSetPlayMode(mode);
+          }
+        });
+    }.width('100%').height(48)
+      .padding({ left: 16, right: 16 })
+      .backgroundColor(Color.White)
+      .borderRadius(10);
+  }
+
+  @Builder
   settingsPage() {
-    Column({ space: 10 }) {
-      Text('设置').fontSize(18).fontWeight(FontWeight.Bold);
-      Text('播放与界面设置即将迁移至此处').fontSize(13).fontColor('#858C94');
-    }.width('100%').height('100%')
-      .justifyContent(FlexAlign.Center).alignItems(HorizontalAlign.Center)
-      .backgroundColor(Color.White);
+    Scroll() {
+      Column({ space: 12 }) {
+        Text('视频播放').fontSize(16).fontWeight(FontWeight.Bold)
+          .width('100%').padding({ left: 4 });
+        this.playModeRow('单集循环', 1, true);
+        this.playModeRow('随机连播', 2, true);
+        this.playModeRow('合集循环', 3, false);
+        Text('单集循环：播完自动重播本视频；随机连播：竖屏化时播完自动切换下一个推荐视频')
+          .fontSize(11).fontColor('#858C94').lineHeight(16)
+          .width('100%').padding({ left: 4 });
+      }.width('100%')
+        .alignItems(HorizontalAlign.Start)
+        .padding({ left: 12, right: 12, top: 14, bottom: this.bottomInset + 30 });
+    }.layoutWeight(1).width('100%').scrollBar(BarState.Off)
+      .backgroundColor('#F7F8FA');
   }
 
   @Builder
