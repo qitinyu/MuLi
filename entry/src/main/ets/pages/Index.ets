@@ -569,14 +569,15 @@ struct Index {
     if (session === null) return;
     const item: VideoItem = this.videos[this.currentIndex];
     if (item.aid <= 0) return;
+    // 先弹出面板（立即反馈），收藏夹列表异步填充
+    this.favFolders = [];
+    this.favSheetVisible = true;
     try {
-      this.favFolders = await InteractionService.listFavFolders(item.aid, session.cookie);
+      const folders: FavFolder[] = await InteractionService.listFavFolders(item.aid, session.cookie);
+      this.favFolders = folders;
     } catch (error) {
-      // 拉取失败也打开面板，避免长按无响应
-      this.favFolders = [];
       this.showPlaybackToast(`收藏夹获取失败: ${String(error)}`);
     }
-    this.favSheetVisible = true;
   }
 
   private async toggleFavFolder(folder: FavFolder): Promise<void> {

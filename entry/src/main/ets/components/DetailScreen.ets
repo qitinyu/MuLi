@@ -48,6 +48,7 @@ export struct DetailScreen {
   onFollowAuthor: (on: boolean) => void = (on: boolean): void => {};
   onFollowGroup: () => void = (): void => {};
   onShowControls: () => void = (): void => {};
+  onToggleControls: () => void = (): void => {};
   @State followMenuVisible: boolean = false;
   onOpenLandscape: () => void = (): void => {};
 
@@ -88,7 +89,8 @@ export struct DetailScreen {
   }
 
   @Builder
-  verticalActionCount(iconName: string, count: number, active: boolean, action: () => void) {
+  verticalActionCount(iconName: string, count: number, active: boolean, action: () => void,
+    longPress: () => void = (): void => {}) {
     Column({ space: 3 }) {
       if (iconName === 'dianzan') {
         Image($r('app.media.dianzan')).width(24).height(24)
@@ -106,7 +108,8 @@ export struct DetailScreen {
         .fontSize(10).fontColor(active ? '#F04B55' : '#DDE5EA').maxLines(1);
     }.width(52)
       .alignItems(HorizontalAlign.Center)
-      .onClick((): void => { action(); });
+      .onClick((): void => { action(); })
+      .gesture(LongPressGesture({ repeat: false }).onAction((): void => { longPress(); }));
   }
 
   @Builder
@@ -161,7 +164,8 @@ export struct DetailScreen {
           (): void => { this.onDetailAction('coin'); });
         this.verticalActionCount('favorites', this.videos[this.currentIndex].favoriteCount ?? 0,
           this.videos[this.currentIndex].favored ?? false,
-          (): void => { this.onDetailAction('fav'); });
+          (): void => { this.onDetailAction('fav'); },
+          (): void => { this.onDetailAction('favsheet'); });
         this.verticalActionCount('pl', this.videos[this.currentIndex].commentCount,
           false, (): void => { this.onDetailAction('comments'); });
       }.width('100%');
@@ -624,32 +628,20 @@ export struct DetailScreen {
     Stack() {
       Column() {
         if (this.verticalExpanded) {
-          // 竖屏化：视频居中显示（竖屏视频按高度定宽/横屏视频按宽度定高），
-          // 信息面板默认显示；点击视频隐藏面板并展示播放控制条
+          // 竖屏化：视频容器填满区域（Video Contain 自行居中留黑边），
+          // 控制条固定在区域底部；信息面板默认显示，点击视频切换为控制条
           Stack({ alignContent: Alignment.Bottom }) {
             Column() {
-              if (this.currentAspect() < 1) {
-                Stack() {
-                  this.videoArea();
-                }
-                .height('100%')
-                .aspectRatio(this.currentAspect())
-                .backgroundColor(Color.Black)
-              } else {
-                Stack() {
-                  this.videoArea();
-                }
-                .width('100%')
-                .aspectRatio(this.currentAspect())
-                .backgroundColor(Color.Black)
+              Stack() {
+                this.videoArea();
               }
+              .width('100%').height('100%')
+              .backgroundColor(Color.Black)
             }
             .width('100%').height('100%')
-            .justifyContent(FlexAlign.Center)
-            .alignItems(HorizontalAlign.Center)
             .backgroundColor(Color.Black)
             .onClick((): void => {
-              this.onShowControls();
+              this.onToggleControls();
             });
             // 信息面板：控制条显示期间自动让位隐藏
             if (!this.playbackControlsVisible) {
@@ -663,7 +655,7 @@ export struct DetailScreen {
             this.videoArea();
           }
           .width('100%').layoutWeight(this.videoWeight).backgroundColor(Color.Black)
-          .onClick((): void => { this.onShowControls(); });
+          .onClick((): void => { this.onToggleControls(); });
           Column() {
             this.detailTabs();
             this.detailBody();
@@ -683,7 +675,7 @@ export struct DetailScreen {
             this.videoArea();
           }
           .width('100%').aspectRatio(this.currentAspect()).backgroundColor(Color.Black)
-          .onClick((): void => { this.onShowControls(); });
+          .onClick((): void => { this.onToggleControls(); });
           this.detailTabs();
           this.detailBody();
         }
@@ -692,7 +684,7 @@ export struct DetailScreen {
       .padding({ top: this.topInset })
       .backgroundColor(Color.Black);
 
-      if (this.detailSection === 1 && !this.showCommentInput) {
+      if (this.detailSection === 1 && !this.showCommentInput && !this.verticalExpanded) {
         Button() {
           Image($r('app.media.edit')).width(22).height(22).fillColor('#1677A8');
         }
@@ -702,7 +694,7 @@ export struct DetailScreen {
         .position({ right: 14, bottom: this.bottomInset + 96 })
         .onClick(() => { this.showCommentInput = true; });
       }
-      if (this.detailSection === 1 && this.showCommentInput) {
+      if (this.detailSection === 1 && this.showCommentInput && !this.verticalExpanded) {
         Row({ space: 8 }) {
           Button() {
             Image($r('app.media.fanhui_left')).width(18).height(18).fillColor('#59616B');

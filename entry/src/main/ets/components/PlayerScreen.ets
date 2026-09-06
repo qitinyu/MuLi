@@ -218,6 +218,23 @@ export struct PlayerScreen {
     }
   }
 
+  private togglePlaybackControls(): void {
+    if (this.playbackControlsVisible) {
+      // 点动隐藏：清掉两套自动隐藏定时器后直接收起
+      if (this.playbackControlsTimer !== 0) {
+        clearTimeout(this.playbackControlsTimer);
+        this.playbackControlsTimer = 0;
+      }
+      if (this.initialHideTimer !== -1) {
+        clearTimeout(this.initialHideTimer);
+        this.initialHideTimer = -1;
+      }
+      this.playbackControlsVisible = false;
+    } else {
+      this.showPlaybackControls();
+    }
+  }
+
   private showPlaybackControls(): void {
     if (this.initialHideTimer !== -1) {
       // 用户主动唤起后交给常规的 4s 自动隐藏周期
