@@ -1,10 +1,36 @@
 import http from '@ohos.net.http';
+import common from '@ohos.app.ability.common';
+import { preferences } from '@kit.ArkData';
 
 export class BiliHttpClient {
   private static readonly apiBase: string = 'https://api.bilibili.com';
   private static readonly appBase: string = 'https://app.bilibili.com';
   static readonly browserUserAgent: string =
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+
+  /**
+   * 设备标识持久化：buvid3 每次启动变化会加剧风控（-412/-352），
+   * 首次生成后落盘，之后启动复用同一 buvid3。
+   * 若请求先于本方法发生（临时 buvid 已生成），持久化现有值，保持会话内一致。
+   */
+  static async initDeviceIdentity(context: common.UIAbilityContext): Promise<void> {
+    try {
+      const store: preferences.Preferences = await preferences.getPreferences(context, 'pilihos_client');
+      if (BiliHttpClient.cachedBuvid === '') {
+        const saved: string = store.getSync('buvid3', '') as string;
+        if (saved !== '') {
+          BiliHttpClient.cachedBuvid = saved;
+          return;
+        }
+      }
+      BiliHttpClient.randomBuvid();
+      store.putSync('buvid3', BiliHttpClient.cachedBuvid);
+      store.flushSync();
+      console.info(`Pilihos device identity persisted: buvid3=${BiliHttpClient.cachedBuvid}`);
+    } catch (error) {
+      console.warn(`Pilihos device identity init failed: ${String(error)}`);
+    }
+  }
 
   static async getJson(path: string, query: Record<string, string>, cookie: string = ''): Promise<Record<string, Object>> {
     const request: http.HttpRequest = http.createHttp();

@@ -2,7 +2,8 @@ import { VideoItem } from '../models/VideoItem';
 import { VideoDetailService } from '../services/VideoDetailService';
 import { RecommendationService, RecommendationBatch } from '../services/RecommendationService';
 import { ReplyService, VideoComment, CommentBatch } from '../services/ReplyService';
-import { PlaybackService } from '../services/PlaybackService';
+import { PlaybackService, PlaybackResolveResult, QualityOption } from '../services/PlaybackService';
+import { BiliHttpClient } from '../services/BiliHttpClient';
 import { WbiService } from '../services/WbiService';
 import { AuthService, AuthSession } from '../services/AuthService';
 import router from '@ohos.router';
@@ -15,6 +16,7 @@ import { ImmersiveMaterial } from '../utils/ImmersiveMaterial';
 import { AdvancedFeatures } from '../utils/AdvancedFeatures';
 import { FilterWords } from '../utils/FilterWords';
 import { FormatUtils } from '../utils/FormatUtils';
+import { PlaybackMemory } from '../utils/PlaybackMemory';
 import { HomeTab } from '../components/HomeTab';
 import { HomeBottomBar, HomeActionMenu } from '../components/HomeBottomBar';
 import { MineSidebar, MessageSidebar } from '../components/Sidebars';
@@ -73,6 +75,10 @@ struct Index {
   @State playbackUrls: string[] = [];
   @State playbackUrlIndex: number = 0;
   @Provide playerError: string = '';
+  @Provide defaultQuality: number = 0;
+  @Provide playbackQualities: QualityOption[] = [];
+  @Provide currentQn: number = 0;
+  @State qualityMenuVisible: boolean = false;
   @Provide playbackCurrentMs: number = 0;
   @Provide playbackDurationMs: number = 0;
   @Provide playbackPaused: boolean = true;
@@ -137,11 +143,13 @@ struct Index {
 
   aboutToAppear(): void {
     this.setSystemBarAppearance(true);
+    BiliHttpClient.initDeviceIdentity(this.context);
     WbiService.warmup();
     this.authSession = AuthService.currentSession();
     AdvancedFeatures.loadSettings(this.context);
     this.loadPlayerSettings();
     FilterWords.load(this.context);
+    PlaybackMemory.load(this.context);
     this.restoreAuthSession();
     this.loadRecommendations();
     this.updateSystemInsets();
@@ -195,6 +203,7 @@ struct Index {
     try {
       const store: preferences.Preferences = await preferences.getPreferences(this.context, 'pilihos_player');
       this.keepRefreshContent = store.getSync('keep_refresh_content', false) as boolean;
+      this.defaultQuality = store.getSync('default_quality', 0) as number;
       const appearanceStore: preferences.Preferences = await preferences.getPreferences(this.context, 'pilihos_ui');
       this.floatBallSwapped = appearanceStore.getSync('float_ball_swapped', false) as boolean;
       this.topTabsMerged = appearanceStore.getSync('top_tabs_merged', false) as boolean;
@@ -367,6 +376,14 @@ struct Index {
     this.showPlaybackToast('评论发布功能开发中，敬请期待');
   }
 
+  private switchPlaybackQuality(qn: number): void {
+    if (qn === this.currentQn || this.currentUrl === '') return;
+    // 清晰度切换：记录当前进度，新流 prepared 后自动续播
+    this.pendingResumeMs = this.playbackCurrentMs;
+    this.qualityMenuVisible = false;
+    this.prepareCurrentVideo(qn);
+  }
+
   private showPlaybackToast(message: string): void {
     try {
       this.getUIContext().getPromptAction().showToast({
@@ -385,7 +402,7 @@ struct Index {
       clearTimeout(this.playbackControlsTimer);
     }
     this.playbackControlsTimer = setTimeout((): void => {
-      if (!this.speedMenuVisible && !this.episodeListVisible) {
+      if (!this.speedMenuVisible && !this.episodeListVisible && !this.qualityMenuVisible) {
         this.playbackControlsVisible = false;
       }
       this.playbackControlsTimer = 0;
@@ -411,9 +428,17 @@ struct Index {
     }, 700);
   }
 
+  private savePlaybackProgress(): void {
+    const item: VideoItem = this.videos[this.currentIndex];
+    if (item.placeholder || item.aid <= 0) return;
+    if (this.playbackCurrentMs < 5000) return;
+    PlaybackMemory.record(this.context, item.aid, this.playbackCurrentMs);
+  }
+
   private openVideoDetail(item: VideoItem, showComments: boolean = false): void {
     const index: number = this.videos.indexOf(item);
     if (index < 0 || item.placeholder) return;
+    this.savePlaybackProgress();
     this.currentIndex = index;
     this.detailSection = showComments ? 1 : 0;
     this.detailExpanded = false;
@@ -437,12 +462,21 @@ struct Index {
     this.playbackSpeed = 1.0;
     this.speedMenuVisible = false;
     this.episodeListVisible = false;
+    this.qualityMenuVisible = false;
     this.playbackControlsVisible = false;
     this.subtitlesEnabled = false;
     this.danmakuEnabled = true;
     this.verticalExpanded = false;
     this.videoWeight = 8;
+    this.currentQn = 0;
+    this.playbackQualities = [];
     this.showVertical = true;
+    // 播放记忆：恢复上次进度，prepared 后自动 seek（看完的视频从头播放）
+    const savedMs: number = PlaybackMemory.progressOf(item.aid);
+    if (savedMs > 5000 && (item.duration <= 0 || savedMs < item.duration * 1000 - 5000)) {
+      this.pendingResumeMs = savedMs;
+      this.showPlaybackToast(`已恢复上次进度 ${FormatUtils.formatPlaybackTime(savedMs)}`);
+    }
     this.loadVideoDetail();
     this.prepareCurrentVideo();
     if (showComments) this.loadComments(true);
@@ -537,7 +571,7 @@ struct Index {
     }
   }
 
-  private async prepareCurrentVideo(): Promise<void> {
+  private async prepareCurrentVideo(targetQn: number = -1): Promise<void> {
     const requestId: number = this.playbackRequest + 1;
     this.playbackRequest = requestId;
     this.playerError = '';
@@ -566,9 +600,15 @@ struct Index {
       if (item.cid <= 0) throw new Error('视频 cid 缺失，无法获取播放地址');
       if (item.duration > 0) this.playbackDurationMs = item.duration * 1000;
       // 播放地址带有短期签名，详情页每次进入都重新获取；只有接口失败时才使用旧缓存。
+      // targetQn>0 时请求指定清晰度（清晰度切换），否则使用设置中的默认质量。
+      const effectiveQn: number = targetQn > 0 ? targetQn : this.defaultQuality;
       let urls: string[] = [];
       try {
-        urls = await PlaybackService.resolveCandidates(item, this.playbackCookie());
+        const resolved: PlaybackResolveResult =
+          await PlaybackService.resolveWithQuality(item, this.playbackCookie(), effectiveQn);
+        urls = resolved.urls;
+        this.playbackQualities = resolved.qualities;
+        this.currentQn = resolved.grantedQn;
       } catch (resolveError) {
         if (item.playUrl === '') throw new Error(String(resolveError));
         console.warn(`Pilihos live playback URL resolve failed, using cached URL: ${String(resolveError)}`);
@@ -624,9 +664,10 @@ struct Index {
       this.sidebar = 0;
       return true;
     }
-    if (this.episodeListVisible || this.speedMenuVisible) {
+    if (this.episodeListVisible || this.speedMenuVisible || this.qualityMenuVisible) {
       this.episodeListVisible = false;
       this.speedMenuVisible = false;
+      this.qualityMenuVisible = false;
       this.showPlaybackControls();
       return true;
     }
@@ -644,6 +685,7 @@ struct Index {
       return true;
     }
     if (!this.showVertical) return false;
+    this.savePlaybackProgress();
     this.playbackRequest += 1;
     this.currentUrl = '';
     this.playbackUrls = [];
@@ -677,6 +719,7 @@ struct Index {
           },
           onSubmitComment: (): void => { this.submitCommentEntry(); },
           onRetry: (): void => { this.prepareCurrentVideo(); },
+          onQualitySwitch: (qn: number): void => { this.switchPlaybackQuality(qn); },
           onBack: (): void => { this.onBackPress(); },
           onOpenLandscape: (): void => { this.openLandscapePlayback(); }
         });

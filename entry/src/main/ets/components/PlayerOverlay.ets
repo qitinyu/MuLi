@@ -1,4 +1,5 @@
 import { VideoItem } from '../models/VideoItem';
+import { PlaybackService, QualityOption } from '../services/PlaybackService';
 import { FormatUtils } from '../utils/FormatUtils';
 
 @Component
@@ -11,6 +12,9 @@ export struct PlayerOverlay {
   @Consume playbackSpeed: number;
   @Consume speedMenuVisible: boolean;
   @Consume subtitlesEnabled: boolean;
+  @Consume playbackQualities: QualityOption[];
+  @Consume currentQn: number;
+  @Consume qualityMenuVisible: boolean;
   @Consume playbackFinished: boolean;
   @Consume recommendedPlaybackIndex: number;
   @Consume videos: VideoItem[];
@@ -22,6 +26,57 @@ export struct PlayerOverlay {
   onReplay: () => void = (): void => {};
   onPlayRecommended: () => void = (): void => {};
   onShare: () => void = (): void => {};
+  onQualitySwitch: (qn: number) => void = (qn: number): void => {};
+
+  private currentQualityLabel(): string {
+    const matched: QualityOption | undefined = this.playbackQualities.find(
+      (option: QualityOption): boolean => option.qn === this.currentQn);
+    if (matched !== undefined) return matched.label;
+    return PlaybackService.qualityLabel(this.currentQn);
+  }
+
+  @Builder
+  qualityTool() {
+    Column() {
+      Text(this.currentQualityLabel()).fontSize(12).fontWeight(FontWeight.Medium)
+        .fontColor(Color.White).maxLines(1)
+    }.width(42).height(42).justifyContent(FlexAlign.Center)
+      .alignItems(HorizontalAlign.Center)
+      .onClick(() => {
+        this.qualityMenuVisible = !this.qualityMenuVisible;
+        this.speedMenuVisible = false;
+        this.episodeListVisible = false;
+        this.onShowControls();
+      })
+      .bindMenu(this.qualityMenuVisible, this.qualityMenu(), {
+        placement: Placement.Top,
+        enableArrow: true,
+        showInSubWindow: true
+      });
+  }
+
+  @Builder
+  qualityMenu() {
+    Column({ space: 2 }) {
+      Text('清晰度').fontSize(13).fontWeight(FontWeight.Bold).fontColor('#20252B')
+        .width('100%').height(30).textAlign(TextAlign.Center);
+      if (this.playbackQualities.length === 0) {
+        Text('暂无可选清晰度').fontSize(12).fontColor('#858C94')
+          .width('100%').height(28).textAlign(TextAlign.Center);
+      }
+      ForEach(this.playbackQualities, (option: QualityOption) => {
+        Text(option.label).fontSize(12)
+          .fontColor(option.qn === this.currentQn ? '#1677A8' : '#1E252D')
+          .fontWeight(option.qn === this.currentQn ? FontWeight.Bold : FontWeight.Normal)
+          .width('100%').height(28).textAlign(TextAlign.Center)
+          .onClick(() => {
+            this.qualityMenuVisible = false;
+            this.onQualitySwitch(option.qn);
+          });
+      }, (option: QualityOption) => `qn_${option.qn}`);
+    }.width(104).padding({ top: 8, bottom: 8 }).backgroundColor('#F7F8FA')
+      .borderRadius(10).shadow({ radius: 10, color: '#33000000', offsetX: 0, offsetY: 3 });
+  }
 
   @Builder
   playbackTool(iconName: string, action: () => void) {
@@ -100,6 +155,7 @@ export struct PlayerOverlay {
           }.width('100%').height(24).alignItems(VerticalAlign.Center);
           Row() {
             this.playbackInlineButton();
+            this.qualityTool();
             this.playbackTool('list', () => {
               this.episodeListVisible = !this.episodeListVisible;
               this.speedMenuVisible = false;

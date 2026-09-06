@@ -6,6 +6,7 @@ import window from '@ohos.window';
 import { ImmersiveMaterial } from '../utils/ImmersiveMaterial';
 import { AdvancedFeatures } from '../utils/AdvancedFeatures';
 import { FilterWords } from '../utils/FilterWords';
+import { PlaybackService } from '../services/PlaybackService';
 
 @Entry
 @Component
@@ -13,6 +14,7 @@ struct Settings {
   @State showAbout: boolean = false;
   @State childPage: string = '';
   @State keepRefreshContent: boolean = false;
+  @State defaultQuality: number = 0;
   @State floatBallSwapped: boolean = false;
   @State topTabsMerged: boolean = false;
   @State searchHistoryEnabled: boolean = false;
@@ -205,8 +207,28 @@ struct Settings {
     try {
       const store: preferences.Preferences = await preferences.getPreferences(this.context, 'pilihos_player');
       this.keepRefreshContent = store.getSync('keep_refresh_content', false) as boolean;
+      this.defaultQuality = store.getSync('default_quality', 0) as number;
     } catch (error) {
       console.error('Pilihos player settings load failed: ' + String(error));
+    }
+  }
+
+  private qualityLabel(value: number): string {
+    if (value === 0) return '自动选择';
+    return PlaybackService.qualityLabel(value);
+  }
+
+  private async cycleDefaultQuality(): Promise<void> {
+    const options: number[] = [0, 80, 64, 32, 16];
+    const index: number = options.indexOf(this.defaultQuality);
+    const next: number = options[(index + 1) % options.length];
+    this.defaultQuality = next;
+    try {
+      const store: preferences.Preferences = await preferences.getPreferences(this.context, 'pilihos_player');
+      store.putSync('default_quality', next);
+      store.flushSync();
+    } catch (error) {
+      console.error('Pilihos player quality save failed: ' + String(error));
     }
   }
 
@@ -486,7 +508,19 @@ struct Settings {
       this.pageHeader('播放器');
       Scroll() {
         Column({ space: 10 }) {
-          this.settingsCard('播放质量', '自动选择', false);
+          Row({ space: 12 }) {
+            Column({ space: 5 }) {
+              Text('播放质量').fontSize(16).fontColor('#1E252D');
+              Text('点击切换默认清晰度，下次打开视频时生效')
+                .fontSize(12).fontColor('#858C94').maxLines(2);
+            }.layoutWeight(1).alignItems(HorizontalAlign.Start);
+            Text(this.qualityLabel(this.defaultQuality)).fontSize(14).fontColor('#1677A8')
+              .fontWeight(FontWeight.Medium);
+          }.width('100%').height(76).padding({ left: 16, right: 14, top: 10, bottom: 10 })
+            .backgroundColor(ImmersiveMaterial.fallbackBackground()).borderRadius(10)
+            .systemMaterial(ImmersiveMaterial.thin())
+            .shadow({ radius: 4, color: '#16000000', offsetX: 0, offsetY: 1 })
+            .onClick(() => { this.cycleDefaultQuality(); });
           this.filterCard('视频过滤词', this.videoFilterSummary,
             '键入筛选词，相关视频不会出现在你的动态/推荐等版块。示例：xx|xx，可一行多个。', 'video');
           this.filterCard('弹幕过滤词', this.danmakuFilterSummary,
@@ -699,7 +733,7 @@ struct Settings {
           Column({ space: 8 }) {
             Image($r('app.media.app_logo')).width(112).height(112).borderRadius(22);
             Text('Pilihos').fontSize(28).fontWeight(FontWeight.Bold);
-            Text('Version 1.0.5.1').fontSize(15).fontColor('#646A73');
+            Text('Version 1.0.5.2').fontSize(15).fontColor('#646A73');
           }
           .width('100%')
           .alignItems(HorizontalAlign.Center)
@@ -712,11 +746,11 @@ struct Settings {
           Row({ space: 10 }) {
             this.aboutInfoCard('软件协议', '本软件采用 MIT 开源协议');
             this.aboutInfoCard('版本日志',
-              'v1.0.5.1\n' +
-              '1. Index.ets 组件化拆分（2554→741 行） #10510\n' +
-              '2. 新增 8 个界面组件与格式化工具 #10510\n' +
-              '3. 清理 XComponent 时代死代码 #10510\n' +
-              '1.0.4 共 12 项见更新日志\n' +
+              'v1.0.5.2\n' +
+              '1. 清晰度切换菜单+默认质量设置 #1051\n' +
+              '2. 播放记忆：退出记录，进入续播 #1052\n' +
+              '3. buvid3 持久化降低风控风险 #1059\n' +
+              '1.0.5.1 Index.ets 组件化拆分 #10510\n' +
               '完整更新日志(Pilihos Wiki]https://github.com/qitinyu/Pilihos/wiki/)');
           }.width('100%').justifyContent(FlexAlign.SpaceBetween);
 

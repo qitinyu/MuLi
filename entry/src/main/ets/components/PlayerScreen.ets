@@ -1,5 +1,7 @@
 import { VideoItem } from '../models/VideoItem';
 import { VideoComment } from '../services/ReplyService';
+import { QualityOption } from '../services/PlaybackService';
+import { PlaybackMemory } from '../utils/PlaybackMemory';
 import common from '@ohos.app.ability.common';
 import { Want } from '@kit.AbilityKit';
 import { BusinessError } from '@kit.BasicServicesKit';
@@ -31,6 +33,9 @@ export struct PlayerScreen {
   @Consume playbackFinished: boolean;
   @Consume recommendedPlaybackIndex: number;
   @Consume subtitlesEnabled: boolean;
+  @Consume playbackQualities: QualityOption[];
+  @Consume currentQn: number;
+  @Consume qualityMenuVisible: boolean;
   @Consume videos: VideoItem[];
   @Consume currentIndex: number;
   @Consume pendingResumeMs: number;
@@ -45,6 +50,7 @@ export struct PlayerScreen {
     (rootId: number, refresh: boolean): void => {};
   onSubmitComment: () => void = (): void => {};
   onRetry: () => void = (): void => {};
+  onQualitySwitch: (qn: number) => void = (qn: number): void => {};
   onBack: () => void = (): void => {};
   onOpenLandscape: () => void = (): void => {};
 
@@ -88,9 +94,17 @@ export struct PlayerScreen {
 
   private playRecommendedVideo(): void {
     if (this.recommendedPlaybackIndex < 0) return;
+    this.savePlaybackProgress();
     this.currentIndex = this.recommendedPlaybackIndex;
     this.playbackFinished = false;
     this.onOpenVideo(this.videos[this.currentIndex], false);
+  }
+
+  private savePlaybackProgress(): void {
+    const item: VideoItem = this.videos[this.currentIndex];
+    if (item.placeholder || item.aid <= 0) return;
+    if (this.playbackCurrentMs < 5000) return;
+    PlaybackMemory.record(getContext(this) as common.UIAbilityContext, item.aid, this.playbackCurrentMs);
   }
 
   private shareCurrentVideo(): void {
@@ -159,7 +173,7 @@ export struct PlayerScreen {
       clearTimeout(this.playbackControlsTimer);
     }
     this.playbackControlsTimer = setTimeout((): void => {
-      if (!this.speedMenuVisible && !this.episodeListVisible) {
+      if (!this.speedMenuVisible && !this.episodeListVisible && !this.qualityMenuVisible) {
         this.playbackControlsVisible = false;
       }
       this.playbackControlsTimer = 0;
@@ -211,7 +225,8 @@ export struct PlayerScreen {
         onOpenLandscape: (): void => { this.onOpenLandscape(); },
         onReplay: (): void => { this.replayFinishedVideo(); },
         onPlayRecommended: (): void => { this.playRecommendedVideo(); },
-        onShare: (): void => { this.shareCurrentVideo(); }
+        onShare: (): void => { this.shareCurrentVideo(); },
+        onQualitySwitch: (qn: number): void => { this.onQualitySwitch(qn); }
       });
       Button() {
         Image($r('app.media.fanhui_left')).width(24).height(24);
@@ -291,7 +306,8 @@ export struct PlayerScreen {
       onOpenLandscape: (): void => { this.onOpenLandscape(); },
       onReplay: (): void => { this.replayFinishedVideo(); },
       onPlayRecommended: (): void => { this.playRecommendedVideo(); },
-      onShare: (): void => { this.shareCurrentVideo(); }
+      onShare: (): void => { this.shareCurrentVideo(); },
+        onQualitySwitch: (qn: number): void => { this.onQualitySwitch(qn); }
     });
     Button() {
       Image($r('app.media.left_syb')).width(24).height(24);

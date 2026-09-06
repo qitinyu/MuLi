@@ -25,25 +25,31 @@
 - [✅] 底部栏常驻开关（滚动隐藏/回弹弹出）、计数规则优化、时间显示修复、版块内容缓存 #10412
 
 
-### Pilihos V1.0.5（当前版本号 1.0.5.1）
+### Pilihos V1.0.5（当前版本号 1.0.5.2）
 
 > 主线：播放体验补全 + 互动能力落地；并行：架构还债与稳定性
 
+- [✅] 播放器：清晰度切换（列出 accept_quality，切换续播），播放质量默认值设置生效 #1051
+  - PlaybackService.resolveWithQuality：指定 qn 走 WBI playurl 请求对应 DURL，回传 accept_quality/accept_description 供菜单展示，失败回退原兼容流程
+  - 播放控制条新增"清晰度"菜单（当前清晰度高亮），切换时记录进度，新流 prepared 后自动续播（复用 pendingResumeMs）
+  - 设置-播放器"播放质量"改为真实选项：自动/1080P/720P/480P/360P 循环切换，存 pilihos_player/default_quality
+- [✅] 播放器：播放记忆——退出视频记录 aid+进度，再次进入自动续播并提示 #1052
+  - utils/PlaybackMemory：aid→进度表（上限 300 条，JSON 落盘 pilihos_player/playback_progress）
+  - 返回退出、切换相关/推荐视频时保存（>5s 才记）；再次进入恢复进度并 toast 提示，已看完的视频从头播放
 - [✅] 架构：Index.ets 拆分（播放器/详情页/侧边栏/信息流独立组件，目标 <800 行） #10510
   - Index.ets 2554 → 741 行；业务逻辑与全局状态（@Provide）仍集中于 Index，界面区块拆至 components/
   - 新增组件：HomeTab（首页头部+信息流+版块切换）、HomeBottomBar/HomeActionMenu（底部栏+悬浮球+操作菜单）、Sidebars（我的/消息侧边栏）、LoginViews（登录/官方网页登录）、PlayerScreen（横竖屏播放画面+Video 事件）、PlayerOverlay（播放控制条+播完推荐）、DetailScreen（简介/评论区详情页）
   - 新增工具：FormatUtils（计数/时间/等级色等纯函数）、CommonBuilders（全局 loadingIndicator）
   - 清理不可达的 XComponent 时代播放器服务代码（playerService 回调链、surface 占位状态），实际播放走 Video 组件事件
   - 行为统一：首页卡片点击改走 openVideoDetail，不再遗留上一视频的评论区页签状态
-- [ ] 播放器：清晰度切换（列出 accept_quality，切换续播），播放质量默认值设置生效 #1051
-- [ ] 播放器：播放记忆——退出视频记录 aid+进度，再次进入自动续播并提示 #1052
+- [✅] 稳定性（部分）：buvid3 持久化——首次生成后落盘 pilihos_client/buvid3，后续启动复用，降低 -412/-352 风控概率 #1059
+  - 搜索回车真机问题闭环仍待用户回报 toast 错误码后定位
 - [ ] 播放器：手势体系——左右半屏上下滑调亮度/音量、水平滑快进快退、双击暂停 #1053
 - [ ] 弹幕：拉取弹幕流并按时间轴渲染，弹幕过滤词正式接入，支持发送弹幕（csrf） #1054
 - [ ] 互动：详情页点赞/投币/收藏/再看接真实接口并回显状态（cookie+csrf） #1055
 - [ ] 互动：评论发布入口接 /x/v2/reply/add，评论点赞 #1056
 - [ ] UP主空间页：搜索结果点 UP 主进入主页（投稿列表/粉丝信息/关注按钮） #1057
 - [ ] 直播：清晰度/线路切换（accept_qn），关注主播按钮 #1058
-- [ ] 稳定性：搜索回车真机问题闭环（按 toast 错误码定位）；buvid 持久化降低风控 #1059
 - [ ] 搜索：分类页签接入真实排序参数（默认排序/播放多/新发布等） #10511
 - [ ] 评估项：深色模式适配、直播间弹幕（WebSocket）、番剧追番 #10512
 
