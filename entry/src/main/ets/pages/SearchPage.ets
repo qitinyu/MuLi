@@ -86,10 +86,17 @@ struct SearchPage {
   }
 
   private async submitVideoSearch(keyword: string): Promise<void> {
-    const value: string = keyword.trim();
-    if (value === '' || this.searchLoading) return;
+    let value: string = keyword.trim();
+    if (value === '') value = this.searchText.trim();
+    if (value === '') {
+      // 输入框内容未能同步时给出可见反馈，便于定位真机输入问题
+      this.showToast('请输入搜索关键词');
+      return;
+    }
+    if (this.searchLoading) return;
     this.searchText = value;
     this.searchLoading = true;
+    console.info(`Pilihos search submit: type=${this.searchType}, keyword=${value}`);
     this.searchError = '';
     this.searchResults = [];
     this.searchUsers = [];
@@ -364,17 +371,10 @@ struct SearchPage {
           .defaultFocus(true)
           .onChange((value: string) => { this.searchText = value; })
           .onSubmit((value: string): void => {
-            this.submitVideoSearch(value);
+            // 部分真机 onSubmit 回调的 value 可能为空，回退到状态中记录的输入
+            const keyword: string = value.trim() !== '' ? value : this.searchText;
+            this.submitVideoSearch(keyword);
           });
-        Button() {
-          Image($r('app.media.ic_public_search_filled')).width(22).height(22).fillColor('#1677A8');
-        }
-        .type(ButtonType.ROUNDED_RECTANGLE).width(48).height(48)
-        .backgroundColor(ImmersiveMaterial.fallbackBackground())
-        .borderRadius(24)
-        .systemMaterial(ImmersiveMaterial.thin())
-        .shadow({ radius: 8, color: '#25000000', offsetX: 0, offsetY: 2 })
-        .onClick(() => { this.submitVideoSearch(this.searchText); });
       }
       .width('100%').padding({ left: 10, right: 10, top: this.topInset + 8, bottom: 8 });
       this.typeTabs();

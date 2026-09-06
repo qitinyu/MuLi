@@ -31,9 +31,8 @@ export class ImmersiveMaterial {
   /**
    * 获取 thin 材质
    * 强度设置：
-   * - 弱（0）：同API24的不透明材质
-   * - 中（1）：模糊亚克力
-   * - 强（2）：沉浸光感
+   * - 弱（0）：不透明材质
+   * - 中（1）/强（2）：模糊亚克力（真机上 THIN/ULTRA_THIN 过薄会导致内容不可见，统一降为 REGULAR）
    */
   static thin(): uiMaterial.Material {
     // 强度0：不透明材质
@@ -41,20 +40,9 @@ export class ImmersiveMaterial {
       return uiMaterial.Material.empty;
     }
 
-    // 强度1：模糊亚克力
-    if (ImmersiveMaterial.strength === 1) {
-      return new uiMaterial.ImmersiveMaterial({
-        style: uiMaterial.ImmersiveStyle.REGULAR,
-        colorInvert: true,
-        applyShadow: true,
-        interactive: true,
-        lightEffect: { color: Color.White }
-      });
-    }
-
-    // 强度2：沉浸光感（更薄）
+    // 强度1/2：模糊亚克力
     return new uiMaterial.ImmersiveMaterial({
-      style: uiMaterial.ImmersiveStyle.THIN,
+      style: uiMaterial.ImmersiveStyle.REGULAR,
       colorInvert: true,
       applyShadow: true,
       interactive: true,
@@ -64,10 +52,7 @@ export class ImmersiveMaterial {
 
   /**
    * 获取 ultraThin 材质
-   * 强度设置：
-   * - 弱（0）：同API24的不透明材质
-   * - 中（1）：模糊亚克力
-   * - 强（2）：沉浸光感
+   * 强度设置同 thin：真机上 ULTRA_THIN 材质过薄，统一降为 REGULAR
    */
   static ultraThin(): uiMaterial.Material {
     // 强度0：不透明材质
@@ -75,20 +60,9 @@ export class ImmersiveMaterial {
       return uiMaterial.Material.empty;
     }
 
-    // 强度1：模糊亚克力
-    if (ImmersiveMaterial.strength === 1) {
-      return new uiMaterial.ImmersiveMaterial({
-        style: uiMaterial.ImmersiveStyle.REGULAR,
-        colorInvert: true,
-        applyShadow: true,
-        interactive: true,
-        lightEffect: { color: Color.White }
-      });
-    }
-
-    // 强度2：沉浸光感（超薄）
+    // 强度1/2：模糊亚克力
     return new uiMaterial.ImmersiveMaterial({
-      style: uiMaterial.ImmersiveStyle.ULTRA_THIN,
+      style: uiMaterial.ImmersiveStyle.REGULAR,
       colorInvert: true,
       applyShadow: true,
       interactive: true,
@@ -103,8 +77,11 @@ export class ImmersiveMaterial {
    */
   static fallbackBackground(opacity: number = 1.0): ResourceColor {
     if (ImmersiveMaterial.isAvailable() && ImmersiveMaterial.strength > 0) {
-      // API26 使用透明背景，由系统材质负责呈现视觉效果。
-      return Color.Transparent;
+      // API26：系统材质负责模糊，但真机上材质可能渲染过薄，
+      // 保留一层白色底衬保证内容始终可见。
+      const adjusted: number = Math.max(0.5, opacity * 0.72);
+      const alpha: string = Math.round(adjusted * 255).toString(16).padStart(2, '0');
+      return `#${alpha}FFFFFF`;
     }
 
     // API 24/25 或开关关闭或强度为0，使用不透明纯色，避免透明材质穿透。

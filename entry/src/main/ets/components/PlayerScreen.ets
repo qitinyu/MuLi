@@ -46,6 +46,7 @@ export struct PlayerScreen {
   @Consume bottomInset: number;
   private nativeVideoController: VideoController = new VideoController();
   private playbackControlsTimer: number = 0;
+  private initialHideTimer: number = -1;
   @State hudText: string = '';
   @State hudVisible: boolean = false;
   private hudTimer: number = -1;
@@ -145,6 +146,20 @@ export struct PlayerScreen {
       this.pendingResumeMs = 0;
       this.seekPlayback(resumeMs);
     }
+    // 进入视频后控制条短暂展示即自动隐藏，不依赖用户手动点击
+    this.armInitialHide();
+  }
+
+  private armInitialHide(): void {
+    if (this.initialHideTimer !== -1) {
+      clearTimeout(this.initialHideTimer);
+    }
+    this.initialHideTimer = setTimeout((): void => {
+      if (!this.speedMenuVisible && !this.episodeListVisible && !this.qualityMenuVisible) {
+        this.playbackControlsVisible = false;
+      }
+      this.initialHideTimer = -1;
+    }, 2000);
   }
 
   private onNativeVideoUpdate(info: PlaybackInfo): void {
@@ -183,6 +198,11 @@ export struct PlayerScreen {
   }
 
   private showPlaybackControls(): void {
+    if (this.initialHideTimer !== -1) {
+      // 用户主动唤起后交给常规的 4s 自动隐藏周期
+      clearTimeout(this.initialHideTimer);
+      this.initialHideTimer = -1;
+    }
     this.playbackControlsVisible = true;
     if (this.playbackControlsTimer !== 0) {
       clearTimeout(this.playbackControlsTimer);
@@ -203,6 +223,10 @@ export struct PlayerScreen {
   }
 
   aboutToDisappear(): void {
+    if (this.initialHideTimer !== -1) {
+      clearTimeout(this.initialHideTimer);
+      this.initialHideTimer = -1;
+    }
     // 离开播放器时还原手势调节前的系统亮度
     if (this.originalBrightness >= 0) {
       const brightness: number = this.originalBrightness;

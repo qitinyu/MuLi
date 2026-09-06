@@ -733,7 +733,7 @@ struct Settings {
           Column({ space: 8 }) {
             Image($r('app.media.app_logo')).width(112).height(112).borderRadius(22);
             Text('Pilihos').fontSize(28).fontWeight(FontWeight.Bold);
-            Text('Version 1.0.5.4').fontSize(15).fontColor('#646A73');
+            Text('Version 1.0.5.5').fontSize(15).fontColor('#646A73');
           }
           .width('100%')
           .alignItems(HorizontalAlign.Center)
@@ -746,11 +746,11 @@ struct Settings {
           Row({ space: 10 }) {
             this.aboutInfoCard('软件协议', '本软件采用 MIT 开源协议');
             this.aboutInfoCard('版本日志',
-              'v1.0.5.4\n' +
-              '1. 播放手势：亮度/音量/快进快退 #1053\n' +
-              '2. 双击暂停/播放（横竖屏通用） #1053\n' +
-              'v1.0.5.3 弹幕拉流渲染/过滤/发送 #1054\n' +
-              'v1.0.5.2 清晰度切换/播放记忆 #1051-1052\n' +
+              'v1.0.5.5\n' +
+              '1. 真机修复：材质过薄导致卡片不可见 #1\n' +
+              '2. 搜索：去右侧按钮，回车链路加固 #2\n' +
+              '3. 进入视频控制条 2 秒自动隐藏 #3\n' +
+              'v1.0.5.1-054 拆分/清晰度/记忆/弹幕/手势\n' +
               '完整更新日志(Pilihos Wiki]https://github.com/qitinyu/Pilihos/wiki/)');
           }.width('100%').justifyContent(FlexAlign.SpaceBetween);
 
