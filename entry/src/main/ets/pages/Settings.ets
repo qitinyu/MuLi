@@ -733,7 +733,7 @@ struct Settings {
           Column({ space: 8 }) {
             Image($r('app.media.app_logo')).width(112).height(112).borderRadius(22);
             Text('Pilihos').fontSize(28).fontWeight(FontWeight.Bold);
-            Text('Version 1.0.6.2').fontSize(15).fontColor('#646A73');
+            Text('Version 1.0.6.4').fontSize(15).fontColor('#646A73');
           }
           .width('100%')
           .alignItems(HorizontalAlign.Center)
@@ -746,11 +746,11 @@ struct Settings {
           Row({ space: 10 }) {
             this.aboutInfoCard('软件协议', '本软件采用 MIT 开源协议');
             this.aboutInfoCard('版本日志',
-              'v1.0.6.3\n' +
-              '1. 修复相关视频入口闪退\n' +
-              '2. 竖屏化视频居中+控制条贴底\n' +
-              '3. 系统分享/横屏qp并入控制条\n' +
-              'v1.0.6.2 已关注标志/侧边栏改版\n' +
+              'v1.0.6.4\n' +
+              '1. 竖屏化底栏照官方样式重做\n' +
+              '2. 修复点赞即时高亮/粉丝投稿数\n' +
+              '3. 直播标记校准/深色底栏材质\n' +
+              'v1.0.6.3 闪退修复/系统分享\n' +
               '完整更新日志(Pilihos Wiki]https://github.com/qitinyu/Pilihos/wiki/)');
           }.width('100%').justifyContent(FlexAlign.SpaceBetween);
 
