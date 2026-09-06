@@ -3,6 +3,7 @@ import { BusinessError } from '@kit.BasicServicesKit';
 import { picker } from '@kit.CoreFileKit';
 import { preferences } from '@kit.ArkData';
 import { AuthService, AuthSession } from '../services/AuthService';
+import { BiliHttpClient } from '../services/BiliHttpClient';
 import { ImmersiveMaterial } from '../utils/ImmersiveMaterial';
 import { FormatUtils } from '../utils/FormatUtils';
 
@@ -23,10 +24,29 @@ export struct MineSidebar {
   @Link showMineCoverSheet: boolean;
   @State mineCoverUri: string = '';
   @State levelSheetVisible: boolean = false;
+  @State coinCount: number = 0;
   private uiPreferences: preferences.Preferences | null = null;
 
   aboutToAppear(): void {
     this.loadMineCover();
+    this.loadCoin();
+  }
+
+  private async loadCoin(): Promise<void> {
+    const session: AuthSession | null = AuthService.currentSession();
+    if (session === null || session.cookie === '') return;
+    try {
+      const query: Record<string, string> = {};
+      query['jsonp'] = 'jsonp';
+      const result: Record<string, Object> =
+        await BiliHttpClient.getJson('/x/web-interface/coin/log', query, session.cookie);
+      if (Number(result['code'] ?? -1) === 0) {
+        const data: Record<string, Object> = (result['data'] ?? {}) as Record<string, Object>;
+        this.coinCount = Number(data['money'] ?? 0);
+      }
+    } catch (error) {
+      console.warn(`Pilihos coin load failed: ${String(error)}`);
+    }
   }
 
   private showToast(message: string): void {
@@ -219,9 +239,18 @@ export struct MineSidebar {
 
       Row({ space: 14 }) {
         if (this.authSession !== null && this.authSession.face !== '') {
-          Image(this.authSession.face).width(88).height(88).borderRadius(44).objectFit(ImageFit.Cover);
+          Image(this.authSession.face).width(88).height(88).borderRadius(44).objectFit(ImageFit.Cover)
+            .onClick(() => { this.onAvatarTap(); })
+            .gesture(LongPressGesture({ repeat: false }).onAction((): void => {
+              // 换头像（试行）：复用封面更换弹层
+              this.showMineCoverSheet = true;
+            }));
         } else {
-          Image($r('app.media.user_me')).width(88).height(88).borderRadius(44).objectFit(ImageFit.Contain);
+          Image($r('app.media.user_me')).width(88).height(88).borderRadius(44).objectFit(ImageFit.Contain)
+            .onClick(() => { this.onAvatarTap(); })
+            .gesture(LongPressGesture({ repeat: false }).onAction((): void => {
+              this.showMineCoverSheet = true;
+            }));
         }
         Column({ space: 5 }) {
           Row({ space: 6 }) {
@@ -235,6 +264,9 @@ export struct MineSidebar {
               .padding({ left: 5, right: 5, top: 2, bottom: 2 })
               .onClick((): void => { this.levelSheetVisible = true; });
           }.width('100%');
+          Text(this.authSession === null ? 'B币 -- · 硬币 --' :
+            `B币 -- · 硬币 ${this.coinCount > 0 ? String(this.coinCount) : '--'}`)
+            .fontSize(12).fontColor('#858C94');
           Text(this.authSession === null ? '登录后同步个人签名' :
             (this.authSession.sign === '' ? '这个人很懒，什么都没有留下' : this.authSession.sign))
             .fontSize(13).fontColor('#858C94').maxLines(1)
@@ -248,12 +280,7 @@ export struct MineSidebar {
           .margin({ top: 22 });
       }.width('100%').height(92)
         .margin({ top: -36 })
-        .alignItems(VerticalAlign.Top)
-        .onClick(() => { this.onAvatarTap(); })
-        .gesture(LongPressGesture({ repeat: false }).onAction((): void => {
-          // 换头像（试行）：复用封面更换弹层
-          this.showMineCoverSheet = true;
-        }));
+        .alignItems(VerticalAlign.Top);
 
       Row({ space: 8 }) {
         this.mineStat(this.authSession === null ? '0' : FormatUtils.formatCount(this.authSession.dynamicCount), '动态');

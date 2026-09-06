@@ -15,6 +15,7 @@ import window from '@ohos.window';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { preferences } from '@kit.ArkData';
 import { ImmersiveMaterial } from '../utils/ImmersiveMaterial';
+import { systemShare } from '@kit.ShareKit';
 import { AdvancedFeatures } from '../utils/AdvancedFeatures';
 import { FilterWords } from '../utils/FilterWords';
 import { FormatUtils } from '../utils/FormatUtils';
@@ -344,6 +345,23 @@ struct Index {
         } catch (cardError) {
           console.warn(`Pilihos author card failed: ${String(cardError)}`);
         }
+        // 投稿数：card 接口不带，取投稿列表第一页的 total
+        if ((updated.authorVideos ?? 0) <= 0) {
+          try {
+            const arcSigned: string = await WbiService.sign([
+              `mid=${authorMid}`, 'pn=1', 'ps=1', 'order=pubdate'
+            ]);
+            const arcResult: Record<string, Object> =
+              await BiliHttpClient.getJsonQuery('/x/space/wbi/arc/search', arcSigned, session.cookie);
+            if (Number(arcResult['code'] ?? -1) === 0) {
+              const arcData: Record<string, Object> = (arcResult['data'] ?? {}) as Record<string, Object>;
+              const arcPage: Record<string, Object> = (arcData['page'] ?? {}) as Record<string, Object>;
+              updated.authorVideos = Number(arcPage['count'] ?? 0);
+            }
+          } catch (arcError) {
+            console.warn(`Pilihos author arc count failed: ${String(arcError)}`);
+          }
+        }
       } else if (authorMid > 0 || updated.author !== '') {
         updated.authorFollowed = FollowState.isFollowed(authorMid, updated.author);
       }
@@ -437,11 +455,21 @@ struct Index {
     const item: VideoItem = this.videos[this.currentIndex];
     const uri: string = item.bvid !== '' ? `https://www.bilibili.com/video/${item.bvid}/` :
       `https://www.bilibili.com/video/av${item.aid}/`;
-    const want: Want = { action: 'ohos.want.action.viewData', uri: uri };
-    this.context.startAbility(want).catch((error: BusinessError): void => {
-      console.error(`Pilihos share failed: ${error.code} ${error.message}`);
-      this.showPlaybackToast('分享失败 [错误码: ' + String(error.code) + ']');
-    });
+    // 调起系统分享面板
+    try {
+      const sharedData: systemShare.SharedData = new systemShare.SharedData({
+        utd: 'general.url',
+        content: uri
+      });
+      const controller: systemShare.ShareController = new systemShare.ShareController(sharedData);
+      controller.show(this.context, { selectionMode: systemShare.SelectionMode.SINGLE }).catch((error: BusinessError): void => {
+        console.error(`Pilihos share failed: ${error.code} ${error.message}`);
+        this.showPlaybackToast('分享失败 [错误码: ' + String(error.code) + ']');
+      });
+    } catch (shareError) {
+      console.error(`Pilihos share build failed: ${String(shareError)}`);
+      this.showPlaybackToast('分享失败: ' + String(shareError));
+    }
   }
 
   private handleDetailAction(action: string): void {
@@ -505,10 +533,12 @@ struct Index {
     if (item.aid <= 0) return;
     try {
       this.favFolders = await InteractionService.listFavFolders(item.aid, session.cookie);
-      this.favSheetVisible = true;
     } catch (error) {
+      // 拉取失败也打开面板，避免长按无响应
+      this.favFolders = [];
       this.showPlaybackToast(`收藏夹获取失败: ${String(error)}`);
     }
+    this.favSheetVisible = true;
   }
 
   private async toggleFavFolder(folder: FavFolder): Promise<void> {
@@ -717,10 +747,18 @@ struct Index {
     const index: number = this.videos.indexOf(item);
     if (index < 0 || item.placeholder) return;
     this.savePlaybackProgress();
-    // 记忆推荐流位置，返回时恢复
-    if (this.activeTab === 1 && this.contentTab === 1) {
-      const offset: OffsetResult = this.homeGridScroller.currentOffset();
-      this.savedGridOffset = offset.yOffset;
+    // 记忆推荐流位置，返回时恢复（仅在首页 Grid 可见时读取，否则会崩）
+    if (!this.showVertical && this.activeTab === 1 && this.contentTab === 1) {
+      try {
+        const offset: OffsetResult | undefined = this.homeGridScroller.currentOffset();
+        if (offset !== undefined) {
+          this.savedGridOffset = offset.yOffset;
+        } else {
+          this.savedGridOffset = 0;
+        }
+      } catch (offsetError) {
+        this.savedGridOffset = 0;
+      }
     }
     this.currentIndex = index;
     this.detailSection = showComments ? 1 : 0;
@@ -1122,7 +1160,10 @@ struct Index {
         .width('100%').height('100%')
         .backgroundColor(ImmersiveMaterial.fallbackBackground())
         .backgroundBlurStyle(ImmersiveMaterial.blurStyle(), { colorMode: ThemeColorMode.LIGHT })
-        .transition(TransitionEffect.OPACITY.combine(TransitionEffect.translate({ x: 90 })));
+        .transition(TransitionEffect.asymmetric(
+          TransitionEffect.translate({ x: -260 }).combine(TransitionEffect.OPACITY),
+          TransitionEffect.translate({ x: -260 }).combine(TransitionEffect.OPACITY)
+        ).animation({ duration: 320, curve: Curve.EaseOut }));
       }
     }.width('100%').height('100%')
       .backgroundColor('#F7F8FA')

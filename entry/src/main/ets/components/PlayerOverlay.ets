@@ -171,13 +171,11 @@ export struct PlayerOverlay {
               this.subtitlesEnabled = !this.subtitlesEnabled;
               this.onShowControls();
             });
-            if (!this.landscapePlayback) {
-              // 横屏内 qp 与右上/底部按钮重复，仅在竖屏显示
-              this.playbackTool('qp', () => {
-                this.onOpenLandscape();
-                this.onShowControls();
-              });
-            }
+            this.playbackTool('qp', () => {
+              // 竖屏时进入横屏；横屏时作为返回竖屏入口
+              this.onOpenLandscape();
+              this.onShowControls();
+            });
           }.width('100%').justifyContent(FlexAlign.SpaceBetween).padding({ left: 4, right: 14 });
         }.width('100%').padding({ left: 10, right: 10, top: 8, bottom: 2 });
       }.width('100%').height(78).alignContent(Alignment.Bottom)

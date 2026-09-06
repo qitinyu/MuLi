@@ -746,11 +746,11 @@ struct Settings {
           Row({ space: 10 }) {
             this.aboutInfoCard('软件协议', '本软件采用 MIT 开源协议');
             this.aboutInfoCard('版本日志',
-              'v1.0.6.2\n' +
-              '1. 卡片"已关注"标志+侧边栏交互改版\n' +
-              '2. LV等级详情弹窗+换头像(试行)\n' +
-              'v1.0.6.1 搜索两层改版/UP卡片/关注气泡\n' +
-              'v1.0.6.0 播放页重点改版+材质加厚\n' +
+              'v1.0.6.3\n' +
+              '1. 修复相关视频入口闪退\n' +
+              '2. 竖屏化视频居中+控制条贴底\n' +
+              '3. 系统分享/横屏qp并入控制条\n' +
+              'v1.0.6.2 已关注标志/侧边栏改版\n' +
               '完整更新日志(Pilihos Wiki]https://github.com/qitinyu/Pilihos/wiki/)');
           }.width('100%').justifyContent(FlexAlign.SpaceBetween);
 

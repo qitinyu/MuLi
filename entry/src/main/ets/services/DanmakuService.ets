@@ -85,7 +85,7 @@ export class DanmakuService {
           method: http.RequestMethod.POST,
           header: {
             'User-Agent': BiliHttpClient.browserUserAgent,
-            'Referer': 'https://www.bilibili.com/',
+            'Referer': `https://www.bilibili.com/video/av${cid}/`,
             'Origin': 'https://www.bilibili.com',
             'Content-Type': 'application/x-www-form-urlencoded',
             'Cookie': cookie
@@ -94,10 +94,21 @@ export class DanmakuService {
           connectTimeout: 10000,
           readTimeout: 15000
         });
-      const result: Record<string, Object> = JSON.parse(response.result as string) as Record<string, Object>;
-      const code: number = Number(result['code'] ?? -1);
+      const raw: string = String(response.result ?? '');
+      let code: number = -1;
+      let message: string = '';
+      try {
+        const result: Record<string, Object> = JSON.parse(raw) as Record<string, Object>;
+        code = Number(result['code'] ?? -1);
+        message = String(result['message'] ?? '');
+      } catch (parseError) {
+        // 非 JSON 响应（风控页/空响应），截取片段辅助定位
+        if (raw.indexOf('"code":0') >= 0) return;
+        const snippet: string = raw.substring(0, 60).replace(/\s+/g, ' ');
+        throw new Error(snippet === '' ? '服务无有效响应' : snippet);
+      }
       if (code !== 0) {
-        throw new Error(`${code}: ${String(result['message'] ?? '发送失败')}`);
+        throw new Error(`${code}: ${message || '发送失败'}`);
       }
     } finally {
       request.destroy();

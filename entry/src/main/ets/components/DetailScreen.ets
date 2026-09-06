@@ -124,8 +124,9 @@ export struct DetailScreen {
       Row({ space: 8 }) {
         Stack({ alignContent: Alignment.End }) {
           TextInput({ placeholder: '发一条弹幕', text: this.danmakuText })
-            .layoutWeight(1).height(34).fontSize(12).fontColor('#858C94')
-            .backgroundColor('#26FFFFFF').borderRadius(17)
+            .layoutWeight(1).height(34).fontSize(12)
+            .fontColor('#E8EEF3').placeholderColor('#8FA3B0')
+            .backgroundColor('#3DFFFFFF').borderRadius(17)
             .padding({ left: 12, right: 36 })
             .enabled(this.danmakuEnabled)
             .onChange((value: string) => { this.danmakuText = value; })
@@ -375,8 +376,8 @@ export struct DetailScreen {
             Column({ space: 4 }) {
               Text(`@${this.videos[this.currentIndex].author}`).fontSize(17);
               Text(`${this.videos[this.currentIndex].authorFans !== undefined
-                ? FormatUtils.formatCount(this.videos[this.currentIndex].authorFans) + ' 粉丝' : '粉丝数'} · ${this.videos[this.currentIndex].authorVideos !== undefined
-                ? this.videos[this.currentIndex].authorVideos + ' 投稿' : '视频数'}`)
+                ? FormatUtils.formatCount(this.videos[this.currentIndex].authorFans) + ' 粉丝' : '粉丝 --'} · ${this.videos[this.currentIndex].authorVideos !== undefined
+                ? this.videos[this.currentIndex].authorVideos + ' 投稿' : '投稿 --'}`)
                 .fontSize(12).fontColor('#858C94');
             }.layoutWeight(1).alignItems(HorizontalAlign.Start)
               .onClick((): void => { this.onDetailAction('openauthor'); });
@@ -607,10 +608,18 @@ export struct DetailScreen {
       Column() {
         if (this.verticalExpanded) {
           Column() {
-            Stack() {
-              this.videoArea();
+            // 竖屏化：视频按自身比例居中，控制条覆盖视频最底部
+            Column() {
+              Stack() {
+                this.videoArea();
+              }
+              .width('100%')
+              .aspectRatio(Math.max(this.currentAspect(), 0.5))
+              .backgroundColor(Color.Black)
             }
-            .width('100%').layoutWeight(1).backgroundColor(Color.Black)
+            .width('100%').layoutWeight(1)
+            .justifyContent(FlexAlign.Center)
+            .backgroundColor(Color.Black)
             .onClick((): void => { this.onShowControls(); });
             // 竖屏化：黑区默认显示 UP主信息+弹幕+六图标；点击视频区唤起播放控制
             this.verticalPanel();

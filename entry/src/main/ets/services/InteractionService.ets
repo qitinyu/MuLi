@@ -77,19 +77,7 @@ export class InteractionService {
     const first: Record<string, Object> = list[0] as Record<string, Object>;
     const folderId: number = Number(first['id'] ?? 0);
     if (folderId <= 0) throw new Error('收藏夹信息异常');
-    const form: Record<string, string> = {
-      'rid': String(aid),
-      'type': '2',
-      'csrf': csrf
-    };
-    if (on) {
-      form['add_media_ids'] = String(folderId);
-    } else {
-      form['del_media_ids'] = String(folderId);
-    }
-    const result: Record<string, Object> =
-      await BiliHttpClient.postForm('/x/api/v3/fav/resource/deal', form, cookie);
-    InteractionService.ensureOk(result);
+    await InteractionService.addToFolder(aid, folderId, on, cookie, csrf);
   }
 
   static async addComment(aid: number, message: string, cookie: string, csrf: string): Promise<void> {
@@ -148,6 +136,7 @@ export class InteractionService {
     form['rid'] = String(aid);
     form['type'] = '2';
     form['csrf'] = csrf;
+    form['csrf_token'] = csrf;
     if (on) {
       form['add_media_ids'] = String(folderId);
     } else {

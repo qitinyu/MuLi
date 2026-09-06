@@ -5,8 +5,8 @@ import { PlaybackMemory } from '../utils/PlaybackMemory';
 import common from '@ohos.app.ability.common';
 import window from '@ohos.window';
 import audio from '@ohos.multimedia.audio';
-import { Want } from '@kit.AbilityKit';
 import { BusinessError } from '@kit.BasicServicesKit';
+import { systemShare } from '@kit.ShareKit';
 import { FormatUtils } from '../utils/FormatUtils';
 import { loadingIndicator } from '../utils/CommonBuilders';
 import { PlayerOverlay } from './PlayerOverlay';
@@ -132,12 +132,21 @@ export struct PlayerScreen {
     const item: VideoItem = this.videos[this.currentIndex];
     const uri: string = item.bvid !== '' ? `https://www.bilibili.com/video/${item.bvid}/` :
       `https://www.bilibili.com/video/av${item.aid}/`;
-    const want: Want = { action: 'ohos.want.action.viewData', uri: uri };
-    (getContext(this) as common.UIAbilityContext).startAbility(want)
-      .catch((error: BusinessError): void => {
-        console.error(`Pilihos share failed: ${error.code} ${error.message}`);
-        this.showPlaybackToast('分享失败 [错误码: ' + String(error.code) + ']');
+    try {
+      const sharedData: systemShare.SharedData = new systemShare.SharedData({
+        utd: 'general.url',
+        content: uri
       });
+      const controller: systemShare.ShareController = new systemShare.ShareController(sharedData);
+      controller.show(getContext(this) as common.UIAbilityContext,
+        { selectionMode: systemShare.SelectionMode.SINGLE })
+        .catch((error: BusinessError): void => {
+          console.error(`Pilihos share failed: ${error.code} ${error.message}`);
+          this.showPlaybackToast('分享失败 [错误码: ' + String(error.code) + ']');
+        });
+    } catch (shareError) {
+      this.showPlaybackToast('分享失败: ' + String(shareError));
+    }
   }
 
   private onNativeVideoPrepared(info: PreparedInfo): void {
@@ -375,7 +384,7 @@ export struct PlayerScreen {
         onSeek: (valueMs: number): void => { this.seekPlayback(valueMs); },
         onTogglePlay: (): void => { this.togglePlayback(); },
         onShowControls: (): void => { this.showPlaybackControls(); },
-        onOpenLandscape: (): void => { this.onOpenLandscape(); },
+        onOpenLandscape: (): void => { if (this.landscapePlayback) { this.onCloseLandscape(); } else { this.onOpenLandscape(); } },
         onReplay: (): void => { this.replayFinishedVideo(); },
         onPlayRecommended: (): void => { this.playRecommendedVideo(); },
         onShare: (): void => { this.shareCurrentVideo(); },
@@ -389,14 +398,6 @@ export struct PlayerScreen {
       .position({ left: 16, top: 16 })
       .visibility(this.playbackControlsVisible ? Visibility.Visible : Visibility.None)
       .onClick(() => { this.onBack(); });
-      Button() {
-        Image($r('app.media.qp')).width(22).height(22).fillColor(Color.White);
-      }
-      .type(ButtonType.Circle).width(44).height(44)
-      .backgroundColor('#66000000')
-      .position({ right: 16, bottom: 90 })
-      .visibility(this.playbackControlsVisible ? Visibility.Visible : Visibility.None)
-      .onClick(() => { this.onCloseLandscape(); });
       if (this.hudVisible) {
         Text(this.hudText)
           .fontSize(14).fontColor(Color.White)
@@ -494,7 +495,7 @@ export struct PlayerScreen {
       onSeek: (valueMs: number): void => { this.seekPlayback(valueMs); },
       onTogglePlay: (): void => { this.togglePlayback(); },
       onShowControls: (): void => { this.showPlaybackControls(); },
-      onOpenLandscape: (): void => { this.onOpenLandscape(); },
+      onOpenLandscape: (): void => { if (this.landscapePlayback) { this.onCloseLandscape(); } else { this.onOpenLandscape(); } },
       onReplay: (): void => { this.replayFinishedVideo(); },
       onPlayRecommended: (): void => { this.playRecommendedVideo(); },
       onShare: (): void => { this.shareCurrentVideo(); },
