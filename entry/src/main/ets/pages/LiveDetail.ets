@@ -1,7 +1,9 @@
 import router from '@ohos.router';
 import common from '@ohos.app.ability.common';
 import window from '@ohos.window';
-import { LiveRoom, LiveRoomStatus, LiveService } from '../services/LiveService';
+import { LiveQnOption, LiveRoom, LiveRoomStatus, LiveService } from '../services/LiveService';
+import { AuthService } from '../services/AuthService';
+import { InteractionService } from '../services/InteractionService';
 
 @Entry
 @Component
@@ -14,6 +16,15 @@ struct LiveDetail {
   @State streamError: string = '';
   @State topInset: number = 0;
   @State onlineText: string = '';
+  @State qnOptions: LiveQnOption[] = [];
+  @State currentQn: number = 0;
+  @State lineCount: number = 1;
+  @State lineIndex: number = 0;
+  @State anchorMid: number = 0;
+  @State followed: boolean = false;
+  @State followBusy: boolean = false;
+  @State qualityMenuVisible: boolean = false;
+  @State lineMenuVisible: boolean = false;
   private context: common.UIAbilityContext = getContext(this) as common.UIAbilityContext;
 
   aboutToAppear(): void {
@@ -71,17 +82,114 @@ struct LiveDetail {
   private async refreshStream(): Promise<void> {
     this.streamError = '';
     try {
-      this.playUrl = await LiveService.loadPlayUrl(this.room.roomId);
+      const result = await LiveService.loadPlayUrlEx(this.room.roomId, this.currentQn, this.lineIndex);
+      this.playUrl = result.url;
+      this.currentQn = result.currentQn;
+      this.qnOptions = result.qnOptions;
+      this.lineCount = result.lineCount;
+      this.lineIndex = result.lineIndex;
+      if (result.anchorMid > 0 && this.anchorMid === 0) {
+        this.anchorMid = result.anchorMid;
+        this.loadFollowState();
+      }
     } catch (error) {
       this.streamError = String(error);
       console.error('Pilihos live stream resolve failed: ' + String(error));
     }
   }
 
+  private async loadFollowState(): Promise<void> {
+    const session = AuthService.currentSession();
+    if (session === null || session.cookie === '') return;
+    try {
+      const attribute: number = await InteractionService.relationAttribute(this.anchorMid, session.cookie);
+      this.followed = attribute === 2 || attribute === 6 || attribute === 128;
+    } catch (error) {
+      console.warn(`Pilihos live follow state failed: ${String(error)}`);
+    }
+  }
+
+  private async toggleFollow(): Promise<void> {
+    if (this.followBusy) return;
+    const session = AuthService.currentSession();
+    if (session === null || session.cookie === '' || session.csrf === '') {
+      this.showToast('请先登录后再关注');
+      return;
+    }
+    this.followBusy = true;
+    const on: boolean = !this.followed;
+    try {
+      await InteractionService.follow(this.anchorMid, on, session.cookie, session.csrf, '14');
+      this.followed = on;
+      this.showToast(on ? `已关注 ${this.room.uname}` : '已取消关注');
+    } catch (error) {
+      this.showToast(`关注操作失败: ${String(error)}`);
+    } finally {
+      this.followBusy = false;
+    }
+  }
+
+  private showToast(message: string): void {
+    try {
+      this.getUIContext().getPromptAction().showToast({ message: message, duration: 2500, bottom: 24 });
+    } catch (error) {
+      console.error(`Pilihos live detail toast failed: ${String(error)}`);
+    }
+  }
+
+  private currentQnDesc(): string {
+    const matched: LiveQnOption | undefined =
+      this.qnOptions.find((option: LiveQnOption): boolean => option.qn === this.currentQn);
+    if (matched !== undefined) return matched.desc;
+    return this.currentQn > 0 ? `${this.currentQn}` : '清晰度';
+  }
+
   private formatCount(value: number): string {
     if (value >= 100000000) return `${(value / 100000000).toFixed(2).replace(/\.00$/, '')}亿`;
     if (value >= 10000) return `${(value / 10000).toFixed(1).replace(/\.0$/, '')}万`;
     return `${value}`;
+  }
+
+  @Builder
+  qualityMenu() {
+    Column({ space: 2 }) {
+      Text('清晰度').fontSize(12).fontWeight(FontWeight.Bold).fontColor('#20252B')
+        .width('100%').height(28).textAlign(TextAlign.Center);
+      ForEach(this.qnOptions, (option: LiveQnOption) => {
+        Text(option.qn === this.currentQn ? `${option.desc} ✓` : option.desc).fontSize(12)
+          .fontColor(option.qn === this.currentQn ? '#1677A8' : '#1E252D')
+          .width('100%').height(28).textAlign(TextAlign.Center)
+          .onClick((): void => {
+            this.qualityMenuVisible = false;
+            if (option.qn !== this.currentQn) {
+              this.currentQn = option.qn;
+              this.refreshStream();
+            }
+          });
+      }, (option: LiveQnOption) => `lqn_${option.qn}`);
+    }.width(96).padding({ top: 6, bottom: 6 }).backgroundColor('#F7F8FA')
+      .borderRadius(10).shadow({ radius: 10, color: '#33000000', offsetX: 0, offsetY: 3 });
+  }
+
+  @Builder
+  lineMenu() {
+    Column({ space: 2 }) {
+      Text('线路').fontSize(12).fontWeight(FontWeight.Bold).fontColor('#20252B')
+        .width('100%').height(28).textAlign(TextAlign.Center);
+      ForEach(Array.from({ length: this.lineCount }, (_v: Object, i: number): number => i), (index: number) => {
+        Text(index === this.lineIndex ? `线路${index + 1} ✓` : `线路${index + 1}`).fontSize(12)
+          .fontColor(index === this.lineIndex ? '#1677A8' : '#1E252D')
+          .width('100%').height(28).textAlign(TextAlign.Center)
+          .onClick((): void => {
+            this.lineMenuVisible = false;
+            if (index !== this.lineIndex) {
+              this.lineIndex = index;
+              this.refreshStream();
+            }
+          });
+      }, (index: number) => `line_${index}`);
+    }.width(88).padding({ top: 6, bottom: 6 }).backgroundColor('#F7F8FA')
+      .borderRadius(10).shadow({ radius: 10, color: '#33000000', offsetX: 0, offsetY: 3 });
   }
 
   build() {
@@ -126,6 +234,38 @@ struct LiveDetail {
         .backgroundColor('#66000000').borderRadius(21)
         .margin({ left: 12, top: this.topInset + 10 })
         .onClick(() => { router.back(); });
+
+        if (this.playUrl !== '') {
+          Row({ space: 8 }) {
+            Text(this.currentQnDesc())
+              .fontSize(12).fontColor(Color.White)
+              .padding({ left: 10, right: 10, top: 5, bottom: 5 })
+              .backgroundColor('#66000000').borderRadius(14)
+              .bindMenu(this.qualityMenuVisible, this.qualityMenu(), {
+                placement: Placement.Top,
+                enableArrow: false,
+                showInSubWindow: true
+              })
+              .onClick((): void => {
+                this.qualityMenuVisible = !this.qualityMenuVisible;
+                this.lineMenuVisible = false;
+              });
+            Text(this.lineCount > 1 ? `线路${this.lineIndex + 1}/${this.lineCount}` : '线路')
+              .fontSize(12).fontColor(Color.White)
+              .padding({ left: 10, right: 10, top: 5, bottom: 5 })
+              .backgroundColor('#66000000').borderRadius(14)
+              .bindMenu(this.lineMenuVisible, this.lineMenu(), {
+                placement: Placement.Top,
+                enableArrow: false,
+                showInSubWindow: true
+              })
+              .onClick((): void => {
+                this.lineMenuVisible = !this.lineMenuVisible;
+                this.qualityMenuVisible = false;
+              });
+          }
+          .position({ right: 12, bottom: 12 });
+        }
       }
       .width('100%').aspectRatio(1.78);
 
@@ -151,6 +291,11 @@ struct LiveDetail {
                   .fontSize(11).fontColor('#A4A9AF');
               };
             }.layoutWeight(1).alignItems(HorizontalAlign.Start);
+            Button(this.followed ? '已关注' : '关注').height(32).fontSize(12)
+              .backgroundColor(this.followed ? '#F1F3F5' : '#F04B55')
+              .fontColor(this.followed ? '#59616B' : Color.White)
+              .visibility(this.anchorMid > 0 ? Visibility.Visible : Visibility.None)
+              .onClick((): void => { this.toggleFollow(); });
             Button('刷新线路').height(32).fontSize(12)
               .onClick((): void => { this.refreshStream(); });
           }.width('100%');

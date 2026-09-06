@@ -18,6 +18,20 @@ export class LiveRoomStatus {
   keyframe: string = '';
 }
 
+export class LiveQnOption {
+  qn: number = 0;
+  desc: string = '';
+}
+
+export class LivePlayResult {
+  url: string = '';
+  currentQn: number = 0;
+  qnOptions: LiveQnOption[] = [];
+  lineCount: number = 1;
+  lineIndex: number = 0;
+  anchorMid: number = 0;
+}
+
 export class LiveService {
   private static readonly liveHost: string = 'api.live.bilibili.com';
 
@@ -101,12 +115,21 @@ export class LiveService {
   }
 
   static async loadPlayUrl(roomId: number): Promise<string> {
+    const result: LivePlayResult = await LiveService.loadPlayUrlEx(roomId, 0, 0);
+    return result.url;
+  }
+
+  /**
+   * 解析直播流：qn 指定清晰度（0=原画），lineIndex 选择线路（同一流的多 CDN）；
+   * 返回可选清晰度列表与线路数供切换 UI 使用。
+   */
+  static async loadPlayUrlEx(roomId: number, qn: number, lineIndex: number): Promise<LivePlayResult> {
     const query: Record<string, string> = {};
     query['room_id'] = String(roomId);
     query['protocol'] = '1';
     query['format'] = '1,2';
     query['codec'] = '0';
-    query['qn'] = '10000';
+    query['qn'] = String(qn > 0 ? qn : 10000);
     query['platform'] = 'web';
     query['ptype'] = '8';
     const result: Record<string, Object> =
@@ -118,6 +141,17 @@ export class LiveService {
     const playurlInfo: Record<string, Object> = (data['playurl_info'] ?? {}) as Record<string, Object>;
     const playurl: Record<string, Object> = (playurlInfo['playurl'] ?? {}) as Record<string, Object>;
     const streams: Object[] = (playurl['stream'] as Object[]) ?? [];
+    const out: LivePlayResult = new LivePlayResult();
+    out.anchorMid = Number(data['uid'] ?? 0);
+    out.currentQn = Number(playurl['base_qn'] ?? 0);
+    const qnDescs: Object[] = (playurl['g_qn_desc'] as Object[]) ?? [];
+    qnDescs.forEach((rawQn: Object): void => {
+      const record: Record<string, Object> = rawQn as Record<string, Object>;
+      const option: LiveQnOption = new LiveQnOption();
+      option.qn = Number(record['qn'] ?? 0);
+      option.desc = String(record['desc'] ?? '');
+      if (option.qn > 0 && option.desc !== '') out.qnOptions.push(option);
+    });
     let fallback: string = '';
     for (const rawStream of streams) {
       const stream: Record<string, Object> = rawStream as Record<string, Object>;
@@ -128,24 +162,38 @@ export class LiveService {
         const codecs: Object[] = (format['codec'] as Object[]) ?? [];
         if (codecs.length === 0) continue;
         const codec: Record<string, Object> = codecs[0] as Record<string, Object>;
-        const url: string = LiveService.assembleUrl(codec);
+        const urlInfos: Object[] = (codec['url_info'] as Object[]) ?? [];
+        if (urlInfos.length === 0) continue;
+        out.currentQn = Number(codec['current_qn'] ?? out.currentQn);
+        const chosen: Record<string, Object> =
+          urlInfos[Math.min(Math.max(0, lineIndex), urlInfos.length - 1)] as Record<string, Object>;
+        const url: string = LiveService.assembleUrlWith(codec, chosen);
         if (url === '') continue;
-        if (isHls) return url;
-        if (fallback === '') fallback = url;
+        if (isHls) {
+          out.url = url;
+          out.lineCount = urlInfos.length;
+          out.lineIndex = Math.min(Math.max(0, lineIndex), urlInfos.length - 1);
+          return out;
+        }
+        if (fallback === '') {
+          fallback = url;
+          out.lineCount = urlInfos.length;
+          out.lineIndex = Math.min(Math.max(0, lineIndex), urlInfos.length - 1);
+        }
       }
     }
-    if (fallback !== '') return fallback;
+    if (fallback !== '') {
+      out.url = fallback;
+      return out;
+    }
     throw new Error('直播间暂未开播或没有可用线路');
   }
 
-  private static assembleUrl(codec: Record<string, Object>): string {
+  private static assembleUrlWith(codec: Record<string, Object>, urlInfo: Record<string, Object>): string {
     const baseUrl: string = String(codec['base_url'] ?? '');
-    const urlInfos: Object[] = (codec['url_info'] as Object[]) ?? [];
-    if (baseUrl === '' || urlInfos.length === 0) return '';
-    const urlInfo: Record<string, Object> = urlInfos[0] as Record<string, Object>;
     const host: string = String(urlInfo['host'] ?? '');
     const extra: string = String(urlInfo['extra'] ?? '');
-    if (host === '') return '';
+    if (baseUrl === '' || host === '') return '';
     let url: string = host + baseUrl;
     if (url.indexOf('?') < 0) {
       url += '?';
@@ -153,6 +201,12 @@ export class LiveService {
       url += '&';
     }
     return url + extra;
+  }
+
+  private static assembleUrl(codec: Record<string, Object>): string {
+    const urlInfos: Object[] = (codec['url_info'] as Object[]) ?? [];
+    if (urlInfos.length === 0) return '';
+    return LiveService.assembleUrlWith(codec, urlInfos[0] as Record<string, Object>);
   }
 
   private static parseRoom(raw: Record<string, Object>): LiveRoom {

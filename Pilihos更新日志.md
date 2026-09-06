@@ -25,10 +25,24 @@
 - [✅] 底部栏常驻开关（滚动隐藏/回弹弹出）、计数规则优化、时间显示修复、版块内容缓存 #10412
 
 
-### Pilihos V1.0.5（当前版本号 1.0.5.6）
+### Pilihos V1.0.5（当前版本号 1.0.5.9）
 
 > 主线：播放体验补全 + 互动能力落地；并行：架构还债与稳定性
 
+- [✅] 直播：清晰度/线路切换（accept_qn），关注主播按钮 #1058
+  - LiveService.loadPlayUrlEx：按 qn 请求直播流，回传 g_qn_desc 清晰度列表、url_info 线路数与主播 mid
+  - 播放区右下角"清晰度/线路"菜单（当前项高亮），切换即重取流；信息行新增关注按钮（/x/relation/modify，attribute 回显已关注状态）
+- [✅] UP主空间页：搜索结果点 UP 主进入主页（投稿列表/粉丝信息/关注按钮） #1057
+  - 新增 pages/UserSpace：/x/web-interface/card 资料（粉丝/获赞/等级/签名）+ WBI 签名 /x/space/wbi/arc/search 投稿列表（分页 25 条）
+  - 关注按钮 /x/relation/modify；点投稿带 pilihosPlayback 参数返回 Index 播放（与搜索回跳同链路）
+- [✅] 搜索：分类页签接入真实排序参数（默认排序/播放多/新发布等） #10511
+  - SearchService.search 增 order 参数（click/pubdate/dm，仅 video 类生效，WBI 与旧接口同透传）
+  - 搜索结果上方排序条（当前项高亮），切换即时重搜
+- [✅] 互动：详情页点赞/投币/收藏/再看接真实接口并回显状态（cookie+csrf） #1055
+  - 新增 services/InteractionService：like/coin_add/fav resource deal（默认收藏夹）/toview add；BiliHttpClient 增通用 postForm
+  - VideoItem 增 liked/coined/favored；详情加载后经 archive/detail req_user 回显，按钮高亮（点赞红/收藏橙），计数联动；未登录操作 toast 引导
+- [✅] 互动：评论发布入口接 /x/v2/reply/add，评论点赞 #1056
+  - 评论输入栏"发送"为真实发布，成功后清空并刷新评论区；评论点赞 /x/v2/reply/action，红心高亮与计数联动（登录后加载时按 action 字段回显）
 - [✅] 真机修复批次 2（1.0.5.6）
   - 闪退：点击视频进入二级页即闪退——qualityMenuVisible 在宿主仍是 @State 而播放器组件用 @Consume 引用，找不到 @Provide 祖先导致组件树创建即崩溃；改为 @Provide，并重跑全量 Consume/Provide 配对审计通过 #真机反馈4
   - 材质：真机 uiMaterial 系统材质渲染不出"光感"只剩半透明——31 处 systemMaterial 统一替换为 backgroundBlurStyle(COMPONENT_THIN + LIGHT) 真毛玻璃，白色底衬降为 32%-45% 仅轻度提亮 #真机反馈4
@@ -60,11 +74,6 @@
   - 行为统一：首页卡片点击改走 openVideoDetail，不再遗留上一视频的评论区页签状态
 - [✅] 稳定性（部分）：buvid3 持久化——首次生成后落盘 pilihos_client/buvid3，后续启动复用，降低 -412/-352 风控概率 #1059
   - 搜索回车真机问题闭环仍待用户回报 toast 错误码后定位
-- [ ] 互动：详情页点赞/投币/收藏/再看接真实接口并回显状态（cookie+csrf） #1055
-- [ ] 互动：评论发布入口接 /x/v2/reply/add，评论点赞 #1056
-- [ ] UP主空间页：搜索结果点 UP 主进入主页（投稿列表/粉丝信息/关注按钮） #1057
-- [ ] 直播：清晰度/线路切换（accept_qn），关注主播按钮 #1058
-- [ ] 搜索：分类页签接入真实排序参数（默认排序/播放多/新发布等） #10511
 - [ ] 评估项：深色模式适配、直播间弹幕（WebSocket）、番剧追番 #10512
 
 

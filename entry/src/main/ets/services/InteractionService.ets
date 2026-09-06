@@ -108,6 +108,30 @@ export class InteractionService {
     InteractionService.ensureOk(result);
   }
 
+  /**
+   * 关注/取关（UP主或主播通用）：act 1=关注 2=取关
+   */
+  static async follow(mid: number, on: boolean, cookie: string, csrf: string,
+    reSrc: string = '11'): Promise<void> {
+    const result: Record<string, Object> = await BiliHttpClient.postForm('/x/relation/modify', {
+      'fid': String(mid),
+      'act': on ? '1' : '2',
+      're_src': reSrc,
+      'csrf': csrf
+    }, cookie);
+    InteractionService.ensureOk(result);
+  }
+
+  static async relationAttribute(mid: number, cookie: string): Promise<number> {
+    if (mid <= 0 || cookie === '') return -1;
+    const query: Record<string, string> = {};
+    query['fid'] = String(mid);
+    const result: Record<string, Object> = await BiliHttpClient.getJson('/x/relation', query, cookie);
+    if (Number(result['code'] ?? -1) !== 0) return -1;
+    const data: Record<string, Object> = (result['data'] ?? {}) as Record<string, Object>;
+    return Number(data['attribute'] ?? 0);
+  }
+
   private static ensureOk(result: Record<string, Object>): void {
     const code: number = Number(result['code'] ?? -1);
     if (code !== 0) {
