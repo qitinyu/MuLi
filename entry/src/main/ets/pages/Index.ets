@@ -128,6 +128,9 @@ struct Index {
   @Provide relatedVideos: VideoItem[] = [];
   @Provide relatedLoading: boolean = false;
   private relatedRequest: number = 0;
+  @Provide randomPool: VideoItem[] = [];
+  private randomPoolIndex: string = '0';
+  private randomPoolFetching: boolean = false;
 
   private static placeholderVideos(): VideoItem[] {
     const result: VideoItem[] = [];
@@ -535,6 +538,58 @@ struct Index {
     }
   }
 
+  /**
+   * 竖屏化连播池：走推荐接口拉"全网随机"视频（与首页推荐同源但独立游标），
+   * 排除当前/已看过的（含未看完）、过滤词命中与重复条目；存量不足 5 部时补一批。
+   */
+  private async ensureRandomPool(): Promise<void> {
+    if (this.randomPoolFetching || this.randomPool.length >= 5) return;
+    this.randomPoolFetching = true;
+    try {
+      const batch: RecommendationBatch = await RecommendationService.loadBatch(this.randomPoolIndex);
+      this.randomPoolIndex = batch.nextIndex;
+      const seen: Set<string> = new Set<string>(this.randomPool.map((item: VideoItem): string =>
+        item.bvid !== '' ? item.bvid : `${item.aid}`));
+      const current: VideoItem = this.videos[this.currentIndex];
+      seen.add(current.bvid !== '' ? current.bvid : `${current.aid}`);
+      const fresh: VideoItem[] = batch.items.filter((item: VideoItem): boolean => {
+        const key: string = item.bvid !== '' ? item.bvid : `${item.aid}`;
+        if (item.aid <= 0 || seen.has(key)) return false;
+        seen.add(key);
+        return !FilterWords.isVideoFiltered(item.title)
+          && PlaybackMemory.progressOf(item.aid) <= 0;
+      });
+      this.randomPool = this.randomPool.concat(fresh);
+    } catch (error) {
+      console.warn(`Pilihos random pool load failed: ${String(error)}`);
+    } finally {
+      this.randomPoolFetching = false;
+    }
+  }
+
+  /**
+   * 竖屏化连播（上滑/随机连播/播完推荐）：从全网随机池取一部播放，保持竖屏化状态。
+   * 详情页底部的相关推荐不走此路径（仍按当前视频的相似视频展示）。
+   */
+  private async playRandomGlobalVideo(): Promise<void> {
+    this.savePlaybackProgress();
+    await this.ensureRandomPool();
+    if (this.randomPool.length === 0) {
+      this.showPlaybackToast('没有可播放的推荐视频');
+      return;
+    }
+    const item: VideoItem =
+      this.randomPool[Math.floor(Math.random() * this.randomPool.length)];
+    this.randomPool = this.randomPool.filter((candidate: VideoItem): boolean =>
+      candidate !== item);
+    this.playbackFinished = false;
+    this.videos = this.videos.concat([item]);
+    this.currentIndex = this.videos.length - 1;
+    this.openVideoDetail(item, false);
+    // 播一部补一批，保持池子有货
+    this.ensureRandomPool();
+  }
+
   private shareCurrentVideo(): void {
     const item: VideoItem = this.videos[this.currentIndex];
     const uri: string = item.bvid !== '' ? `https://www.bilibili.com/video/${item.bvid}/` :
@@ -905,6 +960,8 @@ struct Index {
     this.loadVideoDetail();
     this.loadVideoContext();
     this.loadRelatedVideos();
+    // 预热竖屏化连播的全网随机池
+    this.ensureRandomPool();
     this.prepareCurrentVideo();
     if (showComments) this.loadComments(true);
   }
@@ -1290,6 +1347,7 @@ struct Index {
           onOpenVideo: (item: VideoItem, showComments: boolean): void => {
             this.openVideoDetail(item, showComments);
           },
+          onRandomNext: (): void => { this.playRandomGlobalVideo(); },
           onLoadComments: (refresh: boolean): void => { this.loadComments(refresh); },
           onToggleReplies: (comment: VideoComment): void => { this.toggleSubReplies(comment); },
           onLoadSubReplies: (rootId: number, refresh: boolean): void => {

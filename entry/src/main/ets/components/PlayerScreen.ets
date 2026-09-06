@@ -40,7 +40,7 @@ export struct PlayerScreen {
   @Consume currentQn: number;
   @Consume qualityMenuVisible: boolean;
   @Consume videos: VideoItem[];
-  @Consume relatedVideos: VideoItem[];
+  @Consume randomPool: VideoItem[];
   @Consume currentIndex: number;
   @Consume pendingResumeMs: number;
   @Consume playMode: number;
@@ -64,6 +64,7 @@ export struct PlayerScreen {
   private holdSpeedActive: boolean = false;
   onOpenVideo: (item: VideoItem, showComments: boolean) => void =
     (item: VideoItem, showComments: boolean): void => {};
+  onRandomNext: () => void = (): void => {};
   onLoadComments: (refresh: boolean) => void = (refresh: boolean): void => {};
   onToggleReplies: (comment: VideoComment) => void = (comment: VideoComment): void => {};
   onLoadSubReplies: (rootId: number, refresh: boolean) => void =
@@ -103,14 +104,14 @@ export struct PlayerScreen {
       return;
     }
     if (this.playMode === 2) {
-      this.playNextRandom();
+      this.onRandomNext();
       return;
     }
     this.playbackFinished = true;
     this.playbackPaused = true;
-    // 播完推荐从相关视频池随机取（详情页底部列表同源）
-    this.recommendedPlaybackIndex = this.relatedVideos.length > 0
-      ? Math.floor(Math.random() * this.relatedVideos.length) : -1;
+    // 播完推荐从全网随机池随机取（上滑连播同源）
+    this.recommendedPlaybackIndex = this.randomPool.length > 0
+      ? Math.floor(Math.random() * this.randomPool.length) : -1;
     // 播放结束：隐藏全部控件，呈现黑屏居中推荐；无推荐时保留控制条便于重播
     this.playbackControlsVisible = this.recommendedPlaybackIndex < 0;
   }
@@ -122,19 +123,19 @@ export struct PlayerScreen {
 
   private playRecommendedVideo(): void {
     if (this.recommendedPlaybackIndex < 0
-      || this.recommendedPlaybackIndex >= this.relatedVideos.length) return;
-    this.openRelatedItem(this.relatedVideos[this.recommendedPlaybackIndex]);
+      || this.recommendedPlaybackIndex >= this.randomPool.length) return;
+    this.openPoolItem(this.randomPool[this.recommendedPlaybackIndex]);
   }
 
   /**
-   * 相关视频不在原信息流中：追加进播放序列末尾再走 openVideoDetail
-   * 必经路径（重置状态并为新视频加载相关推荐，竖屏化状态保持不变）。
+   * 随机池里的视频不在原信息流中：追加进播放序列末尾再走 openVideoDetail
+   * 必经路径（重置状态并为新视频预热随机池，竖屏化状态保持不变）。
    */
-  private openRelatedItem(item: VideoItem): void {
+  private openPoolItem(item: VideoItem): void {
     this.savePlaybackProgress();
     this.playbackFinished = false;
     this.videos = this.videos.concat([item]);
-    this.relatedVideos = this.relatedVideos.filter((candidate: VideoItem): boolean =>
+    this.randomPool = this.randomPool.filter((candidate: VideoItem): boolean =>
       candidate !== item);
     this.currentIndex = this.videos.length - 1;
     this.onOpenVideo(item, false);
@@ -393,26 +394,12 @@ export struct PlayerScreen {
 
   private onVerticalEnd(event: GestureEvent): void {
     if (this.gestureMode === 'swipeNext' && event.offsetY < -50) {
-      this.playNextRandom();
+      // 交给宿主从全网随机池切下一部（真随机，不限于同类/同UP主）
+      this.onRandomNext();
     } else if (this.gestureMode === 'swipePrev' && event.offsetY > 50) {
       this.playPrevVideo();
     }
     this.gestureMode = '';
-  }
-
-  /**
-   * 随机连播与上滑共用：切到相关推荐里的随机视频（保持竖屏化状态）；
-   * 池由 Index 按当前视频的相似视频构建，已排除看过的（含未看完）。
-   */
-  private playNextRandom(): void {
-    this.savePlaybackProgress();
-    if (this.relatedVideos.length === 0) {
-      this.showPlaybackToast('没有可播放的推荐视频');
-      return;
-    }
-    const item: VideoItem =
-      this.relatedVideos[Math.floor(Math.random() * this.relatedVideos.length)];
-    this.openRelatedItem(item);
   }
 
   /**
