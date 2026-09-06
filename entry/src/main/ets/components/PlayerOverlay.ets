@@ -18,7 +18,7 @@ export struct PlayerOverlay {
   @Consume landscapePlayback: boolean;
   @Consume playbackFinished: boolean;
   @Consume recommendedPlaybackIndex: number;
-  @Consume videos: VideoItem[];
+  @Consume relatedVideos: VideoItem[];
   @Link episodeListVisible: boolean;
   onSeek: (valueMs: number) => void = (valueMs: number): void => {};
   onTogglePlay: () => void = (): void => {};
@@ -187,15 +187,16 @@ export struct PlayerOverlay {
 
   @Builder
   playbackFinishedOverlay() {
-    if (this.playbackFinished && this.recommendedPlaybackIndex >= 0) {
-      // 播放结束：播放区黑屏，推荐视频居中展示
+    if (this.playbackFinished && this.recommendedPlaybackIndex >= 0
+      && this.recommendedPlaybackIndex < this.relatedVideos.length) {
+      // 播放结束：播放区黑屏，相关推荐视频居中展示
       Column().width('100%').height('100%').backgroundColor(Color.Black).zIndex(5);
       Column({ space: 14 }) {
         Text('为你推荐').fontSize(12).fontColor('#B3FFFFFF').width('100%');
         Row({ space: 10 }) {
-          Image(this.videos[this.recommendedPlaybackIndex].cover)
+          Image(this.relatedVideos[this.recommendedPlaybackIndex].cover)
             .width(120).height(68).objectFit(ImageFit.Cover).borderRadius(8);
-          Text(this.videos[this.recommendedPlaybackIndex].title).fontSize(14)
+          Text(this.relatedVideos[this.recommendedPlaybackIndex].title).fontSize(14)
             .fontColor(Color.White).maxLines(3).textAlign(TextAlign.Start)
             .lineHeight(20).layoutWeight(1);
         }.width('100%').alignItems(VerticalAlign.Center);

@@ -11,6 +11,8 @@ export struct DetailScreen {
   @Consume videoWeight: number;
   @Consume pendingResumeMs: number;
   @Consume videos: VideoItem[];
+  @Consume relatedVideos: VideoItem[];
+  @Consume relatedLoading: boolean;
   @Consume currentIndex: number;
   @Consume detailSection: number;
   @Consume detailExpanded: boolean;
@@ -103,6 +105,8 @@ export struct DetailScreen {
       } else if (iconName === 'favorites') {
         Image($r('app.media.favorites')).width(24).height(24)
           .fillColor(active ? '#F0A24B' : Color.White);
+      } else if (iconName === 'sphsz') {
+        Image($r('app.media.sphsz')).width(24).height(24).fillColor(Color.White);
       } else {
         Image($r('app.media.pl')).width(24).height(24).fillColor(Color.White);
       }
@@ -127,16 +131,16 @@ export struct DetailScreen {
             .onClick((): void => { this.onDetailAction('openauthor'); });
         }
         Column({ space: 3 }) {
-          Row({ space: 4 }) {
+          Row({ space: 5 }) {
             Text(this.videos[this.currentIndex].author === '' ? '未知UP主' : this.videos[this.currentIndex].author)
               .fontSize(14).fontWeight(FontWeight.Bold).fontColor(Color.White)
               .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
               .layoutWeight(1);
             if ((this.videos[this.currentIndex].authorLevel ?? 0) > 0) {
               Text('LV' + String(this.videos[this.currentIndex].authorLevel ?? 0))
-                .fontSize(8).fontColor(Color.White)
+                .fontSize(7).fontColor(Color.White)
                 .backgroundColor(FormatUtils.levelColor(this.videos[this.currentIndex].authorLevel ?? 0))
-                .borderRadius(3).padding({ left: 3, right: 3, top: 1, bottom: 1 });
+                .borderRadius(2).padding({ left: 2, right: 2, top: 1, bottom: 1 });
             }
           }.width('100%');
           Text(this.videos[this.currentIndex].authorFans !== undefined
@@ -154,16 +158,26 @@ export struct DetailScreen {
       Row({ space: 10 }) {
         Stack({ alignContent: Alignment.Start }) {
           TextInput({ placeholder: '发弹幕', text: this.danmakuText })
-            .layoutWeight(1).height(34).fontSize(12)
+            .layoutWeight(1).height(34).fontSize(11)
             .fontColor('#E8EEF3').placeholderColor('#8FA3B0')
             .backgroundColor('#2EFFFFFF').borderRadius(17)
             .padding({ left: 34, right: 12 })
             .enabled(this.danmakuEnabled)
             .onChange((value: string) => { this.danmakuText = value; })
             .onSubmit((): void => { this.onSendDanmaku(); });
-          Image($r('app.media.dmg')).width(16).height(16)
-            .opacity(this.danmakuEnabled ? 1 : 0.4)
-            .margin({ left: 10 });
+          // 弹幕开关：开启 dm / 关闭 dmg，逻辑与详情页弹幕输入框右侧开关一致
+          Button() {
+            Image(this.danmakuEnabled ? $r('app.media.dm') : $r('app.media.dmg'))
+              .width(16).height(16)
+              .fillColor(this.danmakuEnabled ? Color.White : '#8FA3B0');
+          }
+          .type(ButtonType.Capsule).width(26).height(26)
+          .backgroundColor(Color.Transparent)
+          .margin({ left: 4 })
+          .onClick((): void => {
+            this.danmakuEnabled = !this.danmakuEnabled;
+            if (!this.danmakuEnabled) this.danmakuText = '';
+          });
         }
         .layoutWeight(1)
         .gesture(TapGesture().onAction((): void => { this.onDetailAction('comments'); }))
@@ -481,8 +495,13 @@ export struct DetailScreen {
               (): void => { this.onDetailAction('share'); });
           }.width('100%').height(64).padding({ top: 12, bottom: 12 })
             .border({ width: { bottom: 1 }, color: '#E5E8EC' });
-          ForEach(this.videos, (item: VideoItem) => {
-            if (!item.placeholder) {
+          if (this.relatedLoading && this.relatedVideos.length === 0) {
+            loadingIndicator('正在加载推荐视频', '#59616B');
+          } else if (this.relatedVideos.length === 0) {
+            Text('暂无推荐视频').fontSize(13).fontColor('#858C94')
+              .width('100%').textAlign(TextAlign.Center).padding({ top: 20, bottom: 20 });
+          } else {
+            ForEach(this.relatedVideos, (item: VideoItem) => {
               Row({ space: 10 }) {
                 Image(item.cover).width(132).height(76).borderRadius(8);
                 Column({ space: 5 }) {
@@ -514,8 +533,8 @@ export struct DetailScreen {
               }.width('100%').onClick(() => {
                 this.onOpenRelated(item, this.detailSection === 1);
               });
-            }
-          }, (item: VideoItem) => `related_${item.id}`);
+            }, (item: VideoItem) => `related_${item.id}`);
+          }
       }.width('100%').alignItems(HorizontalAlign.Start)
         .padding({ left: 16, right: 16, top: 14, bottom: this.bottomInset + 30 });
     }.layoutWeight(1).width('100%').scrollBar(BarState.Off).backgroundColor(Color.White);

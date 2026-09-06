@@ -125,6 +125,9 @@ struct Index {
   private playbackControlsTimer: number = 0;
   private hasMoreRecommendations: boolean = true;
   @Provide videos: VideoItem[] = Index.placeholderVideos();
+  @Provide relatedVideos: VideoItem[] = [];
+  @Provide relatedLoading: boolean = false;
+  private relatedRequest: number = 0;
 
   private static placeholderVideos(): VideoItem[] {
     const result: VideoItem[] = [];
@@ -499,6 +502,39 @@ struct Index {
     }
   }
 
+  /**
+   * 相关推荐流：详情页底部列表与竖屏化随机连播/播完推荐共用；
+   * 排除当前视频、看过的（含未看完，按播放记忆）与过滤词命中的条目。
+   */
+  private async loadRelatedVideos(): Promise<void> {
+    const item: VideoItem = this.videos[this.currentIndex];
+    if (item.placeholder || item.aid <= 0) {
+      this.relatedVideos = [];
+      this.relatedLoading = false;
+      return;
+    }
+    const requestId: number = this.relatedRequest + 1;
+    this.relatedRequest = requestId;
+    this.relatedLoading = true;
+    try {
+      const list: VideoItem[] = await VideoDetailService.loadRelated(item);
+      const seen: Set<string> = new Set<string>([item.bvid !== '' ? item.bvid : `${item.aid}`]);
+      const fresh: VideoItem[] = list.filter((candidate: VideoItem): boolean => {
+        const key: string = candidate.bvid !== '' ? candidate.bvid : `${candidate.aid}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return !FilterWords.isVideoFiltered(candidate.title)
+          && PlaybackMemory.progressOf(candidate.aid) <= 0;
+      });
+      if (requestId === this.relatedRequest) this.relatedVideos = fresh;
+    } catch (error) {
+      console.warn(`Pilihos related videos failed: ${String(error)}`);
+      if (requestId === this.relatedRequest) this.relatedVideos = [];
+    } finally {
+      if (requestId === this.relatedRequest) this.relatedLoading = false;
+    }
+  }
+
   private shareCurrentVideo(): void {
     const item: VideoItem = this.videos[this.currentIndex];
     const uri: string = item.bvid !== '' ? `https://www.bilibili.com/video/${item.bvid}/` :
@@ -855,6 +891,8 @@ struct Index {
     this.videoWeight = 8;
     this.currentQn = 0;
     this.playbackQualities = [];
+    this.relatedVideos = [];
+    this.relatedLoading = false;
     this.showVertical = true;
     // 播放记忆：恢复上次进度，prepared 后自动 seek（看完的视频从头播放）
     // 清掉上一支视频遗留的续播位置，避免新视频从中途"乱跳"
@@ -866,6 +904,7 @@ struct Index {
     }
     this.loadVideoDetail();
     this.loadVideoContext();
+    this.loadRelatedVideos();
     this.prepareCurrentVideo();
     if (showComments) this.loadComments(true);
   }

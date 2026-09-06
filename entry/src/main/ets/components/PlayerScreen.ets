@@ -40,6 +40,7 @@ export struct PlayerScreen {
   @Consume currentQn: number;
   @Consume qualityMenuVisible: boolean;
   @Consume videos: VideoItem[];
+  @Consume relatedVideos: VideoItem[];
   @Consume currentIndex: number;
   @Consume pendingResumeMs: number;
   @Consume playMode: number;
@@ -94,18 +95,6 @@ export struct PlayerScreen {
     }
   }
 
-  private randomRecommendationIndex(): number {
-    const candidates: number[] = [];
-    this.videos.forEach((item: VideoItem, index: number): void => {
-      // 推荐接口的部分条目只有 aid/cid，没有 bvid；只要是可识别的真实视频
-      // 就可以进入结束推荐，详情页会按 aid/cid 重新解析播放地址。
-      const hasVideoIdentity: boolean = item.aid > 0 || item.cid > 0 || item.bvid !== '' || item.playUrl !== '';
-      if (!item.placeholder && index !== this.currentIndex && hasVideoIdentity) candidates.push(index);
-    });
-    if (candidates.length === 0) return -1;
-    return candidates[Math.floor(Math.random() * candidates.length)];
-  }
-
   private markPlaybackFinished(): void {
     if (this.playbackFinished || !this.showVertical) return;
     // 播放模式：单集循环 / 随机连播（竖屏化连播）
@@ -119,9 +108,11 @@ export struct PlayerScreen {
     }
     this.playbackFinished = true;
     this.playbackPaused = true;
-    this.recommendedPlaybackIndex = this.randomRecommendationIndex();
-    // 播放结束：隐藏全部控件，呈现黑屏居中推荐
-    this.playbackControlsVisible = false;
+    // 播完推荐从相关视频池随机取（详情页底部列表同源）
+    this.recommendedPlaybackIndex = this.relatedVideos.length > 0
+      ? Math.floor(Math.random() * this.relatedVideos.length) : -1;
+    // 播放结束：隐藏全部控件，呈现黑屏居中推荐；无推荐时保留控制条便于重播
+    this.playbackControlsVisible = this.recommendedPlaybackIndex < 0;
   }
 
   private replayFinishedVideo(): void {
@@ -130,11 +121,23 @@ export struct PlayerScreen {
   }
 
   private playRecommendedVideo(): void {
-    if (this.recommendedPlaybackIndex < 0) return;
+    if (this.recommendedPlaybackIndex < 0
+      || this.recommendedPlaybackIndex >= this.relatedVideos.length) return;
+    this.openRelatedItem(this.relatedVideos[this.recommendedPlaybackIndex]);
+  }
+
+  /**
+   * 相关视频不在原信息流中：追加进播放序列末尾再走 openVideoDetail
+   * 必经路径（重置状态并为新视频加载相关推荐，竖屏化状态保持不变）。
+   */
+  private openRelatedItem(item: VideoItem): void {
     this.savePlaybackProgress();
-    this.currentIndex = this.recommendedPlaybackIndex;
     this.playbackFinished = false;
-    this.onOpenVideo(this.videos[this.currentIndex], false);
+    this.videos = this.videos.concat([item]);
+    this.relatedVideos = this.relatedVideos.filter((candidate: VideoItem): boolean =>
+      candidate !== item);
+    this.currentIndex = this.videos.length - 1;
+    this.onOpenVideo(item, false);
   }
 
   private savePlaybackProgress(): void {
@@ -363,13 +366,13 @@ export struct PlayerScreen {
     const dy: number = event.offsetY;
     if (this.gestureMode === '') {
       if (this.verticalExpanded) {
-        // 竖屏化：上下滑切换视频；位移未达阈值前不决策，避免首帧小位移误入亮度/音量模式
-        if (dy < -14) {
-          this.gestureMode = 'swipeNext';
-        } else if (dy > 14) {
-          this.gestureMode = 'swipePrev';
+        // 竖屏化：快速轻扫（≥600vp/s）切换视频（上=下一个/下=上一个），
+        // 慢速拖动仍调亮度/音量（左半屏亮度、右半屏音量）；位移达阈值前不决策
+        if (Math.abs(dy) < 14) return;
+        if (Math.abs(event.velocityY) >= 600) {
+          this.gestureMode = dy < 0 ? 'swipeNext' : 'swipePrev';
+          return;
         }
-        return;
       }
       const localX: number = event.fingerList.length > 0 ? event.fingerList[0].localX : this.surfaceWidth / 2;
       this.gestureMode = localX < this.surfaceWidth / 2 ? 'brightness' : 'volume';
@@ -397,16 +400,18 @@ export struct PlayerScreen {
   }
 
   /**
-   * 随机连播与上滑共用：切到下一个推荐视频（保持竖屏化状态）
+   * 随机连播与上滑共用：切到相关推荐里的随机视频（保持竖屏化状态）；
+   * 池由 Index 按当前视频的相似视频构建，已排除看过的（含未看完）。
    */
   private playNextRandom(): void {
     this.savePlaybackProgress();
-    this.recommendedPlaybackIndex = this.randomRecommendationIndex();
-    if (this.recommendedPlaybackIndex < 0) {
+    if (this.relatedVideos.length === 0) {
       this.showPlaybackToast('没有可播放的推荐视频');
       return;
     }
-    this.playRecommendedVideo();
+    const item: VideoItem =
+      this.relatedVideos[Math.floor(Math.random() * this.relatedVideos.length)];
+    this.openRelatedItem(item);
   }
 
   /**

@@ -70,4 +70,60 @@ export class VideoDetailService {
       videoHeight: Number(dimension['height'] ?? 0)
     };
   }
+
+  /**
+   * 相关推荐：/x/web-interface/archive/related（公开接口，无需登录），
+   * 供详情页底部推荐与竖屏化随机连播取"相似风格"视频；不覆盖 tags/详情。
+   */
+  static async loadRelated(item: VideoItem): Promise<VideoItem[]> {
+    const query: Record<string, string> = {};
+    if (item.bvid !== '') {
+      query['bvid'] = item.bvid;
+    } else {
+      query['aid'] = String(item.aid);
+    }
+    const result: Record<string, Object> =
+      await BiliHttpClient.getJson('/x/web-interface/archive/related', query);
+    if (Number(result['code'] ?? -1) !== 0) {
+      throw new Error(String(result['message'] ?? '相关推荐获取失败'));
+    }
+    const list: Object[] = (result['data'] as Object[]) ?? [];
+    const items: VideoItem[] = [];
+    list.forEach((raw: Object): void => {
+      const record: Record<string, Object> = raw as Record<string, Object>;
+      const owner: Record<string, Object> = (record['owner'] ?? {}) as Record<string, Object>;
+      const stat: Record<string, Object> = (record['stat'] ?? {}) as Record<string, Object>;
+      const dimension: Record<string, Object> = (record['dimension'] ?? {}) as Record<string, Object>;
+      const aid: number = Number(record['aid'] ?? 0);
+      if (aid <= 0) return;
+      items.push({
+        id: aid,
+        aid: aid,
+        bvid: String(record['bvid'] ?? ''),
+        cid: Number(record['cid'] ?? 0),
+        title: String(record['title'] ?? ''),
+        author: String(owner['name'] ?? ''),
+        authorFace: String(owner['face'] ?? ''),
+        authorMid: Number(owner['mid'] ?? 0),
+        cover: String(record['pic'] ?? ''),
+        viewCount: Number(stat['view'] ?? 0),
+        danmuCount: Number(stat['danmaku'] ?? 0),
+        likeCount: Number(stat['like'] ?? 0),
+        commentCount: Number(stat['reply'] ?? 0),
+        favoriteCount: Number(stat['favorite'] ?? 0),
+        coinCount: Number(stat['coin'] ?? 0),
+        followed: false,
+        duration: Number(record['duration'] ?? 0),
+        playUrl: '',
+        placeholder: false,
+        publishTime: Number(record['pubdate'] ?? 0),
+        description: String(record['desc'] ?? ''),
+        tags: [],
+        detailLoaded: false,
+        videoWidth: Number(dimension['width'] ?? 0),
+        videoHeight: Number(dimension['height'] ?? 0)
+      });
+    });
+    return items;
+  }
 }
