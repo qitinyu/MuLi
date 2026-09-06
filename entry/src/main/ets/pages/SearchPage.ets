@@ -1,7 +1,10 @@
 import { VideoItem } from '../models/VideoItem';
 import { AuthService } from '../services/AuthService';
 import { SearchSeason, SearchService, SearchUser } from '../services/SearchService';
+import { InteractionService } from '../services/InteractionService';
 import { WbiService } from '../services/WbiService';
+import { FormatUtils } from '../utils/FormatUtils';
+import { FollowState } from '../utils/FollowState';
 import { ImmersiveMaterial } from '../utils/ImmersiveMaterial';
 import router from '@ohos.router';
 import common from '@ohos.app.ability.common';
@@ -27,7 +30,11 @@ struct SearchPage {
   @State searchHistory: string[] = [];
   @State searchHistoryEnabled: boolean = false;
   @State searched: boolean = false;
+  @State searchLayer: number = 0; // 0=搜索首页层 1=结果层
+  @State hotWords: string[] = [];
+  @State portraitBadge: boolean = true;
   @State topInset: number = 0;
+  @State followMenuUser: SearchUser | null = null;
   private context: common.UIAbilityContext = getContext(this) as common.UIAbilityContext;
   private typeItems: SearchTypeItem[] = SearchPage.buildTypeItems();
 
@@ -44,9 +51,14 @@ struct SearchPage {
     return items;
   }
 
+  static orderItems(): string[][] {
+    return [['', '默认排序'], ['click', '播放多'], ['pubdate', '最新发布'], ['dm', '弹幕最多']];
+  }
+
   aboutToAppear(): void {
     this.updateSystemInsets();
     this.loadSearchSettings();
+    this.loadHotWords();
     // 提前拉取 WBI 签名密钥，避免首次回车搜索等待
     WbiService.warmup();
   }
@@ -78,11 +90,27 @@ struct SearchPage {
     }
   }
 
+  private async loadHotWords(): Promise<void> {
+    try {
+      this.hotWords = await SearchService.loadHotSearch();
+    } catch (error) {
+      console.warn(`Pilihos hot search failed: ${String(error)}`);
+    }
+  }
+
   private switchType(value: string): void {
     if (this.searchType === value) return;
     this.searchType = value;
     if (this.searchText.trim() !== '' && this.searched) {
       this.submitVideoSearch(this.searchText);
+    }
+  }
+
+  private backAction(): void {
+    if (this.searchLayer === 1) {
+      this.searchLayer = 0;
+    } else {
+      router.back();
     }
   }
 
@@ -97,6 +125,7 @@ struct SearchPage {
     if (this.searchLoading) return;
     this.searchText = value;
     this.searchLoading = true;
+    this.searchLayer = 1;
     console.info(`Pilihos search submit: type=${this.searchType}, keyword=${value}`);
     this.searchError = '';
     this.searchResults = [];
@@ -112,6 +141,7 @@ struct SearchPage {
       this.searchSeasons = batch.seasons;
       if (batch.videos.length + batch.users.length + batch.seasons.length > 0) {
         await this.rememberSearch(value);
+        this.loadUserRelations();
       } else {
         this.showToast('没有找到相关内容');
       }
@@ -125,12 +155,66 @@ struct SearchPage {
     }
   }
 
+  /**
+   * 逐个核对搜索结果中 UP 主的关注状态（数量少，串行即可）
+   */
+  private async loadUserRelations(): Promise<void> {
+    const session = AuthService.currentSession();
+    if (session === null || session.cookie === '') return;
+    for (let index: number = 0; index < this.searchUsers.length && index < 8; index++) {
+      const user: SearchUser = this.searchUsers[index];
+      if (user.mid <= 0) continue;
+      try {
+        const attribute: number = await InteractionService.relationAttribute(user.mid, session.cookie);
+        const followed: boolean = attribute === 2 || attribute === 6 || attribute === 128;
+        if (followed !== user.followed) {
+          user.followed = followed;
+          this.searchUsers = this.searchUsers.slice(0);
+        }
+      } catch (error) {
+        // 忽略单个用户状态获取失败
+      }
+    }
+  }
+
+  private async toggleUserFollow(user: SearchUser, special: boolean): Promise<void> {
+    const session = AuthService.currentSession();
+    if (session === null || session.cookie === '' || session.csrf === '') {
+      this.showToast('请先登录后再关注');
+      return;
+    }
+    if (user.followed) {
+      // 已关注：点击气泡直接取关
+      try {
+        await InteractionService.follow(user.mid, false, session.cookie, session.csrf, '11');
+        user.followed = false;
+        FollowState.setFollowed(user.mid, user.uname, false);
+        this.searchUsers = this.searchUsers.slice(0);
+        this.showToast('已取消关注');
+      } catch (error) {
+        this.showToast(`取关失败: ${String(error)}`);
+      }
+      return;
+    }
+    try {
+      await InteractionService.follow(user.mid, true, session.cookie, session.csrf, '11');
+      user.followed = true;
+      FollowState.setFollowed(user.mid, user.uname, true);
+      this.searchUsers = this.searchUsers.slice(0);
+      this.showToast(special ? `已特别关注 ${user.uname}` : `已关注 ${user.uname}`);
+    } catch (error) {
+      this.showToast(`关注失败: ${String(error)}`);
+    }
+  }
+
   private async loadSearchSettings(): Promise<void> {
     try {
       const store: preferences.Preferences = await preferences.getPreferences(this.context, 'pilihos_search');
       this.searchHistoryEnabled = store.getSync('history_enabled', false) as boolean;
       const saved: string = store.getSync('history', '') as string;
       this.searchHistory = saved === '' ? [] : saved.split('|').filter((item: string): boolean => item !== '');
+      const uiStore: preferences.Preferences = await preferences.getPreferences(this.context, 'pilihos_ui');
+      this.portraitBadge = uiStore.getSync('portrait_badge', true) as boolean;
     } catch (error) {
       console.error(`Pilihos search settings load failed: ${String(error)}`);
     }
@@ -203,9 +287,7 @@ struct SearchPage {
   }
 
   private formatCount(value: number): string {
-    if (value >= 100000000) return `${(value / 100000000).toFixed(2).replace(/\.00$/, '')}亿`;
-    if (value >= 10000) return `${(value / 10000).toFixed(1).replace(/\.0$/, '')}万`;
-    return `${value}`;
+    return FormatUtils.formatCount(value);
   }
 
   private formatPlaybackTime(valueMs: number): string {
@@ -244,13 +326,62 @@ struct SearchPage {
   }
 
   @Builder
+  sortRow() {
+    if (this.searchType === 'video' && this.searched) {
+      Scroll() {
+        Row({ space: 10 }) {
+          ForEach(SearchPage.orderItems(), (item: string[]) => {
+            Text(item[1]).fontSize(13)
+              .fontColor(this.searchOrder === item[0] ? '#1677A8' : '#59616B')
+              .fontWeight(this.searchOrder === item[0] ? FontWeight.Bold : FontWeight.Normal)
+              .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+              .backgroundColor(this.searchOrder === item[0] ? '#E5F3FA' : Color.White)
+              .borderRadius(14)
+              .onClick((): void => {
+                if (this.searchOrder === item[0]) return;
+                this.searchOrder = item[0];
+                this.submitVideoSearch(this.searchText);
+              });
+          }, (item: string[]) => item[0]);
+        }.padding({ left: 18, right: 18 });
+      }.width('100%').height(40)
+        .scrollable(ScrollDirection.Horizontal).scrollBar(BarState.Off);
+    }
+  }
+
+  @Builder
+  hotPanel() {
+    if (this.hotWords.length > 0) {
+      Row() {
+        Text('热搜').fontSize(17).fontWeight(FontWeight.Medium).fontColor('#20242A').layoutWeight(1);
+      }.width('100%').padding({ left: 18, right: 18, top: 16, bottom: 8 });
+      Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Start }) {
+        ForEach(this.hotWords, (word: string, index: number) => {
+          Row({ space: 5 }) {
+            Text(String(index + 1)).fontSize(12)
+              .fontColor(index < 3 ? '#F04B55' : '#A4A9AF')
+              .fontWeight(FontWeight.Bold);
+            Text(word).fontSize(14).fontColor('#20242A')
+              .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis });
+          }
+          .constraintSize({ maxWidth: '46%' })
+          .padding({ left: 10, right: 10, top: 8, bottom: 8 })
+          .margin({ right: 8, bottom: 8 })
+          .backgroundColor('#F1F4F6').borderRadius(16)
+          .onClick(() => { this.useSearchHistory(word); });
+        }, (word: string) => word);
+      }.width('100%').padding({ left: 18, right: 18, bottom: 8 });
+    }
+  }
+
+  @Builder
   searchHistoryPanel() {
     if (this.searchHistoryEnabled && this.searchHistory.length > 0) {
       Row() {
         Text('搜索历史').fontSize(17).fontWeight(FontWeight.Medium).fontColor('#20242A').layoutWeight(1);
         Text('清空').fontSize(13).fontColor('#8B9199').onClick(() => { this.clearSearchHistory(); });
       }.width('100%').padding({ left: 18, right: 18, top: 16, bottom: 8 });
-      // 注意：这里不能用 Grid——Grid 未设高度会占满整列，把下方结果区压成 0 高度
+      // 注意：这里不能用 Grid——Grid 未设高度会占满整列，把下方内容压成 0 高度
       Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Start }) {
         ForEach(this.searchHistory, (keyword: string) => {
           Text(keyword).fontSize(keyword.length > 8 ? 12 : 14).fontColor('#59616B')
@@ -268,66 +399,159 @@ struct SearchPage {
     }
   }
 
+  /**
+   * 搜索结果视频卡片：样式与推荐流卡片一致
+   */
   @Builder
   searchResultCard(item: VideoItem) {
-    Row({ space: 12 }) {
+    Column({ space: 6 }) {
       Stack() {
-        Image(item.cover).width('100%').height('100%').objectFit(ImageFit.Cover)
-          .borderRadius(10);
-        Text(this.formatPlaybackTime(item.duration * 1000))
-          .fontSize(11).fontColor(Color.White).backgroundColor('#B0000000')
-          .padding({ left: 5, right: 5, top: 3, bottom: 3 }).borderRadius(4)
-          .position({ right: 5, bottom: 5 });
-      }.width('42%').aspectRatio(16 / 9);
-      Column({ space: 7 }) {
-        Text(item.title).fontSize(16).fontColor('#20242A').maxLines(2)
-          .textOverflow({ overflow: TextOverflow.Ellipsis }).width('100%');
-        Text(item.author === '' ? '未知用户' : item.author).fontSize(12).fontColor('#8B9199')
-          .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis }).width('100%');
-        Row({ space: 12 }) {
-          Text(this.formatCount(item.viewCount) + '播放').fontSize(12).fontColor('#8B9199');
-          Text(this.formatCount(item.danmuCount) + '弹幕').fontSize(12).fontColor('#8B9199');
+        if (item.cover !== '') {
+          Image(item.cover).width('100%').aspectRatio(1.62).objectFit(ImageFit.Cover);
+        } else {
+          Row().width('100%').aspectRatio(1.62).backgroundColor('#DCE3EF');
         }
-      }.layoutWeight(1).alignItems(HorizontalAlign.Start);
+      }
+      .borderRadius(10)
+      .clip(true);
+      Text(item.title).fontSize(14).maxLines(2).fontWeight(FontWeight.Medium).lineHeight(22);
+      Row() {
+        Row({ space: 4 }) {
+          Image($r('app.media.bfl')).width(14).height(14);
+          Text(this.formatCount(item.viewCount)).fontSize(11).fontColor('#8B9199');
+        }.layoutWeight(1);
+        Row({ space: 4 }) {
+          Image($r('app.media.dm')).width(14).height(14);
+          Text(this.formatCount(item.danmuCount)).fontSize(11).fontColor('#8B9199');
+        }.layoutWeight(1);
+        if (FormatUtils.isPortraitVideo(item, this.portraitBadge)) {
+          Text('竖屏').fontSize(10).fontColor('#E661A0')
+            .padding({ left: 5, right: 5, top: 2, bottom: 2 })
+            .backgroundColor('#1AE661A0').borderRadius(4);
+        }
+      }.width('100%');
+      Row() {
+        Text(`@${item.author}`).fontSize(11).fontColor('#8B9199').layoutWeight(1)
+          .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis });
+        Text(FormatUtils.formatPublishTime(item.publishTime)).fontSize(11).fontColor('#8B9199');
+      }.width('100%');
     }
-    .width('100%').padding({ left: 16, right: 16, top: 10, bottom: 10 })
+    .padding({ left: 8, right: 8, top: 8, bottom: 8 })
     .backgroundColor(Color.White)
+    .borderRadius(12)
+    .height(210)
     .onClick((): void => { this.openSearchResult(item); });
   }
 
   @Builder
+  followOptionsMenu(user: SearchUser) {
+    Column({ space: 2 }) {
+      Text('只是关注').fontSize(13).fontColor('#1E252D')
+        .width('100%').height(34).textAlign(TextAlign.Center)
+        .onClick((): void => {
+          this.followMenuUser = null;
+          this.toggleUserFollow(user, false);
+        });
+      Text('特别关注').fontSize(13).fontColor('#1E252D')
+        .width('100%').height(34).textAlign(TextAlign.Center)
+        .onClick((): void => {
+          this.followMenuUser = null;
+          this.toggleUserFollow(user, true);
+        });
+      Text('设置分组').fontSize(13).fontColor('#1E252D')
+        .width('100%').height(34).textAlign(TextAlign.Center)
+        .onClick((): void => {
+          this.followMenuUser = null;
+          this.showToast('分组管理开发中，敬请期待');
+        });
+    }.width(124).padding({ top: 6, bottom: 6 }).backgroundColor('#F7F8FA')
+      .borderRadius(10).shadow({ radius: 10, color: '#33000000', offsetX: 0, offsetY: 3 });
+  }
+
+  @Builder
+  followBubble(user: SearchUser) {
+    Row({ space: 4 }) {
+      Image($r('app.media.lista')).width(14).height(14)
+        .fillColor(user.followed ? '#59616B' : '#1677A8');
+      Text(user.followed ? '已关注' : '关注')
+        .fontSize(12)
+        .fontColor(user.followed ? '#59616B' : '#1677A8');
+    }
+    .padding({ left: 10, right: 10, top: 5, bottom: 5 })
+    .backgroundColor(user.followed ? '#F1F3F5' : '#E5F3FA')
+    .borderRadius(15)
+    .bindMenu(this.followMenuUser !== null && this.followMenuUser.mid === user.mid && !user.followed,
+      this.followOptionsMenu(user), {
+        placement: Placement.Bottom,
+        enableArrow: false,
+        showInSubWindow: true
+      })
+    .onClick((): void => {
+      if (user.followed) {
+        this.toggleUserFollow(user, false);
+      } else {
+        // 首次关注：先弹出关注方式选择
+        this.followMenuUser = user;
+      }
+    });
+  }
+
+  /**
+   * UP主结果卡片：徽章紧跟名称、直播头像红框标记、关注气泡
+   */
+  @Builder
   userResultCard(user: SearchUser) {
     Row({ space: 12 }) {
-      if (user.face !== '') {
-        Image(user.face).width(52).height(52).borderRadius(26).objectFit(ImageFit.Cover);
-      } else {
-        Row().width(52).height(52).borderRadius(26).backgroundColor('#DCE3EF');
-      }
+      Column({ space: 3 }) {
+        Stack() {
+          if (user.face !== '') {
+            Image(user.face).width(52).height(52).borderRadius(26).objectFit(ImageFit.Cover);
+          } else {
+            Row().width(52).height(52).borderRadius(26).backgroundColor('#DCE3EF');
+          }
+          if (user.liveRoomId > 0) {
+            // 直播中：头像外围红色标记框
+            Row()
+              .width(58).height(58)
+              .border({ width: 2, color: '#F04B55' })
+              .borderRadius(29)
+          }
+        }.width(58).height(58);
+        if (user.liveRoomId > 0) {
+          Text('直播中').fontSize(9).fontColor(Color.White)
+            .backgroundColor('#F04B55')
+            .padding({ left: 5, right: 5, top: 1, bottom: 1 })
+            .borderRadius(4);
+        }
+      }.alignItems(HorizontalAlign.Center);
       Column({ space: 5 }) {
         Row({ space: 6 }) {
           Text(user.uname === '' ? '未知用户' : user.uname).fontSize(16).fontColor('#20242A')
             .fontWeight(FontWeight.Medium).maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis }).layoutWeight(1);
-          if (user.liveRoomId > 0) {
-            Text('直播中').fontSize(10).fontColor(Color.White)
-              .backgroundColor('#E6000044').borderRadius(4)
-              .padding({ left: 5, right: 5, top: 2, bottom: 2 });
-          }
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .constraintSize({ maxWidth: '55%' });
+          Text('LV' + String(user.level)).fontSize(9).fontColor(Color.White)
+            .backgroundColor(user.level >= 6 ? '#E661A0' : user.level >= 4 ? '#1677A8' : '#9AA4AE')
+            .borderRadius(3).padding({ left: 3, right: 3, top: 1, bottom: 1 });
+          Blank().layoutWeight(1);
+          this.followBubble(user);
         }.width('100%');
         Text(user.sign === '' ? '暂无简介' : user.sign).fontSize(12).fontColor('#8B9199')
           .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis }).width('100%');
         Row({ space: 12 }) {
           Text(this.formatCount(user.fans) + ' 粉丝').fontSize(12).fontColor('#8B9199');
           Text(this.formatCount(user.videoCount) + ' 投稿').fontSize(12).fontColor('#8B9199');
-          Text('LV' + String(user.level)).fontSize(10).fontColor(Color.White)
-            .backgroundColor(user.level >= 6 ? '#E661A0' : user.level >= 4 ? '#1677A8' : '#9AA4AE')
-            .borderRadius(3).padding({ left: 3, right: 3, top: 1, bottom: 1 });
-        }
+        }.width('100%');
       }.layoutWeight(1).alignItems(HorizontalAlign.Start);
     }
     .width('100%').padding({ left: 16, right: 16, top: 10, bottom: 10 })
     .backgroundColor(Color.White)
-    .onClick((): void => { router.pushUrl({ url: 'pages/UserSpace', params: { mid: user.mid, name: user.uname } }).catch((error: Object): void => { console.error('Pilihos user space push failed: ' + String(error)); }); });
+    .onClick((): void => {
+      router.pushUrl({ url: 'pages/UserSpace', params: { mid: user.mid, name: user.uname } })
+        .catch((error: Object): void => {
+          console.error('Pilihos user space push failed: ' + String(error));
+        });
+    });
   }
 
   @Builder
@@ -352,31 +576,56 @@ struct SearchPage {
   }
 
   @Builder
-  sortRow() {
-    if (this.searchType === 'video' && this.searched) {
+  resultSection() {
+    if (this.searchLoading) {
+      Column() {
+        this.loadingIndicator('正在搜索...', '#1677A8');
+      }.layoutWeight(1).width('100%').justifyContent(FlexAlign.Center);
+    } else if (this.searchType === 'video' && this.searchResults.length > 0) {
       Scroll() {
-        Row({ space: 10 }) {
-          ForEach(SearchPage.orderItems(), (item: string[]) => {
-            Text(item[1]).fontSize(13)
-              .fontColor(this.searchOrder === item[0] ? '#1677A8' : '#59616B')
-              .fontWeight(this.searchOrder === item[0] ? FontWeight.Bold : FontWeight.Normal)
-              .padding({ left: 12, right: 12, top: 6, bottom: 6 })
-              .backgroundColor(this.searchOrder === item[0] ? '#E5F3FA' : Color.White)
-              .borderRadius(14)
-              .onClick((): void => {
-                if (this.searchOrder === item[0]) return;
-                this.searchOrder = item[0];
-                this.submitVideoSearch(this.searchText);
-              });
-          }, (item: string[]) => item[0]);
-        }.padding({ left: 18, right: 18 });
-      }.width('100%').height(40)
-        .scrollable(ScrollDirection.Horizontal).scrollBar(BarState.Off);
+        Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Start }) {
+          ForEach(this.searchResults, (item: VideoItem) => {
+            Column() {
+              this.searchResultCard(item);
+            }.width('50%')
+              .padding({ left: 6, right: 6, bottom: 10 });
+          }, (item: VideoItem) => `${item.id}-${item.bvid}`);
+        }.width('100%').padding({ top: 4 });
+      }.layoutWeight(1).width('100%').scrollBar(BarState.Off);
+    } else if (this.searchResults.length > 0) {
+      Scroll() {
+        Column({ space: 10 }) {
+          ForEach(this.searchResults, (item: VideoItem) => {
+            this.searchResultCard(item);
+          }, (item: VideoItem) => `full_${item.id}-${item.bvid}`);
+        }.width('100%');
+      }.layoutWeight(1).width('100%').scrollBar(BarState.Off);
+    } else if (this.searchUsers.length > 0) {
+      Scroll() {
+        Column({ space: 10 }) {
+          ForEach(this.searchUsers, (user: SearchUser) => {
+            this.userResultCard(user);
+          }, (user: SearchUser) => `user_${user.mid}_${user.followed}`);
+        }.width('100%');
+      }.layoutWeight(1).width('100%').scrollBar(BarState.Off);
+    } else if (this.searchSeasons.length > 0) {
+      Scroll() {
+        Column({ space: 10 }) {
+          ForEach(this.searchSeasons, (season: SearchSeason) => {
+            this.seasonResultCard(season);
+          }, (season: SearchSeason) => `season_${season.seasonId}`);
+        }.width('100%');
+      }.layoutWeight(1).width('100%').scrollBar(BarState.Off);
+    } else if (this.searched) {
+      Column() {
+        Text(this.searchError !== '' ? this.searchError : '没有找到相关内容')
+          .fontSize(14).fontColor('#8B9199');
+      }.layoutWeight(1).width('100%').justifyContent(FlexAlign.Center);
+    } else {
+      Column() {
+        Text('输入关键词开始搜索').fontSize(14).fontColor('#8B9199');
+      }.layoutWeight(1).width('100%').justifyContent(FlexAlign.Center);
     }
-  }
-
-  static orderItems(): string[][] {
-    return [['', '默认排序'], ['click', '播放多'], ['pubdate', '最新发布'], ['dm', '弹幕最多']];
   }
 
   build() {
@@ -390,7 +639,7 @@ struct SearchPage {
         .borderRadius(24)
         .backgroundBlurStyle(ImmersiveMaterial.blurStyle(), { colorMode: ThemeColorMode.LIGHT })
         .shadow({ radius: 8, color: '#25000000', offsetX: 0, offsetY: 2 })
-        .onClick(() => { router.back(); });
+        .onClick(() => { this.backAction(); });
         Search({ placeholder: '搜索', value: this.searchText })
           .layoutWeight(1).height(48).backgroundColor(ImmersiveMaterial.fallbackBackground())
           .borderRadius(24).backgroundBlurStyle(ImmersiveMaterial.blurStyle(), { colorMode: ThemeColorMode.LIGHT })
@@ -404,47 +653,22 @@ struct SearchPage {
             this.submitVideoSearch(keyword);
           });
       }
-      .width('100%').padding({ left: 10, right: 10, top: this.topInset + 8, bottom: 8 });
-      this.typeTabs();
-      this.searchHistoryPanel();
-      this.sortRow();
-      if (this.searchLoading) {
-        Column() {
-          this.loadingIndicator('正在搜索...', '#1677A8');
-        }.layoutWeight(1).width('100%').justifyContent(FlexAlign.Center);
-      } else if (this.searchResults.length > 0) {
+      .width('100%')
+      .padding({ left: 10, right: 10, top: this.topInset + 8, bottom: 8 });
+
+      if (this.searchLayer === 0) {
+        // 第一层：搜索栏 + 热搜 + 历史记录
         Scroll() {
           Column() {
-            ForEach(this.searchResults, (item: VideoItem) => {
-              this.searchResultCard(item);
-            }, (item: VideoItem) => `${item.id}-${item.bvid}`);
+            this.hotPanel();
+            this.searchHistoryPanel();
           }.width('100%');
         }.layoutWeight(1).width('100%').scrollBar(BarState.Off);
-      } else if (this.searchUsers.length > 0) {
-        Scroll() {
-          Column() {
-            ForEach(this.searchUsers, (user: SearchUser) => {
-              this.userResultCard(user);
-            }, (user: SearchUser) => `user_${user.mid}`);
-          }.width('100%');
-        }.layoutWeight(1).width('100%').scrollBar(BarState.Off);
-      } else if (this.searchSeasons.length > 0) {
-        Scroll() {
-          Column() {
-            ForEach(this.searchSeasons, (season: SearchSeason) => {
-              this.seasonResultCard(season);
-            }, (season: SearchSeason) => `season_${season.seasonId}`);
-          }.width('100%');
-        }.layoutWeight(1).width('100%').scrollBar(BarState.Off);
-      } else if (this.searched) {
-        Column() {
-          Text(this.searchError !== '' ? this.searchError : '没有找到相关内容')
-            .fontSize(14).fontColor('#8B9199');
-        }.layoutWeight(1).width('100%').justifyContent(FlexAlign.Center);
       } else {
-        Column() {
-          Text('输入关键词开始搜索').fontSize(14).fontColor('#8B9199');
-        }.layoutWeight(1).width('100%').justifyContent(FlexAlign.Center);
+        // 第二层：筛选项 + 搜索结果
+        this.typeTabs();
+        this.sortRow();
+        this.resultSection();
       }
     }.width('100%').height('100%')
       .alignItems(HorizontalAlign.Start)

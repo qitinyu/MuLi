@@ -11,6 +11,7 @@ export class SearchUser {
   videoCount: number = 0;
   level: number = 0;
   liveRoomId: number = 0;
+  followed: boolean = false;
 }
 
 export class SearchSeason {
@@ -28,6 +29,26 @@ export interface SearchResultBatch {
 }
 
 export class SearchService {
+  /**
+   * 热搜词（搜索首页层）
+   */
+  static async loadHotSearch(cookie: string = ''): Promise<string[]> {
+    const query: Record<string, string> = {};
+    query['limit'] = '10';
+    const result: Record<string, Object> =
+      await BiliHttpClient.getJson('/x/web-interface/search/square', query, cookie);
+    if (Number(result['code'] ?? -1) !== 0) return [];
+    const data: Record<string, Object> = (result['data'] ?? {}) as Record<string, Object>;
+    const trending: Record<string, Object> = (data['trending'] ?? {}) as Record<string, Object>;
+    const list: Object[] = (trending['list'] as Object[]) ?? [];
+    const words: string[] = [];
+    list.forEach((raw: Object): void => {
+      const keyword: string = String((raw as Record<string, Object>)['keyword'] ?? '');
+      if (keyword !== '' && !words.includes(keyword)) words.push(keyword);
+    });
+    return words;
+  }
+
   static async search(type: string, keyword: string, cookie: string = '', order: string = ''): Promise<SearchResultBatch> {
     let lastError: string = '';
     const baseParams: string[] = [
