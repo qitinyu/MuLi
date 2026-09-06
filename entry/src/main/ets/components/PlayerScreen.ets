@@ -3,6 +3,8 @@ import { VideoComment } from '../services/ReplyService';
 import { QualityOption } from '../services/PlaybackService';
 import { PlaybackMemory } from '../utils/PlaybackMemory';
 import common from '@ohos.app.ability.common';
+import window from '@ohos.window';
+import audio from '@ohos.multimedia.audio';
 import { Want } from '@kit.AbilityKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { FormatUtils } from '../utils/FormatUtils';
@@ -44,6 +46,16 @@ export struct PlayerScreen {
   @Consume bottomInset: number;
   private nativeVideoController: VideoController = new VideoController();
   private playbackControlsTimer: number = 0;
+  @State hudText: string = '';
+  @State hudVisible: boolean = false;
+  private hudTimer: number = -1;
+  private surfaceWidth: number = 0;
+  private gestureMode: string = '';
+  private seekBaseMs: number = 0;
+  private seekPreviewMs: number = 0;
+  private startBrightness: number = 0.5;
+  private startVolume: number = 8;
+  private originalBrightness: number = -1;
   onOpenVideo: (item: VideoItem, showComments: boolean) => void =
     (item: VideoItem, showComments: boolean): void => {};
   onLoadComments: (refresh: boolean) => void = (refresh: boolean): void => {};
@@ -190,6 +202,100 @@ export struct PlayerScreen {
     this.nativeVideoController.setCurrentTime(position / 1000);
   }
 
+  aboutToDisappear(): void {
+    // 离开播放器时还原手势调节前的系统亮度
+    if (this.originalBrightness >= 0) {
+      const brightness: number = this.originalBrightness;
+      this.originalBrightness = -1;
+      window.getLastWindow(getContext(this) as common.UIAbilityContext).then((win: window.Window): void => {
+        win.setWindowBrightness(brightness);
+      }).catch((error: BusinessError): void => {
+        console.warn(`Pilihos brightness restore failed: ${String(error)}`);
+      });
+    }
+  }
+
+  private showHud(text: string): void {
+    this.hudText = text;
+    this.hudVisible = true;
+    if (this.hudTimer !== -1) {
+      clearTimeout(this.hudTimer);
+    }
+    this.hudTimer = setTimeout((): void => {
+      this.hudVisible = false;
+      this.hudTimer = -1;
+    }, 900);
+  }
+
+  private formatHudTime(valueMs: number): string {
+    const totalSeconds: number = Math.max(0, Math.floor(valueMs / 1000));
+    const minutes: number = Math.floor(totalSeconds / 60);
+    const seconds: number = totalSeconds % 60;
+    return `${minutes}:${String(seconds).padStart(2, '0')}`;
+  }
+
+  private onGestureStart(_event: GestureEvent): void {
+    this.gestureMode = '';
+    this.seekBaseMs = this.playbackCurrentMs;
+    this.seekPreviewMs = this.playbackCurrentMs;
+    audio.getAudioManager().getVolume(audio.AudioVolumeType.MEDIA).then((volume: number): void => {
+      this.startVolume = volume;
+    }).catch((): void => {
+      this.startVolume = 8;
+    });
+    window.getLastWindow(getContext(this) as common.UIAbilityContext).then((win: window.Window): void => {
+      const brightness: number = win.getWindowProperties().brightness;
+      if (brightness > 0) {
+        this.startBrightness = brightness;
+        if (this.originalBrightness < 0) this.originalBrightness = brightness;
+      }
+    }).catch((): void => {
+      this.startBrightness = 0.5;
+    });
+  }
+
+  private onGestureUpdate(event: GestureEvent): void {
+    if (this.currentUrl === '') return;
+    const dx: number = event.offsetX;
+    const dy: number = event.offsetY;
+    if (this.gestureMode === '') {
+      if (Math.abs(dx) > 14 && Math.abs(dx) > Math.abs(dy)) {
+        this.gestureMode = 'seek';
+      } else if (Math.abs(dy) > 14) {
+        const localX: number = event.fingerList.length > 0 ? event.fingerList[0].localX : this.surfaceWidth / 2;
+        this.gestureMode = localX < this.surfaceWidth / 2 ? 'brightness' : 'volume';
+      } else {
+        return;
+      }
+    }
+    if (this.gestureMode === 'seek') {
+      // 水平滑：预览目标进度，抬手时统一 seek
+      const duration: number = this.playbackDurationMs;
+      this.seekPreviewMs = Math.max(0, Math.min(this.seekBaseMs + dx * 150,
+        duration > 0 ? duration : this.seekBaseMs + dx * 150));
+      const forward: boolean = this.seekPreviewMs >= this.seekBaseMs;
+      this.showHud(`${forward ? '快进' : '快退'} ${this.formatHudTime(this.seekPreviewMs)} / ${this.formatHudTime(this.seekBaseMs)}`);
+    } else if (this.gestureMode === 'brightness') {
+      const brightness: number = Math.max(0.05, Math.min(1, this.startBrightness - dy / 500));
+      window.getLastWindow(getContext(this) as common.UIAbilityContext).then((win: window.Window): void => {
+        win.setWindowBrightness(brightness);
+      }).catch((): void => {});
+      this.showHud(`亮度 ${Math.round(brightness * 100)}%`);
+    } else if (this.gestureMode === 'volume') {
+      const volume: number = Math.max(0, Math.min(15, Math.round(this.startVolume - dy / 500 * 15)));
+      audio.getAudioManager().setVolume(audio.AudioVolumeType.MEDIA, volume).catch((): void => {});
+      this.showHud(`音量 ${volume}/15`);
+    }
+  }
+
+  private onGestureEnd(_event: GestureEvent): void {
+    if (this.gestureMode === 'seek') {
+      this.seekPlayback(this.seekPreviewMs);
+      this.showPlaybackControls();
+    }
+    this.gestureMode = '';
+  }
+
   @Builder
   landscapeSurface() {
     Stack() {
@@ -255,13 +361,28 @@ export struct PlayerScreen {
       .position({ right: 16, bottom: 90 })
       .visibility(this.playbackControlsVisible ? Visibility.Visible : Visibility.None)
       .onClick(() => { this.onOpenLandscape(); });
+      if (this.hudVisible) {
+        Text(this.hudText)
+          .fontSize(14).fontColor(Color.White)
+          .padding({ left: 16, right: 16, top: 8, bottom: 8 })
+          .backgroundColor('#99000000').borderRadius(18)
+      }
     }
     .width('100%').height('100%').backgroundColor(Color.Black)
+    .onAreaChange((_oldArea: Area, newArea: Area): void => {
+      this.surfaceWidth = Number(newArea.width);
+    })
+    .gesture(PanGesture({ fingers: 1, direction: PanDirection.All })
+      .onActionStart((event: GestureEvent): void => { this.onGestureStart(event); })
+      .onActionUpdate((event: GestureEvent): void => { this.onGestureUpdate(event); })
+      .onActionEnd((event: GestureEvent): void => { this.onGestureEnd(event); }))
+    .gesture(TapGesture({ count: 2 }).onAction((): void => { this.togglePlayback(); }))
     .onClick((): void => { this.showPlaybackControls(); });
   }
 
   @Builder
-  detailVideoInner() {
+  gestureLayer() {
+    Stack() {
     if (this.currentUrl === '' && this.videos[this.currentIndex].cover !== '') {
       Image(this.videos[this.currentIndex].cover)
         .width('100%').height('100%').objectFit(ImageFit.Cover);
@@ -336,6 +457,22 @@ export struct PlayerScreen {
     .position({ left: 10, top: 10 })
     .visibility(this.playbackControlsVisible ? Visibility.Visible : Visibility.None)
     .onClick(() => { this.onBack(); });
+    if (this.hudVisible) {
+      Text(this.hudText)
+        .fontSize(14).fontColor(Color.White)
+        .padding({ left: 16, right: 16, top: 8, bottom: 8 })
+        .backgroundColor('#99000000').borderRadius(18)
+    }
+    }
+    .width('100%').height('100%')
+    .onAreaChange((_oldArea: Area, newArea: Area): void => {
+      this.surfaceWidth = Number(newArea.width);
+    })
+    .gesture(PanGesture({ fingers: 1, direction: PanDirection.All })
+      .onActionStart((event: GestureEvent): void => { this.onGestureStart(event); })
+      .onActionUpdate((event: GestureEvent): void => { this.onGestureUpdate(event); })
+      .onActionEnd((event: GestureEvent): void => { this.onGestureEnd(event); }))
+    .gesture(TapGesture({ count: 2 }).onAction((): void => { this.togglePlayback(); }))
   }
 
   build() {
@@ -343,7 +480,7 @@ export struct PlayerScreen {
       this.landscapeSurface();
     } else {
       DetailScreen({
-        videoArea: (): void => { this.detailVideoInner(); },
+        videoArea: (): void => { this.gestureLayer(); },
         episodeListVisible: $episodeListVisible,
         onOpenRelated: (item: VideoItem, showComments: boolean): void => {
           this.onOpenVideo(item, showComments);

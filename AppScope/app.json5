@@ -2,8 +2,8 @@
   "app": {
     "bundleName": "com.pilihos.player",
     "vendor": "Pilihos",
-    "versionCode": 1000015,
-    "versionName": "1.0.5.3",
+    "versionCode": 1000016,
+    "versionName": "1.0.5.4",
     "icon": "$media:app_logo",
     "label": "$string:app_name"
   }
