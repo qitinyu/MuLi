@@ -111,6 +111,15 @@ export struct PlayerScreen {
       return;
     }
     if (this.playMode === 2) {
+      // 随机连播：先随机挑一个推荐视频再切换（索引未计算时入口会被 -1 拦下）
+      this.recommendedPlaybackIndex = this.randomRecommendationIndex();
+      if (this.recommendedPlaybackIndex < 0) {
+        // 没有可推荐的候选，退回默认播完展示
+        this.playbackFinished = true;
+        this.playbackPaused = true;
+        this.playbackControlsVisible = false;
+        return;
+      }
       this.playRecommendedVideo();
       return;
     }

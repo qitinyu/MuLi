@@ -525,22 +525,33 @@ export struct DetailScreen {
   }
 
   @Builder
-  playModeRow(label: string, mode: number, enabled: boolean) {
-    Row() {
-      Text(label).fontSize(15).fontColor(enabled ? '#1E252D' : '#A4A9AF').layoutWeight(1);
-      Checkbox({ name: label, group: 'playmode' })
+  playModeChipPage(label: string, mode: number, enabled: boolean) {
+    Row({ space: 5 }) {
+      Checkbox({ name: 'page_' + label, group: 'page_playmode' })
         .select(this.playMode === mode)
         .selectedColor('#1677A8')
         .enabled(enabled)
+        .width(16)
+        .height(16)
         .onChange((value: boolean) => {
           if (value) {
             this.onSetPlayMode(mode);
           }
         });
-    }.width('100%').height(48)
-      .padding({ left: 16, right: 16 })
-      .backgroundColor(Color.White)
-      .borderRadius(10);
+      Text(label).fontSize(13)
+        .fontColor(enabled ? (this.playMode === mode ? '#1677A8' : '#1E252D') : '#A4A9AF')
+        .fontWeight(this.playMode === mode ? FontWeight.Medium : FontWeight.Normal);
+    }
+    .enabled(enabled)
+    .layoutWeight(1)
+    .justifyContent(FlexAlign.Center)
+    .padding({ top: 8, bottom: 8 })
+    .backgroundColor(this.playMode === mode ? '#E5F3FA' : Color.White)
+    .borderRadius(14)
+    .onClick((): void => {
+      if (!enabled) return;
+      this.onSetPlayMode(mode);
+    });
   }
 
   @Builder
@@ -549,9 +560,11 @@ export struct DetailScreen {
       Column({ space: 12 }) {
         Text('视频播放').fontSize(16).fontWeight(FontWeight.Bold)
           .width('100%').padding({ left: 4 });
-        this.playModeRow('单集循环', 1, true);
-        this.playModeRow('随机连播', 2, true);
-        this.playModeRow('合集循环', 3, false);
+        Row({ space: 6 }) {
+          this.playModeChipPage('单集循环', 1, true);
+          this.playModeChipPage('随机连播', 2, true);
+          this.playModeChipPage('合集循环', 3, false);
+        }.width('100%');
         Text('单集循环：播完自动重播本视频；随机连播：竖屏化时播完自动切换下一个推荐视频')
           .fontSize(11).fontColor('#858C94').lineHeight(16)
           .width('100%').padding({ left: 4 });

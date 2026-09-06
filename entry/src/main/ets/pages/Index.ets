@@ -515,6 +515,7 @@ struct Index {
 
   private async setPlayMode(mode: number): Promise<void> {
     this.playMode = mode;
+    console.info('Pilihos play mode set: ' + String(mode));
     try {
       const store: preferences.Preferences =
         await preferences.getPreferences(this.context, 'pilihos_player');
@@ -1123,29 +1124,54 @@ struct Index {
     return session === null ? '' : session.cookie;
   }
 
+  private playModeLabel(mode: number): string {
+    if (mode === 1) return '单集循环';
+    if (mode === 2) return '随机连播';
+    if (mode === 3) return '合集循环';
+    return '默认';
+  }
+
   @Builder
-  playModeRowSheet(label: string, mode: number, enabled: boolean) {
-    Row() {
-      Text(label).fontSize(15).fontColor(enabled ? '#1E252D' : '#A4A9AF').layoutWeight(1);
-      Checkbox({ name: 'sheet_' + label, group: 'sheet_playmode' })
+  playModeChip(label: string, mode: number, enabled: boolean, group: string) {
+    Row({ space: 5 }) {
+      Checkbox({ name: group + '_' + label, group: group })
         .select(this.playMode === mode)
         .selectedColor('#1677A8')
         .enabled(enabled)
+        .width(16)
+        .height(16)
         .onChange((value: boolean) => {
           if (value) {
             this.setPlayMode(mode);
+            if (enabled) {
+              this.showPlaybackToast('已开启' + label);
+            }
           }
         });
-    }.width('100%').height(46);
+      Text(label).fontSize(13)
+        .fontColor(enabled ? (this.playMode === mode ? '#1677A8' : '#1E252D') : '#A4A9AF')
+        .fontWeight(this.playMode === mode ? FontWeight.Medium : FontWeight.Normal);
+    }
+    .enabled(enabled)
+    .padding({ left: 8, right: 8, top: 6, bottom: 6 })
+    .backgroundColor(this.playMode === mode ? '#E5F3FA' : Color.White)
+    .borderRadius(14)
+    .onClick((): void => {
+      if (!enabled) return;
+      this.setPlayMode(mode);
+      this.showPlaybackToast('已开启' + label);
+    });
   }
 
   @Builder
   playModeSheet() {
     Column({ space: 10 }) {
       Text('视频播放').fontSize(17).fontWeight(FontWeight.Bold).width('100%');
-      this.playModeRowSheet('单集循环', 1, true);
-      this.playModeRowSheet('随机连播', 2, true);
-      this.playModeRowSheet('合集循环', 3, false);
+      Row({ space: 6 }) {
+        this.playModeChip('单集循环', 1, true, 'sheet');
+        this.playModeChip('随机连播', 2, true, 'sheet');
+        this.playModeChip('合集循环', 3, false, 'sheet');
+      }.width('100%');
       Text('单集循环：播完自动重播本视频；随机连播：竖屏化时播完自动播放下一个推荐视频')
         .fontSize(11).fontColor('#858C94').lineHeight(16).width('100%');
     }
