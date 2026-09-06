@@ -2,6 +2,7 @@ import { VideoItem } from '../models/VideoItem';
 import { AuthSession } from '../services/AuthService';
 import { ImmersiveMaterial } from '../utils/ImmersiveMaterial';
 import { FormatUtils } from '../utils/FormatUtils';
+import { FollowState } from '../utils/FollowState';
 import { loadingIndicator } from '../utils/CommonBuilders';
 import { HotPage } from '../pages/HotPage';
 import { LivePage } from '../pages/LivePage';
@@ -22,6 +23,7 @@ export struct HomeTab {
   @Consume loadingMore: boolean;
   @Consume compactGrid: boolean;
   @Consume portraitBadge: boolean;
+  @Consume followStamp: number;
   @Consume topInset: number;
   @Consume bottomInset: number;
   @Link refreshing: boolean;
@@ -140,7 +142,15 @@ export struct HomeTab {
             .padding({ left: 5, right: 5, top: 2, bottom: 2 }).borderRadius(4).margin({ right: 4 });
         }
         if (!item.placeholder) {
-          Text(`@${item.author}`).fontSize(11).fontColor('#8B9199').layoutWeight(1);
+          Row({ space: 4 }) {
+            Text(`@${item.author}`).fontSize(11).fontColor('#8B9199').layoutWeight(1)
+              .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis });
+            if (FollowState.isFollowed(item.authorMid ?? 0, item.author)) {
+              Text('已关注').fontSize(9).fontColor('#1677A8')
+                .padding({ left: 4, right: 4, top: 1, bottom: 1 })
+                .backgroundColor('#1A1677A8').borderRadius(3);
+            }
+          }.layoutWeight(1);
           Text(FormatUtils.formatPublishTime(item.publishTime)).fontSize(11).fontColor('#8B9199');
         }
       }.width('100%');
@@ -188,7 +198,7 @@ export struct HomeTab {
               }
               ForEach(this.videos, (item: VideoItem) => {
                 GridItem() { this.homeCard(item); }
-              }, (item: VideoItem) => `${item.id}`);
+              }, (item: VideoItem) => `${item.id}_${this.followStamp}`);
               if (this.loadingMore) {
                 GridItem() {
                   loadingIndicator('正在加载', '#1677A8');
@@ -215,7 +225,7 @@ export struct HomeTab {
         } else if (this.contentTab === 0) {
           LivePage({ bottomInset: this.bottomInset });
         } else if (this.contentTab === 2) {
-          HotPage({ bottomInset: this.bottomInset, showPortraitBadge: this.portraitBadge });
+          HotPage({ bottomInset: this.bottomInset, showPortraitBadge: this.portraitBadge, followStamp: this.followStamp });
         } else if (this.contentTab === 3) {
           DynamicPage({
             bottomInset: this.bottomInset,

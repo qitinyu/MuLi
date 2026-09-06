@@ -40,6 +40,7 @@ struct Index {
   @Provide videoWeight: number = 8;
   @Provide pendingResumeMs: number = 0;
   @Provide portraitBadge: boolean = true;
+  @Provide followStamp: number = 0;
   @Provide currentIndex: number = 0;
   @Provide loading: boolean = false;
   @Provide loadingMore: boolean = false;
@@ -487,6 +488,7 @@ struct Index {
     try {
       await InteractionService.follow(mid, on, session.cookie, session.csrf, '11');
       FollowState.setFollowed(mid, item.author, on);
+      this.followStamp += 1;
       this.patchCurrentVideo((target: VideoItem): void => {
         target.authorFollowed = on;
       });
@@ -793,7 +795,10 @@ struct Index {
     if (restored === null && current !== null) this.refreshAuthData();
     const cookie: string = this.authSession === null ? '' : this.authSession.cookie;
     if (cookie !== '') {
-      FollowState.refresh(cookie);
+      FollowState.refresh(cookie).then((): void => {
+        // 刷新卡片上的"已关注"标志
+        this.followStamp += 1;
+      });
     }
   }
 
@@ -1117,7 +1122,7 @@ struct Index {
         .width('100%').height('100%')
         .backgroundColor(ImmersiveMaterial.fallbackBackground())
         .backgroundBlurStyle(ImmersiveMaterial.blurStyle(), { colorMode: ThemeColorMode.LIGHT })
-        .transition({ type: TransitionType.Insert, opacity: 0.0 });
+        .transition(TransitionEffect.OPACITY.combine(TransitionEffect.translate({ x: 90 })));
       }
     }.width('100%').height('100%')
       .backgroundColor('#F7F8FA')

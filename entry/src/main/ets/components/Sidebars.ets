@@ -2,9 +2,15 @@ import router from '@ohos.router';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { picker } from '@kit.CoreFileKit';
 import { preferences } from '@kit.ArkData';
-import { AuthSession } from '../services/AuthService';
+import { AuthService, AuthSession } from '../services/AuthService';
 import { ImmersiveMaterial } from '../utils/ImmersiveMaterial';
 import { FormatUtils } from '../utils/FormatUtils';
+
+class LevelTier {
+  from: number = 0;
+  to: number = 0;
+  exp: number = 0;
+}
 
 @Component
 export struct MineSidebar {
@@ -16,10 +22,41 @@ export struct MineSidebar {
   @Consume bottomInset: number;
   @Link showMineCoverSheet: boolean;
   @State mineCoverUri: string = '';
+  @State levelSheetVisible: boolean = false;
   private uiPreferences: preferences.Preferences | null = null;
 
   aboutToAppear(): void {
     this.loadMineCover();
+  }
+
+  private showToast(message: string): void {
+    try {
+      this.getUIContext().getPromptAction().showToast({
+        message: message,
+        duration: 2500,
+        bottom: this.bottomInset + 24
+      });
+    } catch (error) {
+      console.error(`Pilihos mine sidebar toast failed: ${String(error)}`);
+    }
+  }
+
+  private onAvatarTap(): void {
+    if (this.authSession !== null) {
+      // 已登录：单击直接登出
+      this.logout();
+    } else {
+      this.loginVisible = true;
+      this.sidebar = 0;
+      this.loginNotice = '';
+    }
+  }
+
+  private async logout(): Promise<void> {
+    await AuthService.logout();
+    this.authSession = null;
+    this.loginNotice = '已退出登录';
+    this.showToast('已成功登出');
   }
 
   private async loadMineCover(): Promise<void> {
@@ -124,21 +161,58 @@ export struct MineSidebar {
     });
   }
 
+  private static levelTiers(): LevelTier[] {
+    const exps: number[] = [100, 200, 500, 1000, 2000, 3000];
+    const tiers: LevelTier[] = [];
+    for (let level: number = 0; level < 6; level++) {
+      const tier: LevelTier = new LevelTier();
+      tier.from = level;
+      tier.to = level + 1;
+      tier.exp = exps[level];
+      tiers.push(tier);
+    }
+    return tiers;
+  }
+
+  @Builder
+  levelSheet() {
+    Stack({ alignContent: Alignment.Center }) {
+      Column({ space: 14 }) {
+        Text('等级成长').fontSize(18).fontWeight(FontWeight.Bold);
+        Row({ space: 10 }) {
+          Text('LV' + (this.authSession === null ? '0' : String(this.authSession.level)))
+            .fontSize(16).fontWeight(FontWeight.Bold).fontColor('#F08A24');
+          Text('———— →').fontSize(14).fontColor('#858C94');
+          Text('LV' + String(Math.min(6, (this.authSession === null ? 0 : this.authSession.level) + 1)))
+            .fontSize(16).fontWeight(FontWeight.Bold).fontColor('#1677A8');
+        }.alignItems(VerticalAlign.Center);
+        Divider().color('#E9EDF0');
+        ForEach(MineSidebar.levelTiers(), (tier: LevelTier) => {
+          Row() {
+            Text(`LV${tier.from} → LV${tier.to}`).fontSize(13).fontColor('#3E4854').layoutWeight(1);
+            Text(`${tier.exp} 经验`).fontSize(13).fontColor('#858C94');
+          }.width('100%').padding({ top: 5, bottom: 5 });
+        }, (tier: LevelTier) => `tier_${tier.from}`);
+        Text('获取经验：每日登录、观看视频、投币、点赞、分享均可获得经验积分，具体数值以B站官方规则为准')
+          .fontSize(10).fontColor('#A4A9AF').lineHeight(15).width('100%');
+        Button('关闭').height(34).fontSize(13)
+          .onClick((): void => { this.levelSheetVisible = false; });
+      }
+      .width('82%')
+      .padding(20)
+      .backgroundColor(Color.White)
+      .borderRadius(16)
+      .alignItems(HorizontalAlign.Start);
+    }
+    .width('100%').height('100%')
+    .backgroundColor('#66000000')
+    .onClick((): void => { this.levelSheetVisible = false; });
+  }
+
   build() {
     Column({ space: 14 }) {
       Stack() {
         this.mineCoverImage();
-        Button() {
-          Image($r('app.media.jinxin_right')).width(22).height(22);
-        }
-        .type(ButtonType.ROUNDED_RECTANGLE).width(44).height(44)
-        .backgroundColor(ImmersiveMaterial.fallbackBackground())
-        .backgroundBlurStyle(ImmersiveMaterial.blurStyle(), { colorMode: ThemeColorMode.LIGHT })
-        .borderRadius(22)
-        .shadow({ radius: 6, color: '#25000000', offsetX: 0, offsetY: 2 })
-        .position({ top: 12, right: 12 })
-        .zIndex(2)
-        .onClick(() => { this.sidebar = 0; });
       }
       .width('100%').height(150)
       .onClick(() => { this.showMineCoverSheet = true; });
@@ -158,7 +232,8 @@ export struct MineSidebar {
               .margin({ left: 6 })
               .fontSize(11).fontWeight(FontWeight.Bold).fontColor('#FFFFFF')
               .backgroundColor('#F08A24').borderRadius(5)
-              .padding({ left: 5, right: 5, top: 2, bottom: 2 });
+              .padding({ left: 5, right: 5, top: 2, bottom: 2 })
+              .onClick((): void => { this.levelSheetVisible = true; });
           }.width('100%');
           Text(this.authSession === null ? '登录后同步个人签名' :
             (this.authSession.sign === '' ? '这个人很懒，什么都没有留下' : this.authSession.sign))
@@ -174,11 +249,11 @@ export struct MineSidebar {
       }.width('100%').height(92)
         .margin({ top: -36 })
         .alignItems(VerticalAlign.Top)
-        .onClick(() => {
-          this.loginVisible = true;
-          this.sidebar = 0;
-          this.loginNotice = '';
-        });
+        .onClick(() => { this.onAvatarTap(); })
+        .gesture(LongPressGesture({ repeat: false }).onAction((): void => {
+          // 换头像（试行）：复用封面更换弹层
+          this.showMineCoverSheet = true;
+        }));
 
       Row({ space: 8 }) {
         this.mineStat(this.authSession === null ? '0' : FormatUtils.formatCount(this.authSession.dynamicCount), '动态');
@@ -208,6 +283,9 @@ export struct MineSidebar {
       height: SheetSize.FIT_CONTENT,
       dragBar: true,
       showClose: true
+    })
+    .bindContentCover($$this.levelSheetVisible, this.levelSheet(), {
+      modalTransition: ModalTransition.DEFAULT
     });
   }
 }

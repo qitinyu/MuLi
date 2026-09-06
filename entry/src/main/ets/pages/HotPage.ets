@@ -1,6 +1,7 @@
 import router from '@ohos.router';
 import { VideoItem } from '../models/VideoItem';
 import { HotService } from '../services/HotService';
+import { FollowState } from '../utils/FollowState';
 
 // 模块级缓存：版块切入切出保留首次内容，仅手动刷新更新
 let cachedHotList: VideoItem[] = [];
@@ -9,6 +10,7 @@ let cachedHotList: VideoItem[] = [];
 export struct HotPage {
   @Prop bottomInset: number = 8;
   @Prop showPortraitBadge: boolean = true;
+  @Prop followStamp: number = 0;
   @State hotList: VideoItem[] = [];
   @State loading: boolean = true;
   @State loadingMore: boolean = false;
@@ -90,8 +92,15 @@ export struct HotPage {
       }.width('100%');
       Text(item.title).fontSize(14).fontColor('#20242A').maxLines(2)
         .textOverflow({ overflow: TextOverflow.Ellipsis }).width('100%').lineHeight(20);
-      Text(item.author === '' ? '未知用户' : item.author).fontSize(12).fontColor('#8B9199')
-        .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis }).width('100%');
+      Row({ space: 4 }) {
+        Text(item.author === '' ? '未知用户' : item.author).fontSize(12).fontColor('#8B9199')
+          .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis }).layoutWeight(1);
+        if (FollowState.isFollowed(item.authorMid ?? 0, item.author)) {
+          Text('已关注').fontSize(9).fontColor('#1677A8')
+            .padding({ left: 4, right: 4, top: 1, bottom: 1 })
+            .backgroundColor('#1A1677A8').borderRadius(3);
+        }
+      }.width('100%');
       Row({ space: 10 }) {
         Row({ space: 3 }) {
           Image($r('app.media.bofang')).width(11).height(11);

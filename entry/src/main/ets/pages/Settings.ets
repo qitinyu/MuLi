@@ -733,7 +733,7 @@ struct Settings {
           Column({ space: 8 }) {
             Image($r('app.media.app_logo')).width(112).height(112).borderRadius(22);
             Text('Pilihos').fontSize(28).fontWeight(FontWeight.Bold);
-            Text('Version 1.0.6.1').fontSize(15).fontColor('#646A73');
+            Text('Version 1.0.6.2').fontSize(15).fontColor('#646A73');
           }
           .width('100%')
           .alignItems(HorizontalAlign.Center)
@@ -746,10 +746,11 @@ struct Settings {
           Row({ space: 10 }) {
             this.aboutInfoCard('软件协议', '本软件采用 MIT 开源协议');
             this.aboutInfoCard('版本日志',
-              'v1.0.5.9\n' +
-              '1. 直播清晰度/线路切换与关注主播 #1058\n' +
-              'v1.0.5.8 UP主空间页/搜索排序 #1057\n' +
-              'v1.0.5.7 点赞/投币/收藏/评论互动 #1055\n' +
+              'v1.0.6.2\n' +
+              '1. 卡片"已关注"标志+侧边栏交互改版\n' +
+              '2. LV等级详情弹窗+换头像(试行)\n' +
+              'v1.0.6.1 搜索两层改版/UP卡片/关注气泡\n' +
+              'v1.0.6.0 播放页重点改版+材质加厚\n' +
               '完整更新日志(Pilihos Wiki]https://github.com/qitinyu/Pilihos/wiki/)');
           }.width('100%').justifyContent(FlexAlign.SpaceBetween);
 
