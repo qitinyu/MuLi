@@ -355,12 +355,22 @@ export struct PlayerScreen {
     }
   }
 
-  private onGestureEnd(_event: GestureEvent): void {
+  private onGestureEnd(event: GestureEvent): void {
     if (this.gestureMode === 'seek') {
       this.seekPlayback(this.seekPreviewMs);
       this.showPlaybackControls();
-    } else if (this.gestureMode === 'swipeNext' && _event.offsetY < -50) {
+    } else if (this.gestureMode === 'swipeNext' && event.offsetY < -50) {
       this.playNextRandom();
+    } else if (this.gestureMode === '') {
+      // Pan(All) 会抢占 onClick：无有效位移视为单击
+      const isTap: boolean = Math.abs(event.offsetX) < 8 && Math.abs(event.offsetY) < 8;
+      if (isTap) {
+        if (this.landscapePlayback) {
+          this.showPlaybackControls();
+        } else {
+          this.togglePlaybackControls();
+        }
+      }
     }
     this.gestureMode = '';
   }
@@ -458,7 +468,6 @@ export struct PlayerScreen {
       .onActionStart((event: GestureEvent): void => { this.onGestureStart(event); })
       .onActionUpdate((event: GestureEvent): void => { this.onGestureUpdate(event); })
       .onActionEnd((event: GestureEvent): void => { this.onGestureEnd(event); }))
-    .onClick((): void => { this.onToggleControls(); })
     .bindSheet($$this.episodeListVisible, this.landscapeEpisodeSheet(), {
       height: SheetSize.FIT_CONTENT,
       dragBar: true,

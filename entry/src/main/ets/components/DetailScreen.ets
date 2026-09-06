@@ -746,8 +746,12 @@ export struct DetailScreen {
             .defaultFocus(true)
             .onChange((value: string) => { this.commentInputText = value; })
             .onSubmit((): void => { this.onSubmitComment(); });
-          Button('发送').height(40).fontSize(14)
-            .onClick((): void => { this.onSubmitComment(); });
+          Button() {
+            Image($r('app.media.send')).width(22).height(22).fillColor('#1677A8');
+          }
+          .type(ButtonType.Capsule).width(40).height(40)
+          .backgroundColor(Color.Transparent)
+          .onClick((): void => { this.onSubmitComment(); });
         }
         .width('100%')
         .padding({ left: 12, right: 12, top: 10, bottom: this.bottomInset + 12 })
