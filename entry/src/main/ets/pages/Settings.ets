@@ -214,7 +214,7 @@ struct Settings {
   }
 
   private qualityLabel(value: number): string {
-    if (value === 0) return '自动选择';
+    if (value === 0) return '自动';
     return PlaybackService.qualityLabel(value);
   }
 

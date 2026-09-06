@@ -61,6 +61,14 @@ export struct PlayerOverlay {
     Column({ space: 2 }) {
       Text('清晰度').fontSize(13).fontWeight(FontWeight.Bold).fontColor('#20252B')
         .width('100%').height(30).textAlign(TextAlign.Center);
+      Text('自动').fontSize(12)
+        .fontColor(this.currentQn === 0 ? '#1677A8' : '#1E252D')
+        .fontWeight(this.currentQn === 0 ? FontWeight.Bold : FontWeight.Normal)
+        .width('100%').height(28).textAlign(TextAlign.Center)
+        .onClick(() => {
+          this.qualityMenuVisible = false;
+          this.onQualitySwitch(0);
+        });
       if (this.playbackQualities.length === 0) {
         Text('暂无可选清晰度').fontSize(12).fontColor('#858C94')
           .width('100%').height(28).textAlign(TextAlign.Center);

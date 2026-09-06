@@ -19,6 +19,11 @@ export class AuthSession {
   sign: string = '';
   level: number = 0;
   ipLocation: string = '';
+  bcoin: number = 0;
+  coin: number = 0;
+  expCurrent: number = 0;
+  expMin: number = 0;
+  expNext: number = 0;
 }
 
 class AuthParam {
@@ -193,6 +198,10 @@ export class AuthService {
     session.cookie = cookie;
     session.csrf = AuthService.findCookie(cookie, 'bili_jct');
     session.isLogin = true;
+    // 钱包：B币/硬币余额随 nav 一次带回（coin/log 接口不含余额）
+    const wallet: Record<string, Object> = (data['wallet'] ?? {}) as Record<string, Object>;
+    session.bcoin = Number(wallet['bcoin_balance'] ?? 0);
+    session.coin = Number(wallet['coin_balance'] ?? 0);
     await AuthService.loadUserStats(session, headers);
     await AuthService.loadUserProfile(session, headers);
     AuthService.session = session;
@@ -211,6 +220,11 @@ export class AuthService {
       AuthService.credentialPreferences.putSync('session_sign', session.sign);
       AuthService.credentialPreferences.putSync('session_level', String(session.level));
       AuthService.credentialPreferences.putSync('session_ip_location', session.ipLocation);
+      AuthService.credentialPreferences.putSync('session_bcoin', String(session.bcoin));
+      AuthService.credentialPreferences.putSync('session_coin', String(session.coin));
+      AuthService.credentialPreferences.putSync('session_exp_current', String(session.expCurrent));
+      AuthService.credentialPreferences.putSync('session_exp_min', String(session.expMin));
+      AuthService.credentialPreferences.putSync('session_exp_next', String(session.expNext));
       AuthService.credentialPreferences.putSync('session_is_login', 'true');
       AuthService.credentialPreferences.flushSync();
     } catch (error) {
@@ -229,9 +243,14 @@ export class AuthService {
     session.face = AuthService.credentialPreferences.getSync('session_face', '') as string;
     session.csrf = AuthService.credentialPreferences.getSync('session_csrf', '') as string;
     session.sign = AuthService.credentialPreferences.getSync('session_sign', '') as string;
-    session.level = Number(AuthService.credentialPreferences.getSync('session_level', '0'));
-    session.ipLocation = AuthService.credentialPreferences.getSync('session_ip_location', '') as string;
-    session.cookie = cookie;
+      session.level = Number(AuthService.credentialPreferences.getSync('session_level', '0'));
+      session.ipLocation = AuthService.credentialPreferences.getSync('session_ip_location', '') as string;
+      session.bcoin = Number(AuthService.credentialPreferences.getSync('session_bcoin', '0'));
+      session.coin = Number(AuthService.credentialPreferences.getSync('session_coin', '0'));
+      session.expCurrent = Number(AuthService.credentialPreferences.getSync('session_exp_current', '0'));
+      session.expMin = Number(AuthService.credentialPreferences.getSync('session_exp_min', '0'));
+      session.expNext = Number(AuthService.credentialPreferences.getSync('session_exp_next', '0'));
+      session.cookie = cookie;
     session.isLogin = true;
     return session;
   }
@@ -247,8 +266,13 @@ export class AuthService {
       const data: Record<string, Object> = (body['data'] ?? {}) as Record<string, Object>;
       session.sign = String(data['sign'] ?? '');
       session.ipLocation = String(data['ip_location'] ?? '');
+      // 等级成长：当前等级/经验区间（等级弹窗进度条数据源），硬币余额以 myinfo 为准
       const levelInfo: Record<string, Object> = (data['level_info'] ?? {}) as Record<string, Object>;
       session.level = Number(data['level'] ?? levelInfo['current_level'] ?? 0);
+      session.expCurrent = Number(levelInfo['current_exp'] ?? 0);
+      session.expMin = Number(levelInfo['current_min'] ?? 0);
+      session.expNext = Number(levelInfo['next_exp'] ?? 0);
+      session.coin = Number(data['coins'] ?? session.coin);
     } catch (error) {
       console.error('Pilihos user profile request failed: ' + String(error));
     }
@@ -299,6 +323,11 @@ export class AuthService {
         AuthService.credentialPreferences.deleteSync('session_sign');
         AuthService.credentialPreferences.deleteSync('session_level');
         AuthService.credentialPreferences.deleteSync('session_ip_location');
+        AuthService.credentialPreferences.deleteSync('session_bcoin');
+        AuthService.credentialPreferences.deleteSync('session_coin');
+        AuthService.credentialPreferences.deleteSync('session_exp_current');
+        AuthService.credentialPreferences.deleteSync('session_exp_min');
+        AuthService.credentialPreferences.deleteSync('session_exp_next');
         AuthService.credentialPreferences.deleteSync('session_is_login');
         AuthService.credentialPreferences.flushSync();
       } catch (error) {

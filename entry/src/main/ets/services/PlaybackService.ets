@@ -37,16 +37,20 @@ export class PlaybackService {
     }
     const qualities: QualityOption[] = [];
     if (preferredQn > 0) {
-      // 优先走 html5 通道（durl 合流最稳定），失败再试 WBI 通道
+      // 先走 WBI 通道按目标清晰度请求（登录态可授予 1080P）；
+      // html5 通道在目标清晰度不可授予时会静默降级（如 80 请求返回 64），仅作兜底
+      const preferred: PlaybackResolveResult =
+        await PlaybackService.resolveWbiQuality(item, cookie, preferredQn, qualities);
+      if (preferred.urls.length > 0 && preferred.grantedQn >= preferredQn) {
+        return preferred;
+      }
       const html5Candidates: string[] = [];
       const html5Granted: number =
         await PlaybackService.resolveHtml5Candidates(item, cookie, html5Candidates, qualities,
           [String(preferredQn), '80', '64', '32', '16']);
-      if (html5Candidates.length > 0) {
+      if (html5Candidates.length > 0 && html5Granted >= preferred.grantedQn) {
         return { urls: html5Candidates, qualities: qualities, grantedQn: html5Granted };
       }
-      const preferred: PlaybackResolveResult =
-        await PlaybackService.resolveWbiQuality(item, cookie, preferredQn, qualities);
       if (preferred.urls.length > 0) {
         return preferred;
       }
@@ -140,17 +144,17 @@ export class PlaybackService {
   }
 
   static qualityLabel(qn: number, description: string = ''): string {
-    if (description !== '') return description;
+    // 统一使用B站现行清晰度命名，不采用接口 accept_description 的旧称
     if (qn === 127 || qn === 126) return '杜比';
     if (qn === 125) return 'HDR';
     if (qn === 120) return '4K';
-    if (qn === 116) return '1080P60';
-    if (qn === 112) return '1080P+';
-    if (qn === 80) return '1080P';
-    if (qn === 74) return '720P60';
-    if (qn === 64) return '720P';
-    if (qn === 32) return '480P';
-    if (qn === 16) return '360P';
+    if (qn === 116) return '高清1080P60';
+    if (qn === 112) return '高清1080P+';
+    if (qn === 80) return '高清1080P';
+    if (qn === 74) return '准高清720P60';
+    if (qn === 64) return '准高清720P';
+    if (qn === 32) return '标清480P';
+    if (qn === 16) return '清晰360P';
     return qn > 0 ? `${qn}` : '自动';
   }
 

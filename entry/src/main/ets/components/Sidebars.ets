@@ -3,7 +3,6 @@ import { BusinessError } from '@kit.BasicServicesKit';
 import { picker } from '@kit.CoreFileKit';
 import { preferences } from '@kit.ArkData';
 import { AuthService, AuthSession } from '../services/AuthService';
-import { BiliHttpClient } from '../services/BiliHttpClient';
 import { ImmersiveMaterial } from '../utils/ImmersiveMaterial';
 import { FormatUtils } from '../utils/FormatUtils';
 
@@ -12,6 +11,9 @@ class LevelTier {
   to: number = 0;
   exp: number = 0;
 }
+
+// B站会员等级门槛：升级到 LVn 所需的总经验值
+const LEVEL_EXP_THRESHOLDS: number[] = [200, 1500, 4500, 9000, 28000, 108000];
 
 @Component
 export struct MineSidebar {
@@ -24,29 +26,10 @@ export struct MineSidebar {
   @Link showMineCoverSheet: boolean;
   @State mineCoverUri: string = '';
   @State levelSheetVisible: boolean = false;
-  @State coinCount: number = 0;
   private uiPreferences: preferences.Preferences | null = null;
 
   aboutToAppear(): void {
     this.loadMineCover();
-    this.loadCoin();
-  }
-
-  private async loadCoin(): Promise<void> {
-    const session: AuthSession | null = AuthService.currentSession();
-    if (session === null || session.cookie === '') return;
-    try {
-      const query: Record<string, string> = {};
-      query['jsonp'] = 'jsonp';
-      const result: Record<string, Object> =
-        await BiliHttpClient.getJson('/x/web-interface/coin/log', query, session.cookie);
-      if (Number(result['code'] ?? -1) === 0) {
-        const data: Record<string, Object> = (result['data'] ?? {}) as Record<string, Object>;
-        this.coinCount = Number(data['money'] ?? 0);
-      }
-    } catch (error) {
-      console.warn(`Pilihos coin load failed: ${String(error)}`);
-    }
   }
 
   private showToast(message: string): void {
@@ -194,37 +177,72 @@ export struct MineSidebar {
   }
 
   private static levelTiers(): LevelTier[] {
-    const exps: number[] = [100, 200, 500, 1000, 2000, 3000];
     const tiers: LevelTier[] = [];
     for (let level: number = 0; level < 6; level++) {
       const tier: LevelTier = new LevelTier();
       tier.from = level;
       tier.to = level + 1;
-      tier.exp = exps[level];
+      tier.exp = LEVEL_EXP_THRESHOLDS[level];
       tiers.push(tier);
     }
     return tiers;
   }
 
+  private currentLevelSegment(): string {
+    const level: number = this.authSession === null ? 0 : this.authSession.level;
+    if (level >= 6) return 'LV6';
+    return `LV${level}-LV${level + 1}`;
+  }
+
+  private expProgress(): number[] {
+    const session: AuthSession | null = this.authSession;
+    // 已满级或经验数据未取到时展示满进度
+    if (session === null || session.expNext <= session.expMin) return [1, 1];
+    const total: number = session.expNext - session.expMin;
+    return [Math.min(Math.max(0, session.expCurrent - session.expMin), total), total];
+  }
+
+  private expProgressText(): string {
+    const session: AuthSession | null = this.authSession;
+    if (session === null || session.expCurrent <= 0) return '经验 --';
+    if (session.expNext <= session.expMin) return `经验 ${session.expCurrent} · 已达最高等级`;
+    return `${Math.max(0, session.expCurrent - session.expMin)}/${session.expNext - session.expMin}`;
+  }
+
+  @Builder
+  levelTierRow(tier: LevelTier) {
+    Row() {
+      Text(`LV${tier.from}-LV${tier.to}`)
+        .fontSize(13)
+        .fontColor(tier.from === (this.authSession === null ? -1 : this.authSession.level)
+          ? '#F08A24' : '#3E4854')
+        .fontWeight(tier.from === (this.authSession === null ? -1 : this.authSession.level)
+          ? FontWeight.Bold : FontWeight.Normal)
+        .layoutWeight(1);
+      Text(String(tier.exp))
+        .fontSize(13)
+        .fontColor(tier.from === (this.authSession === null ? -1 : this.authSession.level)
+          ? '#F08A24' : '#858C94');
+    }.width('100%').padding({ top: 5, bottom: 5 });
+  }
+
   @Builder
   levelSheet() {
     Stack({ alignContent: Alignment.Center }) {
-      Column({ space: 14 }) {
-        Text('等级成长').fontSize(18).fontWeight(FontWeight.Bold);
-        Row({ space: 10 }) {
-          Text('LV' + (this.authSession === null ? '0' : String(this.authSession.level)))
-            .fontSize(16).fontWeight(FontWeight.Bold).fontColor('#F08A24');
-          Text('———— →').fontSize(14).fontColor('#858C94');
-          Text('LV' + String(Math.min(6, (this.authSession === null ? 0 : this.authSession.level) + 1)))
-            .fontSize(16).fontWeight(FontWeight.Bold).fontColor('#1677A8');
-        }.alignItems(VerticalAlign.Center);
+      Column({ space: 12 }) {
+        // 顶部：当前所处等级分段
+        Text(this.currentLevelSegment()).fontSize(18).fontWeight(FontWeight.Bold).fontColor('#F08A24');
+        // 中部：分段内经验进度条 + 具体积分
+        Progress({ value: this.expProgress()[0], total: Math.max(1, this.expProgress()[1]),
+          type: ProgressType.Linear })
+          .color('#F08A24').width('100%').height(8);
+        Text(this.expProgressText()).fontSize(12).fontColor('#858C94')
+          .width('100%').textAlign(TextAlign.Center);
         Divider().color('#E9EDF0');
         ForEach(MineSidebar.levelTiers(), (tier: LevelTier) => {
-          Row() {
-            Text(`LV${tier.from} → LV${tier.to}`).fontSize(13).fontColor('#3E4854').layoutWeight(1);
-            Text(`${tier.exp} 经验`).fontSize(13).fontColor('#858C94');
-          }.width('100%').padding({ top: 5, bottom: 5 });
+          this.levelTierRow(tier);
         }, (tier: LevelTier) => `tier_${tier.from}`);
+        Divider().color('#E9EDF0');
         Text('获取经验：每日登录、观看视频、投币、点赞、分享均可获得经验积分，具体数值以B站官方规则为准')
           .fontSize(10).fontColor('#A4A9AF').lineHeight(15).width('100%');
         Button('关闭').height(34).fontSize(13)
@@ -277,7 +295,7 @@ export struct MineSidebar {
               .gesture(TapGesture().onAction((): void => { this.levelSheetVisible = true; }));
           }.width('100%');
           Text(this.authSession === null ? 'B币 -- · 硬币 --' :
-            `B币 -- · 硬币 ${this.coinCount > 0 ? String(this.coinCount) : '--'}`)
+            `B币 ${this.authSession.bcoin} · 硬币 ${this.authSession.coin}`)
             .fontSize(12).fontColor('#858C94');
           Text(this.authSession === null ? '登录后同步个人签名' :
             (this.authSession.sign === '' ? '这个人很懒，什么都没有留下' : this.authSession.sign))
