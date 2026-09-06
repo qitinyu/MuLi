@@ -63,13 +63,12 @@ export struct MineSidebar {
 
   private onAvatarTap(): void {
     if (this.authSession !== null) {
-      // 已登录：单击直接登出
-      this.logout();
-    } else {
-      this.loginVisible = true;
-      this.sidebar = 0;
-      this.loginNotice = '';
+      // 已登录：单击无动作（登出走下方"一键登出"卡片）
+      return;
     }
+    this.loginVisible = true;
+    this.sidebar = 0;
+    this.loginNotice = '';
   }
 
   private async logout(): Promise<void> {
@@ -166,6 +165,8 @@ export struct MineSidebar {
           Image($r('app.media.watch_later')).width(24).height(24);
         } else if (iconName === 'favorites') {
           Image($r('app.media.favorites')).width(24).height(24);
+        } else if (iconName === 'off') {
+          Image($r('app.media.off')).width(24).height(24);
         } else {
           Image($r('app.media.software_settings')).width(24).height(24);
         }
@@ -186,6 +187,8 @@ export struct MineSidebar {
         this.openSoftwareSettings();
       } else if (iconName === 'favorites') {
         this.openMyFav();
+      } else if (iconName === 'off') {
+        this.logout();
       }
     });
   }
@@ -286,9 +289,9 @@ export struct MineSidebar {
             .fontSize(12).fontColor('#858C94').maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis }).width('100%');
         }.alignItems(HorizontalAlign.Start).layoutWeight(1)
-          .margin({ top: 22 });
+          .margin({ top: 8 });
       }.width('100%')
-        .margin({ top: -52 })
+        .margin({ top: -24 })
         .alignItems(VerticalAlign.Top);
 
       Row({ space: 8 }) {
@@ -298,12 +301,12 @@ export struct MineSidebar {
       }.width('100%');
 
       Grid() {
-        GridItem() { this.mineGridAction('offline_cache', '离线缓存', true); }
-        GridItem() { this.mineGridAction('bofang', '观看记录', true); }
-        GridItem() { this.mineGridAction('subscriptions', '我的订阅', true); }
-        GridItem() { this.mineGridAction('watch_later', '稍后再看', true); }
         GridItem() { this.mineGridAction('favorites', '我的收藏', true); }
+        GridItem() { this.mineGridAction('bofang', '观看记录', true); }
+        GridItem() { this.mineGridAction('watch_later', '稍后再看', true); }
+        GridItem() { this.mineGridAction('offline_cache', '离线缓存', true); }
         GridItem() { this.mineGridAction('software_settings', '软件设置', true); }
+        GridItem() { this.mineGridAction('off', '一键登出', true); }
       }
       .columnsTemplate('1fr 1fr 1fr')
       .columnsGap(10)

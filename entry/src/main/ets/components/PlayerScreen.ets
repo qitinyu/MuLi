@@ -43,6 +43,7 @@ export struct PlayerScreen {
   @Consume currentIndex: number;
   @Consume pendingResumeMs: number;
   @Consume playMode: number;
+  @Consume verticalExpanded: boolean;
   @Consume danmakuEnabled: boolean;
   @Consume bottomInset: number;
   private nativeVideoController: VideoController = new VideoController();
@@ -111,16 +112,7 @@ export struct PlayerScreen {
       return;
     }
     if (this.playMode === 2) {
-      // 随机连播：先随机挑一个推荐视频再切换（索引未计算时入口会被 -1 拦下）
-      this.recommendedPlaybackIndex = this.randomRecommendationIndex();
-      if (this.recommendedPlaybackIndex < 0) {
-        // 没有可推荐的候选，退回默认播完展示
-        this.playbackFinished = true;
-        this.playbackPaused = true;
-        this.playbackControlsVisible = false;
-        return;
-      }
-      this.playRecommendedVideo();
+      this.playNextRandom();
       return;
     }
     this.playbackFinished = true;
@@ -182,20 +174,6 @@ export struct PlayerScreen {
       this.pendingResumeMs = 0;
       this.seekPlayback(resumeMs);
     }
-    // 进入视频后控制条短暂展示即自动隐藏，不依赖用户手动点击
-    this.armInitialHide();
-  }
-
-  private armInitialHide(): void {
-    if (this.initialHideTimer !== -1) {
-      clearTimeout(this.initialHideTimer);
-    }
-    this.initialHideTimer = setTimeout((): void => {
-      if (!this.speedMenuVisible && !this.episodeListVisible && !this.qualityMenuVisible) {
-        this.playbackControlsVisible = false;
-      }
-      this.initialHideTimer = -1;
-    }, 2000);
   }
 
   private onNativeVideoUpdate(info: PlaybackInfo): void {
@@ -343,6 +321,11 @@ export struct PlayerScreen {
     const dx: number = event.offsetX;
     const dy: number = event.offsetY;
     if (this.gestureMode === '') {
+      if (this.verticalExpanded && dy < -14 && Math.abs(dy) > Math.abs(dx)) {
+        // 竖屏化：上滑切换下一个视频
+        this.gestureMode = 'swipeNext';
+        return;
+      }
       if (Math.abs(dx) > 14 && Math.abs(dx) > Math.abs(dy)) {
         this.gestureMode = 'seek';
       } else if (Math.abs(dy) > 14) {
@@ -376,8 +359,23 @@ export struct PlayerScreen {
     if (this.gestureMode === 'seek') {
       this.seekPlayback(this.seekPreviewMs);
       this.showPlaybackControls();
+    } else if (this.gestureMode === 'swipeNext' && _event.offsetY < -50) {
+      this.playNextRandom();
     }
     this.gestureMode = '';
+  }
+
+  /**
+   * 随机连播与上滑共用：切到下一个推荐视频（保持竖屏化状态）
+   */
+  private playNextRandom(): void {
+    this.savePlaybackProgress();
+    this.recommendedPlaybackIndex = this.randomRecommendationIndex();
+    if (this.recommendedPlaybackIndex < 0) {
+      this.showPlaybackToast('没有可播放的推荐视频');
+      return;
+    }
+    this.playRecommendedVideo();
   }
 
   @Builder
@@ -556,11 +554,11 @@ export struct PlayerScreen {
     .visibility(this.playbackControlsVisible ? Visibility.Visible : Visibility.None)
     .onClick(() => { this.onBack(); });
     Button() {
-      Image($r('app.media.home')).width(20).height(20).fillColor(Color.White);
+      Image($r('app.media.home')).width(22).height(22).fillColor(Color.White);
     }
     .type(ButtonType.ROUNDED_RECTANGLE).width(42).height(42)
-    .backgroundColor('#66000000').borderRadius(21)
-    .position({ left: 58, top: 10 })
+    .backgroundColor(Color.Transparent)
+    .position({ left: 56, top: 10 })
     .visibility(this.playbackControlsVisible ? Visibility.Visible : Visibility.None)
     .onClick(() => { this.onBackHome(); });
     if (this.hudVisible) {

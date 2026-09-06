@@ -31,4 +31,5 @@ export interface VideoItem {
   authorFollowed?: boolean;
   authorFans?: number;
   authorVideos?: number;
+  authorLevel?: number;
 }

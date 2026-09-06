@@ -166,7 +166,6 @@ export struct DetailScreen {
           (): void => { this.onDetailAction('coin'); });
         this.verticalActionCount('favorites', this.videos[this.currentIndex].favoriteCount ?? 0,
           this.videos[this.currentIndex].favored ?? false,
-          (): void => { this.onDetailAction('fav'); },
           (): void => { this.onDetailAction('favsheet'); });
         this.verticalActionCount('pl', this.videos[this.currentIndex].commentCount,
           false, (): void => { this.onDetailAction('comments'); }, (): void => {}, '评论');
@@ -466,7 +465,6 @@ export struct DetailScreen {
             this.detailAction((this.videos[this.currentIndex].favoriteCount ?? 0) > 0
               ? FormatUtils.formatCount(this.videos[this.currentIndex].favoriteCount ?? 0) : '收藏',
               'favorites', this.videos[this.currentIndex].favored ?? false,
-              (): void => { this.onDetailAction('fav'); },
               (): void => { this.onDetailAction('favsheet'); });
             this.detailAction('再看', 'watch_later', false,
               (): void => { this.onDetailAction('watchlater'); });

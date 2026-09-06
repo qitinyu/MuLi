@@ -458,8 +458,12 @@ struct Index {
         if (Number(cardResult['code'] ?? -1) === 0) {
           const cardData: Record<string, Object> = (cardResult['data'] ?? {}) as Record<string, Object>;
           const fans: number = Number(cardData['follower'] ?? 0);
+          const cardInfo: Record<string, Object> = (cardData['card'] ?? {}) as Record<string, Object>;
+          const levelInfo: Record<string, Object> = (cardInfo['level_info'] ?? {}) as Record<string, Object>;
+          const level: number = Number(levelInfo['current_level'] ?? 0);
           this.patchCurrentVideo((target: VideoItem): void => {
             target.authorFans = fans;
+            target.authorLevel = level;
           });
         }
       } catch (cardError) {
@@ -531,9 +535,9 @@ struct Index {
       this.toggleLike();
     } else if (action === 'coin') {
       this.showPlaybackToast('投币功能即将接入官方接口');
-    } else if (action === 'fav') {
-      this.toggleFavorite();
-    } else if (action === 'favsheet') {
+    } else if (action === 'fav' || action === 'favsheet') {
+      this.openFavSheet();
+    } else if (action === 'favdirect') {
       this.openFavSheet();
     } else if (action === 'watchlater') {
       this.addWatchLater();
@@ -763,7 +767,7 @@ struct Index {
   }
 
   private showPlaybackControls(): void {
-    this.playbackControlsVisible = true;
+    this.playbackControlsVisible = false;
     if (this.playbackControlsTimer !== 0) {
       clearTimeout(this.playbackControlsTimer);
     }
@@ -845,7 +849,6 @@ struct Index {
     this.playbackControlsVisible = false;
     this.subtitlesEnabled = false;
     this.danmakuEnabled = true;
-    this.verticalExpanded = false;
     this.videoWeight = 8;
     this.currentQn = 0;
     this.playbackQualities = [];
@@ -981,7 +984,7 @@ struct Index {
     this.playbackPaused = true;
     this.speedMenuVisible = false;
     this.episodeListVisible = false;
-    this.playbackControlsVisible = true;
+    this.playbackControlsVisible = false;
     this.playbackFinished = false;
     this.recommendedPlaybackIndex = -1;
     let item: VideoItem = this.videos[this.currentIndex];
