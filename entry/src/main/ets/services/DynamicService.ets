@@ -11,6 +11,7 @@ export interface DynamicBatch {
 export class DynamicAuthor {
   name: string = '';
   face: string = '';
+  mid: number = 0;
   publishTime: number = 0;
 }
 
@@ -33,6 +34,7 @@ export class DynamicEntry {
   type: DynamicEntryType = 'text';
   authorName: string = '';
   authorFace: string = '';
+  authorMid: number = 0;
   publishTime: number = 0;
   text: string = '';
   video: VideoItem | null = null;
@@ -100,7 +102,7 @@ export class DynamicService {
     const publishTime: number = rawTime > 100000000000 ? Math.floor(rawTime / 1000) : rawTime;
     const now: number = Math.floor(Date.now() / 1000);
     if (name === '' || face === '' || publishTime <= 0 || now - publishTime > 172800) return null;
-    return { name: name, face: face, publishTime: publishTime };
+    return { name: name, face: face, mid: Number(author['mid'] ?? 0), publishTime: publishTime };
   }
 
   private static parseItem(raw: Record<string, Object>, index: number): VideoItem | null {
@@ -174,6 +176,7 @@ export class DynamicService {
     entry.id = id;
     entry.authorName = name;
     entry.authorFace = face;
+    entry.authorMid = Number(author['mid'] ?? 0);
     entry.publishTime = pubTs > 100000000000 ? Math.floor(pubTs / 1000) : pubTs;
     entry.text = String(((dynamic['desc'] ?? {}) as Record<string, Object>)['text'] ?? '');
     const stat: Record<string, Object> = (statModule['like'] as Record<string, Object>) ?? {};

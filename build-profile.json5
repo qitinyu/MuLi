@@ -6,9 +6,9 @@
         "type": "HarmonyOS",
         "material": {
           "storeFile": "D:/HM/Harmony/Pilihos/pilihoszs/pilihos.p12",
-          "storePassword": "0000001BCB2DD4C06773C2AFA32EC0D6F89FB0129DEEAB02F364FDBCE42FB185B1A591E781FEBFFA043251",
+          "storePassword": "0000001B1AF0C0AA87EAB4D9C393826B3469B8480D738AF9BDDFF9F809D4A33FC0ACABE2B64FEBCD20F9B8",
           "keyAlias": "pilihos",
-          "keyPassword": "0000001BC0381A5797628A5CB756DDC694DAC80FCC7FA8AB6012B23AFC501F394AC7E5A7DC9AB208831DD0",
+          "keyPassword": "0000001B51C3E87279481E565EB096602BE35CDCBC81711958CF2834E576A969D3B720DBC20A3F97A9558D",
           "signAlg": "SHA256withECDSA",
           "profile": "D:/HM/Harmony/Pilihos/pilihoszs/pilihos.p7b",
           "certpath": "D:/HM/Harmony/Pilihos/pilihoszs/Pilihos.cer"
@@ -20,9 +20,9 @@
         "name": "default",
         "bundleName": "com.pilihos.player",
         "signingConfig": "default",
-        "compatibleSdkVersion": "6.1.1(24)",
-        "targetSdkVersion": "26.0.0",
+        "compatibleSdkVersion": "6.1.0(23)",
         "runtimeOS": "HarmonyOS",
+        "targetSdkVersion": "26.0.0"
       }
     ],
     "buildModeSet": [

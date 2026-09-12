@@ -157,7 +157,7 @@ struct LiveDetail {
         .width('100%').height(28).textAlign(TextAlign.Center);
       ForEach(this.qnOptions, (option: LiveQnOption) => {
         Text(option.qn === this.currentQn ? `${option.desc} ✓` : option.desc).fontSize(12)
-          .fontColor(option.qn === this.currentQn ? '#1677A8' : '#1E252D')
+          .fontColor(option.qn === this.currentQn ? '#1288FA' : '#1E252D')
           .width('100%').height(28).textAlign(TextAlign.Center)
           .onClick((): void => {
             this.qualityMenuVisible = false;
@@ -178,7 +178,7 @@ struct LiveDetail {
         .width('100%').height(28).textAlign(TextAlign.Center);
       ForEach(Array.from({ length: this.lineCount }, (_v: Object, i: number): number => i), (index: number) => {
         Text(index === this.lineIndex ? `线路${index + 1} ✓` : `线路${index + 1}`).fontSize(12)
-          .fontColor(index === this.lineIndex ? '#1677A8' : '#1E252D')
+          .fontColor(index === this.lineIndex ? '#1288FA' : '#1E252D')
           .width('100%').height(28).textAlign(TextAlign.Center)
           .onClick((): void => {
             this.lineMenuVisible = false;
@@ -282,9 +282,9 @@ struct LiveDetail {
                 .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis });
               Row({ space: 8 }) {
                 if (this.room.areaName !== '') {
-                  Text(this.room.areaName).fontSize(11).fontColor('#1677A8')
+                  Text(this.room.areaName).fontSize(11).fontColor('#1288FA')
                     .padding({ left: 6, right: 6, top: 2, bottom: 2 })
-                    .backgroundColor('#1A1677A8').borderRadius(4);
+                    .backgroundColor('#1A1288FA').borderRadius(4);
                 }
                 Text(this.status !== null ? this.formatCount(this.status.online) + ' 人观看'
                   : this.formatCount(this.room.online) + ' 人观看')

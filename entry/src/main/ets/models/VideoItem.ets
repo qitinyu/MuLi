@@ -23,6 +23,7 @@ export interface VideoItem {
   videoWidth?: number;
   videoHeight?: number;
   liked?: boolean;
+  disliked?: boolean;
   coined?: boolean;
   favored?: boolean;
   coinCount?: number;

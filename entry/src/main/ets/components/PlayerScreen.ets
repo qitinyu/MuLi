@@ -1,5 +1,6 @@
 import { VideoItem } from '../models/VideoItem';
 import { VideoComment } from '../services/ReplyService';
+import { BiliEmoji } from '../services/EmojiService';
 import { QualityOption } from '../services/PlaybackService';
 import { PlaybackMemory } from '../utils/PlaybackMemory';
 import common from '@ohos.app.ability.common';
@@ -36,6 +37,7 @@ export struct PlayerScreen {
   @Consume playbackFinished: boolean;
   @Consume recommendedPlaybackIndex: number;
   @Consume subtitlesEnabled: boolean;
+  @Consume defaultSpeed: number;
   @Consume playbackQualities: QualityOption[];
   @Consume currentQn: number;
   @Consume qualityMenuVisible: boolean;
@@ -44,8 +46,38 @@ export struct PlayerScreen {
   @Consume currentIndex: number;
   @Consume pendingResumeMs: number;
   @Consume playMode: number;
+  @Consume sequentialChain: boolean;
   @Consume verticalExpanded: boolean;
   @Consume danmakuEnabled: boolean;
+  // 前后台打断接续：进入后台记录播放状态，回前台按设置恢复
+  @StorageProp('app_in_background') @Watch('onAppBackgroundChange') appInBackground: boolean = false;
+  @StorageProp('interrupt_resume_on') interruptResumeOn: boolean = true;
+  @StorageProp('mini_progress_on') miniProgressOn: boolean = false;
+  @State resumeAfterInterrupt: boolean = false;
+
+  private onAppBackgroundChange(): void {
+    if (this.appInBackground) {
+      // 切后台瞬间：记录"正在播"状态
+      this.resumeAfterInterrupt = this.currentUrl !== '' && !this.playbackPaused
+        && !this.playbackFinished && !this.playbackStarting;
+      return;
+    }
+    // 回前台：设置开启且刚才在播 → 续播
+    if (this.resumeAfterInterrupt && this.interruptResumeOn
+      && this.currentUrl !== '' && this.playbackPaused) {
+      try {
+        this.nativeVideoController.start();
+        this.playbackPaused = false;
+      } catch (error) {
+        console.error(`Pilihos interrupt resume failed: ${String(error)}`);
+      }
+    }
+    this.resumeAfterInterrupt = false;
+  }
+  @Consume danmakuFontSize: number;
+  @Consume danmakuOpacity: number;
+  @Consume danmakuSpeed: number;
+  @Consume danmakuArea: number;
   @Consume bottomInset: number;
   private nativeVideoController: VideoController = new VideoController();
   private playbackControlsTimer: number = 0;
@@ -62,9 +94,12 @@ export struct PlayerScreen {
   private originalBrightness: number = -1;
   private holdSpeedBase: number = 1.0;
   private holdSpeedActive: boolean = false;
+  private static readonly CENTER_ZONE_RATIO: number = 0.25;
+  private static readonly NAV_DISMISS_THRESHOLD: number = 30;
   onOpenVideo: (item: VideoItem, showComments: boolean) => void =
     (item: VideoItem, showComments: boolean): void => {};
   onRandomNext: () => void = (): void => {};
+  onSequentialNext: () => void = (): void => {};
   onLoadComments: (refresh: boolean) => void = (refresh: boolean): void => {};
   onToggleReplies: (comment: VideoComment) => void = (comment: VideoComment): void => {};
   onLoadSubReplies: (rootId: number, refresh: boolean) => void =
@@ -72,9 +107,21 @@ export struct PlayerScreen {
   onSubmitComment: () => void = (): void => {};
   onSendDanmaku: () => void = (): void => {};
   onDetailAction: (action: string) => void = (action: string): void => {};
+  onOpenUser: (mid: number, name: string) => void = (mid: number, name: string): void => {};
+  onReplySubReply: (rootId: number, reply: VideoComment) => void =
+    (rootId: number, reply: VideoComment): void => {};
   onLikeComment: (comment: VideoComment) => void = (comment: VideoComment): void => {};
+  onToggleCommentSort: () => void = (): void => {};
+  onReplyComment: (comment: VideoComment) => void = (comment: VideoComment): void => {};
+  onPickEmoji: (emoji: BiliEmoji) => void = (emoji: BiliEmoji): void => {};
+  onDeleteComment: (comment: VideoComment) => void = (comment: VideoComment): void => {};
+  onHideComment: (comment: VideoComment) => void = (comment: VideoComment): void => {};
+  onReportComment: (comment: VideoComment) => void = (comment: VideoComment): void => {};
+  onBlockComment: (comment: VideoComment) => void = (comment: VideoComment): void => {};
   onFollowAuthor: (on: boolean) => void = (on: boolean): void => {};
   onSetPlayMode: (mode: number) => void = (mode: number): void => {};
+  onSetDanmakuFontSize: (size: number) => void = (size: number): void => {};
+  onSetDanmakuArea: (area: number) => void = (area: number): void => {};
   onFollowGroup: () => void = (): void => {};
   onRetry: () => void = (): void => {};
   onQualitySwitch: (qn: number) => void = (qn: number): void => {};
@@ -98,13 +145,17 @@ export struct PlayerScreen {
 
   private markPlaybackFinished(): void {
     if (this.playbackFinished || !this.showVertical) return;
-    // 播放模式：单集循环 / 随机连播（竖屏化连播）
+    // 播放模式统一三项：单集循环 / 随机连播 / 停止推荐（普通与竖屏化共用同一状态）
     if (this.playMode === 1) {
       this.replayFinishedVideo();
       return;
     }
     if (this.playMode === 2) {
       this.onRandomNext();
+      return;
+    }
+    if (this.sequentialChain) {
+      this.onSequentialNext();
       return;
     }
     this.playbackFinished = true;
@@ -116,9 +167,42 @@ export struct PlayerScreen {
     this.playbackControlsVisible = this.recommendedPlaybackIndex < 0;
   }
 
+  private haltFinishedPlayback(): void {
+    // 到达片尾后阻止 autoPlay 自动重播（黑屏静止等待用户选择）
+    try {
+      this.nativeVideoController.pause();
+    } catch (error) {
+      console.warn(`Pilihos finished pause failed: ${String(error)}`);
+    }
+  }
+
   private replayFinishedVideo(): void {
     this.playbackFinished = false;
     this.onRetry();
+  }
+
+  private miniProgressPercent(): number {
+    if (this.playbackDurationMs <= 0) return 0;
+    return Math.max(0, Math.min(100, this.playbackCurrentMs / this.playbackDurationMs * 100));
+  }
+
+  @Builder
+  miniProgressBar() {
+    // 竖屏化时进度线由 DetailScreen 画在操作行底部，避免遮挡简介悬浮层；
+    // 是否显示受设置"无UI进度条显示"控制（默认关）
+    if (this.currentUrl !== '' && this.playbackDurationMs > 0
+      && !this.playbackControlsVisible && !this.playbackFinished
+      && !this.verticalExpanded && this.miniProgressOn) {
+      Row() {
+        Stack({ alignContent: Alignment.Start }) {
+          Row().width('100%').height(3).backgroundColor('#4DFFFFFF').borderRadius(1.5)
+          Row().width(`${this.miniProgressPercent()}%`).height(3)
+            .backgroundColor('#1288FA').borderRadius(1.5)
+        }.layoutWeight(1)
+      }
+      .width('100%').padding({ left: 12, right: 12 })
+      .position({ left: 0, right: 0, bottom: 4 }).zIndex(4);
+    }
   }
 
   private playRecommendedVideo(): void {
@@ -152,20 +236,40 @@ export struct PlayerScreen {
     const item: VideoItem = this.videos[this.currentIndex];
     const uri: string = item.bvid !== '' ? `https://www.bilibili.com/video/${item.bvid}/` :
       `https://www.bilibili.com/video/av${item.aid}/`;
+    // 链接形态失败（如 1003702002）时回退文本形态
     try {
-      const sharedData: systemShare.SharedData = new systemShare.SharedData({
+      const linkData: systemShare.SharedData = new systemShare.SharedData({
         utd: 'general.url',
-        content: uri
+        uri: uri
       });
-      const controller: systemShare.ShareController = new systemShare.ShareController(sharedData);
+      const controller: systemShare.ShareController = new systemShare.ShareController(linkData);
       controller.show(getContext(this) as common.UIAbilityContext,
         { selectionMode: systemShare.SelectionMode.SINGLE })
         .catch((error: BusinessError): void => {
-          console.error(`Pilihos share failed: ${error.code} ${error.message}`);
-          this.showPlaybackToast('分享失败 [错误码: ' + String(error.code) + ']');
+          console.error(`Pilihos share link form failed: ${error.code} ${error.message}`);
+          this.showTextShareFallback(uri, error.code);
         });
     } catch (shareError) {
-      this.showPlaybackToast('分享失败: ' + String(shareError));
+      console.error(`Pilihos share link build failed: ${String(shareError)}`);
+      this.showTextShareFallback(uri, -1);
+    }
+  }
+
+  private showTextShareFallback(uri: string, prevCode: number): void {
+    try {
+      const textData: systemShare.SharedData = new systemShare.SharedData({
+        utd: 'general.plain-text',
+        content: uri
+      });
+      const controller: systemShare.ShareController = new systemShare.ShareController(textData);
+      controller.show(getContext(this) as common.UIAbilityContext,
+        { selectionMode: systemShare.SelectionMode.SINGLE })
+        .catch((error: BusinessError): void => {
+          console.error(`Pilihos share text form failed: ${error.code} ${error.message}`);
+          this.showPlaybackToast(`分享失败 [错误码: ${String(prevCode)}/${String(error.code)}]`);
+        });
+    } catch (fallbackError) {
+      this.showPlaybackToast(`分享失败 [错误码: ${String(prevCode)}]`);
     }
   }
 
@@ -174,11 +278,10 @@ export struct PlayerScreen {
     this.playbackStarting = false;
     this.playbackReady = true;
     this.playbackPaused = false;
-    // 播放器实例因横竖屏/尺寸切换重建时，续播切换前的进度
+    // 横竖屏切换会重建 Video 实例（可能触发多次 prepared）：
+    // 不清空 pendingResumeMs，重建时重复 seek 到同一进度，直到换新视频才重置
     if (this.pendingResumeMs > 1000) {
-      const resumeMs: number = this.pendingResumeMs;
-      this.pendingResumeMs = 0;
-      this.seekPlayback(resumeMs);
+      this.seekPlayback(this.pendingResumeMs);
     }
   }
 
@@ -307,19 +410,28 @@ export struct PlayerScreen {
     if (!this.holdSpeedActive) {
       this.holdSpeedActive = true;
       this.holdSpeedBase = this.playbackSpeed;
-      this.playbackSpeed = 2;
-      // 仅加速瞬间提示一次，HUD 到时自动隐藏（不随 repeat 回调常驻刷新）
-      this.showHud('2倍速快进中');
+      this.playbackSpeed = this.defaultSpeed;
+      // 默认倍速只作用于长按手势，普通播放始终按 1.0x 开始。
+      this.showHud(`${this.defaultSpeed.toFixed(2)}x 长按播放`);
     }
   }
 
   private onHoldSpeedEnd(): void {
     if (this.holdSpeedActive) {
       this.holdSpeedActive = false;
-      if (this.playbackSpeed === 2 && this.holdSpeedBase !== 2) {
+      if (this.playbackSpeed !== this.holdSpeedBase) {
         this.playbackSpeed = this.holdSpeedBase;
       }
     }
+  }
+
+  private gestureZone(event: GestureEvent): string {
+    const localX: number = event.fingerList.length > 0 ? event.fingerList[0].localX : this.surfaceWidth / 2;
+    const leftBound: number = this.surfaceWidth * PlayerScreen.CENTER_ZONE_RATIO;
+    const rightBound: number = this.surfaceWidth * (1 - PlayerScreen.CENTER_ZONE_RATIO);
+    if (localX < leftBound) return 'brightness';
+    if (localX > rightBound) return 'volume';
+    return 'center';
   }
 
   private onSeekStart(): void {
@@ -368,16 +480,13 @@ export struct PlayerScreen {
     const dy: number = event.offsetY;
     if (this.gestureMode === '') {
       if (this.verticalExpanded) {
-        // 竖屏化：快速轻扫（≥600vp/s）切换视频（上=下一个/下=上一个），
-        // 慢速拖动仍调亮度/音量（左半屏亮度、右半屏音量）；位移达阈值前不决策
         if (Math.abs(dy) < 14) return;
-        if (Math.abs(event.velocityY) >= 600) {
-          this.gestureMode = dy < 0 ? 'swipeNext' : 'swipePrev';
-          return;
-        }
+        this.gestureMode = this.gestureZone(event);
+        if (this.gestureMode === 'center') return;
+      } else {
+        if (Math.abs(dy) < 14) return;
+        this.gestureMode = this.gestureZone(event);
       }
-      const localX: number = event.fingerList.length > 0 ? event.fingerList[0].localX : this.surfaceWidth / 2;
-      this.gestureMode = localX < this.surfaceWidth / 2 ? 'brightness' : 'volume';
     }
     if (this.gestureMode === 'brightness') {
       const brightness: number = Math.max(0.05, Math.min(1, this.startBrightness - dy / 500));
@@ -393,10 +502,16 @@ export struct PlayerScreen {
   }
 
   private onVerticalEnd(event: GestureEvent): void {
-    if (this.gestureMode === 'swipeNext' && event.offsetY < -50) {
-      // 交给宿主从全网随机池切下一部（真随机，不限于同类/同UP主）
+    const dy: number = event.offsetY;
+    if (this.gestureMode === 'center') {
+      if (dy < -PlayerScreen.NAV_DISMISS_THRESHOLD) {
+        this.onRandomNext();
+      } else if (dy > PlayerScreen.NAV_DISMISS_THRESHOLD) {
+        this.playPrevVideo();
+      }
+    } else if (this.gestureMode === 'swipeNext' && dy < -50) {
       this.onRandomNext();
-    } else if (this.gestureMode === 'swipePrev' && event.offsetY > 50) {
+    } else if (this.gestureMode === 'swipePrev' && dy > 50) {
       this.playPrevVideo();
     }
     this.gestureMode = '';
@@ -427,7 +542,10 @@ export struct PlayerScreen {
           .onStart((): void => { this.playbackPaused = false; this.playbackReady = true; })
           .onPause((): void => { this.playbackPaused = true; })
           .onUpdate((info: PlaybackInfo): void => { this.onNativeVideoUpdate(info); })
-          .onFinish((): void => { this.markPlaybackFinished(); })
+          .onFinish((): void => {
+            if (this.playbackFinished) { this.haltFinishedPlayback(); return; }
+            this.markPlaybackFinished();
+          })
           .onError((error: BusinessError): void => { this.onNativeVideoError(error); });
       } else {
         Column({ space: 12 }) {
@@ -451,7 +569,11 @@ export struct PlayerScreen {
           cid: this.videos[this.currentIndex].cid,
           playing: !this.playbackPaused,
           positionMs: this.playbackCurrentMs,
-          speedFactor: this.playbackSpeed
+          speedFactor: this.playbackSpeed,
+          danmakuFontSize: this.danmakuFontSize,
+          danmakuOpacity: this.danmakuOpacity,
+          danmakuSpeed: this.danmakuSpeed
+          ,danmakuArea: this.danmakuArea
         })
       }
       PlayerOverlay({
@@ -465,8 +587,9 @@ export struct PlayerScreen {
         onShare: (): void => { this.shareCurrentVideo(); },
         onQualitySwitch: (qn: number): void => { this.onQualitySwitch(qn); }
       });
+      this.miniProgressBar();
       Button() {
-        Image($r('app.media.fanhui_left')).width(24).height(24);
+        Image($r('app.media.fanhui_left')).width(24).height(24).fillColor(Color.White);
       }
       .type(ButtonType.ROUNDED_RECTANGLE).width(44).height(44)
       .backgroundColor('#66000000').borderRadius(22)
@@ -481,6 +604,16 @@ export struct PlayerScreen {
       .position({ left: 68, top: 16 })
       .visibility(this.playbackControlsVisible ? Visibility.Visible : Visibility.None)
       .onClick(() => { this.onBackHome(); });
+      // 仅全屏（横屏）：右上角播放设置入口，功能与竖屏化"设置"一致
+      Button() {
+        Image($r('app.media.sphsz')).width(22).height(22).fillColor(Color.White);
+      }
+      .type(ButtonType.ROUNDED_RECTANGLE).width(44).height(44)
+      .backgroundColor('#66000000').borderRadius(22)
+      .position({ right: 16, top: 16 })
+      .visibility(this.landscapePlayback && this.playbackControlsVisible
+        ? Visibility.Visible : Visibility.None)
+      .onClick(() => { this.onDetailAction('settings'); });
       if (this.hudVisible) {
         Text(this.hudText)
           .fontSize(14).fontColor(Color.White)
@@ -492,16 +625,18 @@ export struct PlayerScreen {
     .onAreaChange((_oldArea: Area, newArea: Area): void => {
       this.surfaceWidth = Number(newArea.width);
     })
-    .gesture(PanGesture({ fingers: 1, direction: PanDirection.Horizontal })
+    .gesture(GestureGroup(GestureMode.Exclusive,
+      TapGesture({ count: 2 }).onAction((): void => { this.togglePlayback(); }),
+      TapGesture().onAction((): void => { this.showPlaybackControls(); })
+    ))
+    .gesture(PanGesture({ fingers: 1, direction: PanDirection.Horizontal, distance: 20 })
       .onActionStart((event: GestureEvent): void => { this.onSeekStart(); })
       .onActionUpdate((event: GestureEvent): void => { this.onSeekUpdate(event); })
       .onActionEnd((event: GestureEvent): void => { this.onSeekEnd(); }))
-    .gesture(PanGesture({ fingers: 1, direction: PanDirection.Vertical })
+    .gesture(PanGesture({ fingers: 1, direction: PanDirection.Vertical, distance: 20 })
       .onActionStart((event: GestureEvent): void => { this.onVerticalStart(); })
       .onActionUpdate((event: GestureEvent): void => { this.onVerticalUpdate(event); })
       .onActionEnd((event: GestureEvent): void => { this.onVerticalEnd(event); }))
-    .gesture(TapGesture().onAction((): void => { this.showPlaybackControls(); }))
-    .gesture(TapGesture({ count: 2 }).onAction((): void => { this.togglePlayback(); }))
     .gesture(LongPressGesture({ repeat: true, duration: 500 })
       .onAction((event: GestureEvent): void => { this.onHoldSpeedTick(); })
       .onActionEnd((event: GestureEvent): void => { this.onHoldSpeedEnd(); }))
@@ -577,7 +712,11 @@ export struct PlayerScreen {
         cid: this.videos[this.currentIndex].cid,
         playing: !this.playbackPaused,
         positionMs: this.playbackCurrentMs,
-        speedFactor: this.playbackSpeed
+        speedFactor: this.playbackSpeed,
+        danmakuFontSize: this.danmakuFontSize,
+        danmakuOpacity: this.danmakuOpacity,
+          danmakuSpeed: this.danmakuSpeed
+          ,danmakuArea: this.danmakuArea
       })
     }
     PlayerOverlay({
@@ -591,6 +730,7 @@ export struct PlayerScreen {
       onShare: (): void => { this.shareCurrentVideo(); },
       onQualitySwitch: (qn: number): void => { this.onQualitySwitch(qn); }
     });
+    this.miniProgressBar();
     Button() {
       Image($r('app.media.left_syb')).width(24).height(24);
     }
@@ -618,16 +758,18 @@ export struct PlayerScreen {
     .onAreaChange((_oldArea: Area, newArea: Area): void => {
       this.surfaceWidth = Number(newArea.width);
     })
-    .gesture(PanGesture({ fingers: 1, direction: PanDirection.Horizontal })
+    .gesture(GestureGroup(GestureMode.Exclusive,
+      TapGesture({ count: 2 }).onAction((): void => { this.togglePlayback(); }),
+      TapGesture().onAction((): void => { this.togglePlaybackControls(); })
+    ))
+    .gesture(PanGesture({ fingers: 1, direction: PanDirection.Horizontal, distance: 20 })
       .onActionStart((event: GestureEvent): void => { this.onSeekStart(); })
       .onActionUpdate((event: GestureEvent): void => { this.onSeekUpdate(event); })
       .onActionEnd((event: GestureEvent): void => { this.onSeekEnd(); }))
-    .gesture(PanGesture({ fingers: 1, direction: PanDirection.Vertical })
+    .gesture(PanGesture({ fingers: 1, direction: PanDirection.Vertical, distance: 20 })
       .onActionStart((event: GestureEvent): void => { this.onVerticalStart(); })
       .onActionUpdate((event: GestureEvent): void => { this.onVerticalUpdate(event); })
       .onActionEnd((event: GestureEvent): void => { this.onVerticalEnd(event); }))
-    .gesture(TapGesture().onAction((): void => { this.togglePlaybackControls(); }))
-    .gesture(TapGesture({ count: 2 }).onAction((): void => { this.togglePlayback(); }))
     .gesture(LongPressGesture({ repeat: true, duration: 500 })
       .onAction((event: GestureEvent): void => { this.onHoldSpeedTick(); })
       .onActionEnd((event: GestureEvent): void => { this.onHoldSpeedEnd(); }))
@@ -651,10 +793,23 @@ export struct PlayerScreen {
         onSubmitComment: (): void => { this.onSubmitComment(); },
         onSendDanmaku: (): void => { this.onSendDanmaku(); },
         onDetailAction: (action: string): void => { this.onDetailAction(action); },
-        onLikeComment: (comment: VideoComment): void => { this.onLikeComment(comment); },
+        onOpenUser: (mid: number, name: string): void => { this.onOpenUser(mid, name); },
+          onLikeComment: (comment: VideoComment): void => { this.onLikeComment(comment); },
+          onToggleCommentSort: (): void => { this.onToggleCommentSort(); },
+          onReplyComment: (comment: VideoComment): void => { this.onReplyComment(comment); },
+          onReplySubReply: (rootId: number, reply: VideoComment): void => {
+            this.onReplySubReply(rootId, reply);
+          },
+          onPickEmoji: (emoji: BiliEmoji): void => { this.onPickEmoji(emoji); },
+          onDeleteComment: (comment: VideoComment): void => { this.onDeleteComment(comment); },
+          onHideComment: (comment: VideoComment): void => { this.onHideComment(comment); },
+          onReportComment: (comment: VideoComment): void => { this.onReportComment(comment); },
+          onBlockComment: (comment: VideoComment): void => { this.onBlockComment(comment); },
         onFollowAuthor: (on: boolean): void => { this.onFollowAuthor(on); },
         onFollowGroup: (): void => { this.onFollowGroup(); },
         onSetPlayMode: (mode: number): void => { this.onSetPlayMode(mode); },
+        onSetDanmakuFontSize: (size: number): void => { this.onSetDanmakuFontSize(size); },
+        onSetDanmakuArea: (area: number): void => { this.onSetDanmakuArea(area); },
         onShowControls: (): void => { this.showPlaybackControls(); },
         onToggleControls: (): void => { this.togglePlaybackControls(); },
         onOpenLandscape: (): void => { this.onOpenLandscape(); }

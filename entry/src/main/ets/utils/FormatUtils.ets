@@ -39,10 +39,20 @@ export class FormatUtils {
   }
 
   static levelColor(level: number): string {
-    if (level >= 8) return '#E04C4C';
-    if (level >= 6) return '#E661A0';
-    if (level >= 4) return '#1677A8';
-    return '#9AA4AE';
+    if (level >= 6) return '#F39800';
+    if (level >= 4) return '#23ADE5';
+    return '#BFBFBF';
+  }
+
+  static levelBadge(level: number): Resource {
+    const normalized: number = Math.max(0, Math.min(6, Math.floor(level)));
+    if (normalized === 1) return $r('app.media.Lv1');
+    if (normalized === 2) return $r('app.media.Lv2');
+    if (normalized === 3) return $r('app.media.Lv3');
+    if (normalized === 4) return $r('app.media.Lv4');
+    if (normalized === 5) return $r('app.media.Lv5');
+    if (normalized >= 6) return $r('app.media.Lv6');
+    return $r('app.media.Lv0');
   }
 
   static playbackErrorToast(errorMessage: string): string {

@@ -1,5 +1,16 @@
 {
   "color": [
-    { "name": "start_window_background", "value": "#F7F8FA" }
+    { "name": "start_window_background", "value": "#F1F3F5" },
+    { "name": "color_text_primary", "value": "#E6000000" },
+    { "name": "color_text_secondary", "value": "#99000000" },
+    { "name": "color_text_tertiary", "value": "#66000000" },
+    { "name": "color_icon_tertiary", "value": "#34000000" },
+    { "name": "color_background_page", "value": "#F1F3F5" },
+    { "name": "color_background_card", "value": "#FFFFFF" },
+    { "name": "color_background_selected", "value": "#E6EEFE" },
+    { "name": "color_divider", "value": "#E5E5E5" },
+    { "name": "color_brand", "value": "#1288FA" },
+    { "name": "comp_divider", "value": "#1A000000" },
+    { "name": "comp_background_list_card", "value": "#FFFFFF" }
   ]
 }

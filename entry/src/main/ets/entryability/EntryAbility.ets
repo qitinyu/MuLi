@@ -13,18 +13,28 @@ export default class EntryAbility extends UIAbility {
       console.error(`Pilihos fullscreen layout failed: ${error.code} ${error.message}`);
     });
     mainWindow.setWindowSystemBarProperties({
-      // Keep system areas opaque so the app bars cannot bleed or blur through them.
-      statusBarColor: '#F7F8FA',
+      // Keep the fullscreen background continuous under the system bars.
+      statusBarColor: '#00000000',
       navigationBarColor: '#00000000',
       isStatusBarLightIcon: true,
       isNavigationBarLightIcon: true
     }).catch((error: BusinessError): void => {
       console.error(`Pilihos system bar setup failed: ${error.code} ${error.message}`);
     });
-    windowStage.loadContent('pages/Index', (err: BusinessError) => {
+    // 开屏动画页：停留淡出后 replaceUrl 进入主页
+    windowStage.loadContent('pages/SplashPage', (err: BusinessError) => {
       if (err.code) {
         console.error(`Pilihos loadContent failed: ${err.code} ${err.message}`);
       }
     });
+  }
+
+  // 前后台状态广播：PlayerScreen 依据它实现"打断接续"
+  onForeground(): void {
+    AppStorage.setOrCreate('app_in_background', false);
+  }
+
+  onBackground(): void {
+    AppStorage.setOrCreate('app_in_background', true);
   }
 }

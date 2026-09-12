@@ -62,7 +62,7 @@ export struct PlayerOverlay {
       Text('清晰度').fontSize(13).fontWeight(FontWeight.Bold).fontColor('#20252B')
         .width('100%').height(30).textAlign(TextAlign.Center);
       Text('自动').fontSize(12)
-        .fontColor(this.currentQn === 0 ? '#1677A8' : '#1E252D')
+        .fontColor(this.currentQn === 0 ? '#1288FA' : '#1E252D')
         .fontWeight(this.currentQn === 0 ? FontWeight.Bold : FontWeight.Normal)
         .width('100%').height(28).textAlign(TextAlign.Center)
         .onClick(() => {
@@ -75,7 +75,7 @@ export struct PlayerOverlay {
       }
       ForEach(this.playbackQualities, (option: QualityOption) => {
         Text(option.label).fontSize(12)
-          .fontColor(option.qn === this.currentQn ? '#1677A8' : '#1E252D')
+          .fontColor(option.qn === this.currentQn ? '#1288FA' : '#1E252D')
           .fontWeight(option.qn === this.currentQn ? FontWeight.Bold : FontWeight.Normal)
           .width('100%').height(28).textAlign(TextAlign.Center)
           .onClick(() => {
@@ -83,8 +83,7 @@ export struct PlayerOverlay {
             this.onQualitySwitch(option.qn);
           });
       }, (option: QualityOption) => `qn_${option.qn}`);
-    }.width(104).padding({ top: 8, bottom: 8 }).backgroundColor('#F7F8FA')
-      .borderRadius(10).shadow({ radius: 10, color: '#33000000', offsetX: 0, offsetY: 3 });
+    }.width(104).padding({ top: 8, bottom: 8 }).backgroundColor(Color.Transparent);
   }
 
   @Builder
@@ -117,7 +116,7 @@ export struct PlayerOverlay {
         .width('100%').height(30).textAlign(TextAlign.Center);
       ForEach([0.5, 0.75, 1.0, 1.25, 1.5, 2.0], (speed: number) => {
         Text(speed === 1.0 ? '1.0x（原速度）' : speed.toFixed(2) + 'x').fontSize(12)
-          .fontColor(speed === this.playbackSpeed ? '#1677A8' : '#1E252D')
+          .fontColor(speed === this.playbackSpeed ? '#1288FA' : '#1E252D')
           .fontWeight(speed === this.playbackSpeed ? FontWeight.Bold : FontWeight.Normal)
           .width('100%').height(28).textAlign(TextAlign.Center)
           .onClick(() => {
@@ -126,8 +125,7 @@ export struct PlayerOverlay {
             this.onShowControls();
           });
       }, (speed: number) => `${speed}`);
-    }.width(112).padding({ top: 8, bottom: 8 }).backgroundColor('#F7F8FA')
-      .borderRadius(10).shadow({ radius: 10, color: '#33000000', offsetX: 0, offsetY: 3 });
+    }.width(112).padding({ top: 8, bottom: 8 }).backgroundColor(Color.Transparent);
   }
 
   @Builder
@@ -158,7 +156,7 @@ export struct PlayerOverlay {
               step: 1000
             })
               .layoutWeight(1).height(24)
-              .blockColor('#FFFFFF').selectedColor('#F04B55').trackColor('#66FFFFFF')
+              .blockColor('#FFFFFF').selectedColor('#1288FA').trackColor('#66FFFFFF')
               .onChange((value: number): void => { this.onSeek(value); });
             Text(FormatUtils.formatPlaybackTime(this.playbackDurationMs)).fontSize(11).fontColor(Color.White);
           }.width('100%').height(24).alignItems(VerticalAlign.Center);

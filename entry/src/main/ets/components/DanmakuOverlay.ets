@@ -31,6 +31,10 @@ export struct DanmakuOverlay {
   @Prop playing: boolean = true;
   @Prop positionMs: number = 0;
   @Prop speedFactor: number = 1.0;
+  @Prop @Watch('onFontSizeChanged') danmakuFontSize: number = 1;
+  @Prop @Watch('onOpacityChanged') danmakuOpacity: number = 1;
+  @Prop @Watch('onSpeedChanged') danmakuSpeed: number = 1;
+  @Prop @Watch('onAreaChanged') danmakuArea: number = 100;
   private settings: CanvasRenderingContext2D =
     new CanvasRenderingContext2D(new RenderingContextSettings(true));
   private items: DanmakuItem[] = [];
@@ -60,6 +64,29 @@ export struct DanmakuOverlay {
     this.loadDanmaku();
   }
 
+  private onFontSizeChanged(): void {
+    // Rebuild active items because their measured widths use the old font.
+    this.scrollLanes = [];
+    this.staticItems = [];
+    this.draw();
+  }
+
+  private onOpacityChanged(): void {
+    this.draw();
+  }
+
+  private onSpeedChanged(): void {
+  }
+
+  private onAreaChanged(): void {
+    // 立即按新的显示区域重建弹道，避免用户点击后要等下一轮弹幕才看到变化。
+    this.scrollLanes = [];
+    this.staticItems = [];
+    this.cursor = this.lowerBound(this.positionMs);
+    this.lastPositionMs = this.positionMs;
+    this.draw();
+  }
+
   private async loadDanmaku(): Promise<void> {
     this.items = [];
     this.cursor = 0;
@@ -73,11 +100,22 @@ export struct DanmakuOverlay {
   }
 
   private laneCount(): number {
-    return Math.max(3, Math.floor(this.canvasHeight / LANE_HEIGHT) - 2);
+    const visibleHeight: number = this.canvasHeight * Math.max(0.2, Math.min(1, this.danmakuArea / 100));
+    return Math.max(3, Math.floor(visibleHeight / LANE_HEIGHT) - 2);
+  }
+
+  private getFontSizePx(): number {
+    // Keep compatibility with the old 0/1/2 values while using a continuous
+    // 12-48px range for the current setting.
+    if (this.danmakuFontSize === 0) return 12;
+    if (this.danmakuFontSize === 1) return 15;
+    if (this.danmakuFontSize === 2) return 18;
+    return Math.max(40, Math.min(60, this.danmakuFontSize));
   }
 
   private spawn(item: DanmakuItem): void {
-    this.settings.font = '15px sans-serif';
+    const fontSize: number = this.getFontSizePx();
+    this.settings.font = `${fontSize}px sans-serif`;
     const textWidth: number = this.settings.measureText(item.text).width;
     if (item.mode === 1) {
       const laneCount: number = this.laneCount();
@@ -104,12 +142,14 @@ export struct DanmakuOverlay {
       }
       // 弹道全忙时丢弃，避免堆积
       return;
-    }    const isTop: boolean = item.mode === 5;
+    }
+    const isTop: boolean = item.mode === 5;
+    const visibleHeight: number = this.canvasHeight * Math.max(0.2, Math.min(1, this.danmakuArea / 100));
     const active: ActiveStaticDanmaku = {
       text: item.text,
       color: `#${item.color.toString(16).padStart(6, '0')}`,
       x: Math.max(4, (this.canvasWidth - textWidth) / 2),
-      y: isTop ? LANE_HEIGHT : this.canvasHeight - 6,
+      y: isTop ? LANE_HEIGHT : visibleHeight - 6,
       bornAt: Date.now()
     };
     this.staticItems.push(active);
@@ -137,7 +177,7 @@ export struct DanmakuOverlay {
           this.spawn(this.items[this.cursor]);
           this.cursor++;
         }
-        const speed: number = (this.canvasWidth + 60) / (SCROLL_DURATION_MS / this.speedFactor);
+        const speed: number = (this.canvasWidth + 60) / (SCROLL_DURATION_MS / (this.speedFactor * (0.5 + this.danmakuSpeed * 0.5)));
         for (let lane: number = 0; lane < this.scrollLanes.length; lane++) {
           const active: ActiveScrollDanmaku | undefined = this.scrollLanes[lane];
           if (active === undefined) continue;
@@ -169,10 +209,12 @@ export struct DanmakuOverlay {
 
   private draw(): void {
     this.settings.clearRect(0, 0, this.canvasWidth, this.canvasHeight);
-    this.settings.font = '15px sans-serif';
+    const fontSize: number = this.getFontSizePx();
+    this.settings.font = `${fontSize}px sans-serif`;
     this.settings.textBaseline = 'alphabetic';
     this.settings.shadowColor = '#000000';
     this.settings.shadowBlur = 3;
+    this.settings.globalAlpha = this.danmakuOpacity;
     for (let lane: number = 0; lane < this.scrollLanes.length; lane++) {
       const active: ActiveScrollDanmaku | undefined = this.scrollLanes[lane];
       if (active === undefined) continue;
@@ -185,6 +227,7 @@ export struct DanmakuOverlay {
       this.settings.fillText(active.text, active.x, active.y);
     }
     this.settings.shadowBlur = 0;
+    this.settings.globalAlpha = 1;
   }
 
   build() {

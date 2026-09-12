@@ -1,5 +1,6 @@
 import router from '@ohos.router';
 import { VideoItem } from '../models/VideoItem';
+import { FormatUtils } from '../utils/FormatUtils';
 
 @Entry
 @Component
@@ -36,9 +37,7 @@ struct HotDetail {
   }
 
   private formatCount(value: number): string {
-    if (value >= 100000000) return `${(value / 100000000).toFixed(2).replace(/\.00$/, '')}亿`;
-    if (value >= 10000) return `${(value / 10000).toFixed(1).replace(/\.0$/, '')}万`;
-    return `${value}`;
+    return FormatUtils.formatCount(value);
   }
 
   private formatDuration(seconds: number): string {
@@ -49,9 +48,7 @@ struct HotDetail {
   }
 
   private formatPublishTime(timestamp: number): string {
-    if (timestamp <= 0) return '发布时间未知';
-    const date: Date = new Date(timestamp * 1000);
-    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+    return FormatUtils.formatPublishDate(timestamp);
   }
 
   build() {
@@ -95,7 +92,7 @@ struct HotDetail {
                     Text(this.item.description).fontSize(14).fontColor('#59616B').lineHeight(22)
                       .maxLines(this.descriptionExpanded ? 1000 : 4)
                       .textOverflow({ overflow: TextOverflow.Ellipsis }).width('100%');
-                    Text(this.descriptionExpanded ? '收起' : '展开全部').fontSize(13).fontColor('#1677A8')
+                    Text(this.descriptionExpanded ? '收起' : '展开全部').fontSize(13).fontColor('#1288FA')
                       .onClick(() => { this.descriptionExpanded = !this.descriptionExpanded; });
                   }.width('100%').alignItems(HorizontalAlign.Start);
                 }
@@ -126,7 +123,7 @@ struct HotDetail {
           .type(ButtonType.ROUNDED_RECTANGLE)
           .width('92%').height(46)
           .fontSize(16).fontWeight(FontWeight.Medium)
-          .fontColor(Color.White).backgroundColor('#1677A8')
+          .fontColor(Color.White).backgroundColor('#1288FA')
           .enabled(this.item !== null)
           .onClick((): void => { this.playVideo(); });
       }

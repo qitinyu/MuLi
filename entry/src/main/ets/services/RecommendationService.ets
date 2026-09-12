@@ -111,6 +111,8 @@ export class RecommendationService {
       cid: Number(player['cid'] ?? raw['cid'] ?? 0),
       title: String(raw['title'] ?? ''),
       author: String(args['up_name'] ?? ''),
+      // App 推荐流 args.up_id 即 UP 主 mid，缺失时兜底 player_args.mid
+      authorMid: Number(args['up_id'] ?? args['mid'] ?? player['mid'] ?? 0),
       cover: RecommendationService.compactCover(String(raw['cover'] ?? '')),
       viewCount: RecommendationService.parseCount(String(raw['cover_left_text_1'] ?? '0')),
       danmuCount: RecommendationService.parseCount(String(raw['cover_left_text_2'] ?? '0')),

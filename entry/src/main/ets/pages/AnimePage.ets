@@ -96,8 +96,8 @@ export struct AnimePage {
             .width('100%').padding({ left: 4, bottom: 12 });
           if (this.animeList.length === 0 && this.loading) {
             Row({ space: 8 }) {
-              LoadingProgress().width(26).height(26).color('#1677A8');
-              Text('正在加载番剧榜单...').fontSize(14).fontColor('#1677A8');
+              LoadingProgress().width(26).height(26).color('#1288FA');
+              Text('正在加载番剧榜单...').fontSize(14).fontColor('#1288FA');
             }.justifyContent(FlexAlign.Center).width('100%').margin({ top: 60 });
           } else if (this.animeList.length === 0 && this.loadError !== '') {
             Column({ space: 12 }) {

@@ -2,6 +2,7 @@ import { VideoItem } from '../models/VideoItem';
 import { AuthService } from '../services/AuthService';
 import { DynamicAuthor, DynamicEntry, DynamicFeedBatch, DynamicPic, DynamicService } from '../services/DynamicService';
 import { FilterWords } from '../utils/FilterWords';
+import router from '@ohos.router';
 
 // 模块级缓存：版块切入切出保留首次内容，仅手动刷新更新
 let cachedEntries: DynamicEntry[] = [];
@@ -14,6 +15,12 @@ export struct DynamicPage {
   @Prop bottomInset: number = 8;
   onPlayVideo: (item: VideoItem, showComments: boolean) => void =
     (_item: VideoItem, _showComments: boolean) => {};
+  onLikeVideo: (item: VideoItem) => void = (_item: VideoItem) => {};
+  onShareVideo: (item: VideoItem) => void = (_item: VideoItem) => {};
+  // 统计行点赞/分享目标为动态本身
+  onLikeEntry: (entry: DynamicEntry) => void = (_entry: DynamicEntry) => {};
+  onShareEntry: (entry: DynamicEntry) => void = (_entry: DynamicEntry) => {};
+  @State suppressCardTap: boolean = false;
   @State entries: DynamicEntry[] = [];
   @State authors: DynamicAuthor[] = [];
   @State loading: boolean = true;
@@ -168,6 +175,16 @@ export struct DynamicPage {
     return `${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
   }
 
+  private openAuthorSpace(entry: DynamicEntry): void {
+    if (entry.authorMid <= 0) {
+      return;
+    }
+    router.pushUrl({ url: 'pages/UserSpace', params: { mid: entry.authorMid, name: entry.authorName } })
+      .catch((error: Object): void => {
+        console.error('Pilihos dynamic author space failed: ' + String(error));
+      });
+  }
+
   @Builder
   dynamicEntryCard(entry: DynamicEntry) {
     Column({ space: 10 }) {
@@ -178,7 +195,8 @@ export struct DynamicPage {
             .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis });
           Text(this.formatPublishTime(entry.publishTime)).fontSize(11).fontColor('#A4A9AF');
         }.layoutWeight(1).alignItems(HorizontalAlign.Start);
-      }.width('100%');
+      }.width('100%')
+        .onClick((): void => { this.openAuthorSpace(entry); });
       if (entry.text !== '') {
         Text(entry.text).fontSize(15).fontColor('#20242A').lineHeight(23).width('100%');
       }
@@ -189,7 +207,7 @@ export struct DynamicPage {
       }
       if (entry.repostName !== '') {
         Column({ space: 8 }) {
-          Text('转发自 @' + entry.repostName).fontSize(12).fontColor('#1677A8').width('100%');
+          Text('转发自 @' + entry.repostName).fontSize(12).fontColor('#1288FA').width('100%');
           if (entry.repostVideo !== null) {
             this.videoCard(entry.repostVideo);
           } else if (entry.repostText !== '') {
@@ -203,10 +221,12 @@ export struct DynamicPage {
         .alignItems(HorizontalAlign.Start);
       }
       Row({ space: 24 }) {
+        // 点赞：直接点赞该动态
         Row({ space: 5 }) {
           Image($r('app.media.dianzan')).width(16).height(16).fillColor('#8B9199');
           Text(this.formatCount(entry.stat.like)).fontSize(12).fontColor('#8B9199');
-        };
+        }
+          .onClick((): void => { this.onLikeEntry(entry); });
         Row({ space: 5 }) {
           Image($r('app.media.pl')).width(16).height(16).fillColor('#8B9199');
           Text(this.formatCount(entry.stat.comment)).fontSize(12).fontColor('#8B9199');
@@ -218,10 +238,12 @@ export struct DynamicPage {
               this.onPlayVideo(entry.repostVideo, true);
             }
           });
+        // 分享：分享动态链接
         Row({ space: 5 }) {
           Image($r('app.media.share')).width(16).height(16).fillColor('#8B9199');
           Text(this.formatCount(entry.stat.share)).fontSize(12).fontColor('#8B9199');
-        };
+        }
+          .onClick((): void => { this.onShareEntry(entry); });
       }.width('100%').justifyContent(FlexAlign.Start);
     }
     .width('100%')
@@ -240,13 +262,13 @@ export struct DynamicPage {
               .layoutWeight(1);
             if (this.selectedAuthor !== '') {
               Row({ space: 5 }) {
-                Text('只看 @' + this.selectedAuthor).fontSize(11).fontColor('#1677A8')
+                Text('只看 @' + this.selectedAuthor).fontSize(11).fontColor('#1288FA')
                   .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
                   .constraintSize({ maxWidth: 150 });
-                Text('✕').fontSize(11).fontColor('#1677A8').fontWeight(FontWeight.Bold);
+                Text('✕').fontSize(11).fontColor('#1288FA').fontWeight(FontWeight.Bold);
               }
               .padding({ left: 8, right: 8, top: 4, bottom: 4 })
-              .backgroundColor('#1A1677A8').borderRadius(12)
+              .backgroundColor('#1A1288FA').borderRadius(12)
               .onClick(() => { this.selectedAuthor = ''; });
             }
           }.width('100%').height(40);
@@ -258,10 +280,10 @@ export struct DynamicPage {
                     Image(author.face).width(50).height(50).borderRadius(25).objectFit(ImageFit.Cover)
                       .border({
                         width: this.selectedAuthor === author.name ? 2.5 : 0,
-                        color: '#1677A8'
+                        color: '#1288FA'
                       });
                     Text(author.name).fontSize(11)
-                      .fontColor(this.selectedAuthor === author.name ? '#1677A8' : '#59616B')
+                      .fontColor(this.selectedAuthor === author.name ? '#1288FA' : '#59616B')
                       .fontWeight(this.selectedAuthor === author.name ? FontWeight.Bold : FontWeight.Normal)
                       .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
                       .width(58).textAlign(TextAlign.Center);
@@ -275,8 +297,8 @@ export struct DynamicPage {
           }
           if (this.entries.length === 0 && this.loading) {
             Row({ space: 8 }) {
-              LoadingProgress().width(26).height(26).color('#1677A8');
-              Text('正在加载动态...').fontSize(14).fontColor('#1677A8');
+              LoadingProgress().width(26).height(26).color('#1288FA');
+              Text('正在加载动态...').fontSize(14).fontColor('#1288FA');
             }.justifyContent(FlexAlign.Center).width('100%').margin({ top: 50 });
           } else if (this.entries.length === 0 && this.loadError !== '') {
             Text(this.loadError).fontSize(14).fontColor('#8B9199').width('100%')
@@ -290,8 +312,8 @@ export struct DynamicPage {
             }, (entry: DynamicEntry) => `entry_${entry.id}_${entry.authorName}`);
             if (this.loadingMore) {
               Row({ space: 8 }) {
-                LoadingProgress().width(22).height(22).color('#1677A8');
-                Text('加载更多动态...').fontSize(13).fontColor('#1677A8');
+                LoadingProgress().width(22).height(22).color('#1288FA');
+                Text('加载更多动态...').fontSize(13).fontColor('#1288FA');
               }.justifyContent(FlexAlign.Center).width('100%').padding({ top: 8, bottom: 8 });
             } else if (!this.hasMore && this.entries.length > 0) {
               Text('没有更多动态了').fontSize(12).fontColor('#A4A9AF').width('100%')

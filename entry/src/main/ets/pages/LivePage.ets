@@ -178,9 +178,9 @@ export struct LivePage {
         }.width('100%');
         Row({ space: 8 }) {
           if (room.areaName !== '') {
-            Text(room.areaName).fontSize(10).fontColor('#1677A8')
+            Text(room.areaName).fontSize(10).fontColor('#1288FA')
               .padding({ left: 6, right: 6, top: 2, bottom: 2 })
-              .backgroundColor('#1A1677A8').borderRadius(4);
+              .backgroundColor('#1A1288FA').borderRadius(4);
           }
           Text(this.formatCount(room.online) + ' 人观看').fontSize(11).fontColor('#A4A9AF')
             .layoutWeight(1).maxLines(1);
@@ -218,8 +218,8 @@ export struct LivePage {
           this.sectionHeader('推荐直播', '全平台实时人气排行');
           if (this.hotRooms.length === 0 && this.loading) {
             Row({ space: 8 }) {
-              LoadingProgress().width(26).height(26).color('#1677A8');
-              Text('正在获取直播列表...').fontSize(14).fontColor('#1677A8');
+              LoadingProgress().width(26).height(26).color('#1288FA');
+              Text('正在获取直播列表...').fontSize(14).fontColor('#1288FA');
             }.justifyContent(FlexAlign.Center).width('100%').margin({ top: 50 });
           } else if (this.hotRooms.length === 0 && this.loadError !== '') {
             Column({ space: 12 }) {
@@ -243,8 +243,8 @@ export struct LivePage {
           }
           if (this.loadingMore) {
             Row({ space: 8 }) {
-              LoadingProgress().width(22).height(22).color('#1677A8');
-              Text('加载中...').fontSize(13).fontColor('#1677A8');
+              LoadingProgress().width(22).height(22).color('#1288FA');
+              Text('加载中...').fontSize(13).fontColor('#1288FA');
             }.justifyContent(FlexAlign.Center).width('100%').padding({ top: 10 });
           }
         }

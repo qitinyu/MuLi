@@ -32,6 +32,10 @@ struct SearchPage {
   @State searchHistoryEnabled: boolean = false;
   @State searched: boolean = false;
   @State searchLayer: number = 0; // 0=搜索首页层 1=结果层
+  // 搜索联想（设置-搜索-搜索联想词，默认关）
+  @StorageProp('search_suggest_on') suggestOn: boolean = false;
+  @State suggestList: string[] = [];
+  private suggestTimer: number = -1;
   @State hotWords: string[] = [];
   @State portraitBadge: boolean = true;
   @State topInset: number = 0;
@@ -115,7 +119,53 @@ struct SearchPage {
     }
   }
 
+  // 搜索联想：s.search.bilibili.com/main/suggest（设置开关控制）
+  private onSearchInputChanged(value: string): void {
+    if (!this.suggestOn) return;
+    const term: string = value.trim();
+    if (this.suggestTimer !== -1) {
+      clearTimeout(this.suggestTimer);
+      this.suggestTimer = -1;
+    }
+    if (term === '') {
+      this.suggestList = [];
+      return;
+    }
+    this.suggestTimer = setTimeout((): void => {
+      this.loadSuggest(term);
+    }, 250);
+  }
+
+  private loadSuggest(term: string): void {
+    const query: Record<string, string> = {};
+    query['term'] = term;
+    query['main_ver'] = 'v1';
+    query['highlight'] = term;
+    BiliHttpClient.getJsonHost('s.search.bilibili.com', '/main/suggest', query)
+      .then((result: Record<string, Object>): void => {
+        const wrapper: Record<string, Object> = (result['result'] ?? {}) as Record<string, Object>;
+        const tag: Object[] = ((wrapper['tag'] ?? []) as Object[]);
+        const values: string[] = [];
+        tag.forEach((itemRaw: Object): void => {
+          const item: Record<string, Object> = itemRaw as Record<string, Object>;
+          const value: string = String(item['value'] ?? item['term'] ?? '');
+          if (value !== '' && values.indexOf(value) < 0) values.push(value);
+        });
+        // 仅当输入仍是触发词时才应用（防旧响应覆盖新输入）
+        if (this.searchText.trim() === term) {
+          this.suggestList = values.slice(0, 10);
+        }
+      }).catch((_: Object): void => { });
+  }
+
+  private pickSuggest(value: string): void {
+    this.suggestList = [];
+    this.searchText = value;
+    this.submitVideoSearch(value);
+  }
+
   private async submitVideoSearch(keyword: string): Promise<void> {
+    this.suggestList = [];
     let value: string = keyword.trim();
     if (value === '') value = this.searchText.trim();
     if (value === '') {
@@ -350,7 +400,7 @@ struct SearchPage {
       Row({ space: 26 }) {
         ForEach(this.typeItems, (item: SearchTypeItem) => {
           Text(item.label).fontSize(16)
-            .fontColor(this.searchType === item.value ? '#1677A8' : '#59616B')
+            .fontColor(this.searchType === item.value ? '#1288FA' : '#59616B')
             .fontWeight(this.searchType === item.value ? FontWeight.Bold : FontWeight.Normal)
             .onClick((): void => { this.switchType(item.value); });
         }, (item: SearchTypeItem) => `type_${item.value}_${this.searchType === item.value}`);
@@ -366,7 +416,7 @@ struct SearchPage {
         Row({ space: 10 }) {
           ForEach(SearchPage.orderItems(), (item: string[]) => {
             Text(item[1]).fontSize(13)
-              .fontColor(this.searchOrder === item[0] ? '#1677A8' : '#59616B')
+              .fontColor(this.searchOrder === item[0] ? '#1288FA' : '#59616B')
               .fontWeight(this.searchOrder === item[0] ? FontWeight.Bold : FontWeight.Normal)
               .padding({ left: 12, right: 12, top: 6, bottom: 6 })
               .backgroundColor(this.searchOrder === item[0] ? '#E5F3FA' : Color.White)
@@ -506,11 +556,11 @@ struct SearchPage {
   @Builder
   followBubble(user: SearchUser) {
     Row({ space: 4 }) {
-      Image($r('app.media.lista')).width(14).height(14)
-        .fillColor(user.followed ? '#59616B' : '#1677A8');
+      Image($r('app.media.listb')).width(14).height(14)
+        .fillColor(user.followed ? '#59616B' : '#1288FA');
       Text(user.followed ? '已关注' : '关注')
         .fontSize(12)
-        .fontColor(user.followed ? '#59616B' : '#1677A8');
+        .fontColor(user.followed ? '#59616B' : '#1288FA');
     }
     .padding({ left: 10, right: 10, top: 5, bottom: 5 })
     .backgroundColor(user.followed ? '#F1F3F5' : '#E5F3FA')
@@ -565,9 +615,7 @@ struct SearchPage {
             .fontWeight(FontWeight.Medium).maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
             .constraintSize({ maxWidth: '55%' });
-          Text('LV' + String(user.level)).fontSize(9).fontColor(Color.White)
-            .backgroundColor(user.level >= 6 ? '#E661A0' : user.level >= 4 ? '#1677A8' : '#9AA4AE')
-            .borderRadius(3).padding({ left: 3, right: 3, top: 1, bottom: 1 });
+          Image(FormatUtils.levelBadge(user.level)).width(44).height(24).objectFit(ImageFit.Contain);
           Blank().layoutWeight(1);
           this.followBubble(user);
         }.width('100%');
@@ -595,9 +643,9 @@ struct SearchPage {
       Image(season.cover).width('42%').aspectRatio(3 / 4).objectFit(ImageFit.Cover)
         .borderRadius(10);
       Column({ space: 7 }) {
-        Text(season.typeName).fontSize(10).fontColor('#1677A8')
+        Text(season.typeName).fontSize(10).fontColor('#1288FA')
           .padding({ left: 6, right: 6, top: 2, bottom: 2 })
-          .backgroundColor('#1A1677A8').borderRadius(4)
+            .backgroundColor('#1A1288FA').borderRadius(4)
           .width('100%').textAlign(TextAlign.Start);
         Text(season.title).fontSize(16).fontColor('#20242A').maxLines(2)
           .textOverflow({ overflow: TextOverflow.Ellipsis }).width('100%');
@@ -614,7 +662,7 @@ struct SearchPage {
   resultSection() {
     if (this.searchLoading) {
       Column() {
-        this.loadingIndicator('正在搜索...', '#1677A8');
+        this.loadingIndicator('正在搜索...', '#1288FA');
       }.layoutWeight(1).width('100%').justifyContent(FlexAlign.Center);
     } else if (this.searchType === 'video' && this.searchResults.length > 0) {
       Scroll() {
@@ -641,8 +689,12 @@ struct SearchPage {
           ForEach(this.searchUsers, (user: SearchUser) => {
             this.userResultCard(user);
           }, (user: SearchUser) => `user_${user.mid}_${user.followed}`);
-        }.width('100%');
-      }.layoutWeight(1).width('100%').scrollBar(BarState.Off);
+        }
+        .width('100%')
+        .alignItems(HorizontalAlign.Start)
+        .constraintSize({ minHeight: '100%' });
+      }.layoutWeight(1).width('100%').scrollBar(BarState.Off)
+        .align(Alignment.Top);
     } else if (this.searchSeasons.length > 0) {
       Scroll() {
         Column({ space: 10 }) {
@@ -664,32 +716,54 @@ struct SearchPage {
   }
 
   build() {
-    Column() {
+    Stack({ alignContent: Alignment.Top }) {
+      Column() {
       Row({ space: 8 }) {
         Button() {
           Image($r('app.media.fanhui_left')).width(24).height(24);
         }
         .type(ButtonType.ROUNDED_RECTANGLE).width(48).height(48)
-        .backgroundColor(ImmersiveMaterial.fallbackBackground())
+        .backgroundColor('#F7F8FA')
         .borderRadius(24)
-        .backgroundBlurStyle(ImmersiveMaterial.blurStyle(), { colorMode: ThemeColorMode.LIGHT })
         .shadow({ radius: 8, color: '#25000000', offsetX: 0, offsetY: 2 })
         .onClick(() => { this.backAction(); });
         Search({ placeholder: '搜索', value: this.searchText })
-          .layoutWeight(1).height(48).backgroundColor(ImmersiveMaterial.fallbackBackground())
-          .borderRadius(24).backgroundBlurStyle(ImmersiveMaterial.blurStyle(), { colorMode: ThemeColorMode.LIGHT })
+          .layoutWeight(1).height(48).backgroundColor('#F7F8FA')
+          .borderRadius(24)
           .shadow({ radius: 8, color: '#25000000', offsetX: 0, offsetY: 2 })
           .focusable(true)
           .defaultFocus(true)
-          .onChange((value: string) => { this.searchText = value; })
+          .onChange((value: string) => {
+            this.searchText = value;
+            this.onSearchInputChanged(value);
+          })
           .onSubmit((value: string): void => {
             // 部分真机 onSubmit 回调的 value 可能为空，回退到状态中记录的输入
             const keyword: string = value.trim() !== '' ? value : this.searchText;
             this.submitVideoSearch(keyword);
           });
       }
-      .width('100%')
-      .padding({ left: 10, right: 10, top: this.topInset + 8, bottom: 8 });
+        .width('100%')
+        .padding({ left: 10, right: 10, top: this.topInset + 8, bottom: 8 });
+
+        // 搜索联想：页面内联展示在搜索栏下方（覆盖设置开启时）
+        if (this.suggestOn && this.suggestList.length > 0) {
+          Column() {
+            ForEach(this.suggestList, (value: string) => {
+              Row({ space: 10 }) {
+                Image($r('app.media.serch')).width(15).height(15).fillColor('#858C94');
+                Text(value).fontSize(13).fontColor('#1E252D').maxLines(1)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis });
+              }
+              .width('100%').height(38).padding({ left: 14 })
+              .onClick((): void => { this.pickSuggest(value); });
+            }, (value: string) => `sg_${value}`)
+          }
+          .width('100%')
+          .backgroundColor('#FFFFFF')
+          .borderRadius(12)
+          .shadow({ radius: 8, color: '#1A000000', offsetX: 0, offsetY: 2 });
+        }
 
       if (this.searchLayer === 0) {
         // 第一层：搜索栏 + 热搜 + 历史记录
@@ -710,5 +784,6 @@ struct SearchPage {
       .alignItems(HorizontalAlign.Start)
       .backgroundColor('#F7F8FA')
       .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM]);
+    }
   }
 }

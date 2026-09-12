@@ -31,3 +31,11 @@ Thumbs.db
 
 # API 探测临时文件
 *_probe.json
+
+# 参考仓库（内嵌 .git，不入库）
+/NavigationSettings
+/Spatialization
+
+# 工具缓存
+/.arts
+/.merkle-snapshot.json

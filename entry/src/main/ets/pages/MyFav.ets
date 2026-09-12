@@ -1,6 +1,7 @@
 import { VideoItem } from '../models/VideoItem';
 import { BiliHttpClient } from '../services/BiliHttpClient';
 import { AuthService, AuthSession } from '../services/AuthService';
+import { WbiService } from '../services/WbiService';
 import { FormatUtils } from '../utils/FormatUtils';
 import { ImmersiveMaterial } from '../utils/ImmersiveMaterial';
 import router from '@ohos.router';
@@ -78,7 +79,6 @@ struct MyFav {
     try {
       let mid: number = Number(session.uid);
       if (!(mid > 0)) {
-        // uid 缺失时经 nav 接口取自身 mid
         const navResult: Record<string, Object> =
           await BiliHttpClient.getJson('/x/web-interface/nav', {}, session.cookie);
         if (Number(navResult['code'] ?? -1) === 0) {
@@ -86,13 +86,13 @@ struct MyFav {
           mid = Number(navData['mid'] ?? 0);
         }
       }
-      const query: Record<string, string> = {};
-      query['pn'] = '1';
-      query['ps'] = '50';
-      query['up_type'] = '0';
-      query['mid'] = String(mid);
+      const signedQuery: string = await WbiService.sign([
+        `up_mid=${mid}`, 'pn=1', 'ps=50', 'up_type=0'
+      ]);
       const result: Record<string, Object> =
-        await BiliHttpClient.getJson('/x/v3/fav/folder/created/list', query, session.cookie);
+        await BiliHttpClient.getJsonQuery('/x/v3/fav/folder/created/list', signedQuery, session.cookie);
+      console.info(`Pilihos fav folder raw: ${JSON.stringify(result).substring(0, 300)}`);
+      console.info(`Pilihos fav folder result: code=${result['code']}, message=${result['message']}`);
       const code: number = Number(result['code'] ?? -1);
       if (code !== 0) {
         throw new Error(`${code}: ${String(result['message'] ?? '收藏夹获取失败')}`);
@@ -129,16 +129,13 @@ struct MyFav {
     this.mediasLoading = true;
     const nextPage: number = refresh ? 1 : this.mediasPage + 1;
     try {
-      const query: Record<string, string> = {};
-      query['media_id'] = String(this.currentFolderId);
-      query['pn'] = String(nextPage);
-      query['ps'] = '20';
-      query['keyword'] = '';
-      query['order'] = 'mtime';
-      query['type'] = '2';
-      query['tid'] = '0';
+      const signedQuery: string = await WbiService.sign([
+        `media_id=${this.currentFolderId}`, `pn=${nextPage}`, `ps=20`,
+        `keyword=`, `order=mtime`, `type=2`, `tid=0`
+      ]);
       const result: Record<string, Object> =
-        await BiliHttpClient.getJson('/x/v3/fav/resource/list', query, this.cookieValue());
+        await BiliHttpClient.getJsonQuery('/x/v3/fav/resource/list', signedQuery, this.cookieValue());
+      console.info(`Pilihos fav medias result: code=${result['code']}, message=${result['message']}`);
       const code: number = Number(result['code'] ?? -1);
       if (code !== 0) {
         throw new Error(`${code}: ${String(result['message'] ?? '收藏内容获取失败')}`);
@@ -263,9 +260,8 @@ struct MyFav {
           Image($r('app.media.fanhui_left')).width(24).height(24);
         }
         .type(ButtonType.ROUNDED_RECTANGLE).width(48).height(48)
-        .backgroundColor(ImmersiveMaterial.fallbackBackground())
+        .backgroundColor('#F7F8FA')
         .borderRadius(24)
-        .backgroundBlurStyle(ImmersiveMaterial.blurStyle(), { colorMode: ThemeColorMode.LIGHT })
         .shadow({ radius: 8, color: '#25000000', offsetX: 0, offsetY: 2 })
         .onClick(() => { router.back(); });
         Text('我的收藏').fontSize(20).fontWeight(FontWeight.Medium).layoutWeight(1);
@@ -275,7 +271,7 @@ struct MyFav {
 
       if (this.loading) {
         Column() {
-          LoadingProgress().width(30).height(30).color('#1677A8');
+          LoadingProgress().width(30).height(30).color('#1288FA');
         }.layoutWeight(1).width('100%').justifyContent(FlexAlign.Center);
       } else if (this.loadError !== '') {
         Column({ space: 10 }) {
@@ -291,7 +287,7 @@ struct MyFav {
           Row({ space: 10 }) {
             ForEach(this.folders, (folder: FavFolderInfo) => {
               Text(`${folder.title} ${folder.mediaCount}`).fontSize(13)
-                .fontColor(this.currentFolderId === folder.id ? '#1677A8' : '#59616B')
+                .fontColor(this.currentFolderId === folder.id ? '#1288FA' : '#59616B')
                 .fontWeight(this.currentFolderId === folder.id ? FontWeight.Bold : FontWeight.Normal)
                 .padding({ left: 12, right: 12, top: 7, bottom: 7 })
                 .backgroundColor(this.currentFolderId === folder.id ? '#E5F3FA' : Color.White)
@@ -314,7 +310,7 @@ struct MyFav {
               }, (media: FavMedia) => `media_${media.aid}_${media.bvid}`);
               if (this.mediasLoading) {
                 Row({ space: 8 }) {
-                  LoadingProgress().width(22).height(22).color('#1677A8');
+                  LoadingProgress().width(22).height(22).color('#1288FA');
                   Text('正在加载').fontSize(13).fontColor('#8B9199');
                 }.width('100%').justifyContent(FlexAlign.Center).padding(10);
               }

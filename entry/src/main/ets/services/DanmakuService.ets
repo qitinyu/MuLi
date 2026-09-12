@@ -13,22 +13,49 @@ export interface DanmakuItem {
  * 弹幕管线：拉取分段 XML 弹幕流、按弹幕过滤词过滤、提交新弹幕。
  */
 export class DanmakuService {
+  private static SEGMENT_COUNT: number = 8;
+
   static async load(cid: number): Promise<DanmakuItem[]> {
     if (cid <= 0) return [];
+    const allItems: DanmakuItem[] = [];
+    const promises: Promise<DanmakuItem[]>[] = [];
+    for (let seg: number = 1; seg <= DanmakuService.SEGMENT_COUNT; seg++) {
+      promises.push(DanmakuService.loadSegment(cid, seg));
+    }
+    const results: DanmakuItem[][] = await Promise.all(promises);
+    const seen: Set<string> = new Set();
+    for (const items of results) {
+      for (const item of items) {
+        const key: string = `${item.timeMs}_${item.text}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          allItems.push(item);
+        }
+      }
+    }
+    allItems.sort((a: DanmakuItem, b: DanmakuItem): number => a.timeMs - b.timeMs);
+    console.info(`Pilihos danmaku loaded: ${allItems.length} items (from ${DanmakuService.SEGMENT_COUNT} segments)`);
+    return allItems;
+  }
+
+  private static async loadSegment(cid: number, seg: number): Promise<DanmakuItem[]> {
     const request: http.HttpRequest = http.createHttp();
     try {
+      const suffix: string = seg === 1 ? '' : `_${seg}`;
       const response: http.HttpResponse = await request.request(
-        `https://comment.bilibili.com/${cid}.xml`, {
+        `https://comment.bilibili.com/${cid}${suffix}.xml`, {
           method: http.RequestMethod.GET,
           header: {
             'User-Agent': BiliHttpClient.browserUserAgent,
             'Referer': 'https://www.bilibili.com/'
           },
-          connectTimeout: 10000,
-          readTimeout: 15000
+          connectTimeout: 8000,
+          readTimeout: 12000
         });
       const xml: string = response.result as string;
       return DanmakuService.parseXml(xml);
+    } catch (error) {
+      return [];
     } finally {
       request.destroy();
     }

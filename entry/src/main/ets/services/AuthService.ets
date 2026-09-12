@@ -198,6 +198,12 @@ export class AuthService {
     session.cookie = cookie;
     session.csrf = AuthService.findCookie(cookie, 'bili_jct');
     session.isLogin = true;
+    // nav 返回的 level_info 是等级弹窗使用的经验区间数据。
+    const navLevelInfo: Record<string, Object> = (data['level_info'] ?? {}) as Record<string, Object>;
+    session.level = Number(data['level'] ?? navLevelInfo['current_level'] ?? 0);
+    session.expCurrent = Number(navLevelInfo['current_exp'] ?? 0);
+    session.expMin = Number(navLevelInfo['current_min'] ?? 0);
+    session.expNext = Number(navLevelInfo['next_exp'] ?? 0);
     // 钱包：B币/硬币余额随 nav 一次带回（coin/log 接口不含余额）
     const wallet: Record<string, Object> = (data['wallet'] ?? {}) as Record<string, Object>;
     session.bcoin = Number(wallet['bcoin_balance'] ?? 0);
@@ -266,12 +272,12 @@ export class AuthService {
       const data: Record<string, Object> = (body['data'] ?? {}) as Record<string, Object>;
       session.sign = String(data['sign'] ?? '');
       session.ipLocation = String(data['ip_location'] ?? '');
-      // 等级成长：当前等级/经验区间（等级弹窗进度条数据源），硬币余额以 myinfo 为准
+      // 某些版本的 myinfo 不返回 level_info，保留 nav 已读取到的值。
       const levelInfo: Record<string, Object> = (data['level_info'] ?? {}) as Record<string, Object>;
-      session.level = Number(data['level'] ?? levelInfo['current_level'] ?? 0);
-      session.expCurrent = Number(levelInfo['current_exp'] ?? 0);
-      session.expMin = Number(levelInfo['current_min'] ?? 0);
-      session.expNext = Number(levelInfo['next_exp'] ?? 0);
+      session.level = Number(data['level'] ?? levelInfo['current_level'] ?? session.level);
+      session.expCurrent = Number(levelInfo['current_exp'] ?? session.expCurrent);
+      session.expMin = Number(levelInfo['current_min'] ?? session.expMin);
+      session.expNext = Number(levelInfo['next_exp'] ?? session.expNext);
       session.coin = Number(data['coins'] ?? session.coin);
     } catch (error) {
       console.error('Pilihos user profile request failed: ' + String(error));

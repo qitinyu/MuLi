@@ -16,6 +16,7 @@ export struct HotPage {
   @State loadingMore: boolean = false;
   @State refreshing: boolean = false;
   @State loadError: string = '';
+  @State suppressCardTap: boolean = false;
   private page: number = 1;
   private fetching: boolean = false;
 
@@ -94,11 +95,16 @@ export struct HotPage {
         .textOverflow({ overflow: TextOverflow.Ellipsis }).width('100%').lineHeight(20);
       Row({ space: 4 }) {
         Text(item.author === '' ? '未知用户' : item.author).fontSize(12).fontColor('#8B9199')
-          .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis }).layoutWeight(1);
+          .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis }).layoutWeight(1)
+          .onClick((): void => {
+            // 进入 UP 主空间：抑制卡片本身的打开详情点击
+            this.suppressCardTap = true;
+            this.openAuthor(item);
+          });
         if (FollowState.isFollowed(item.authorMid ?? 0, item.author)) {
-          Text('已关注').fontSize(9).fontColor('#1677A8')
+          Text('已关注').fontSize(9).fontColor('#1288FA')
             .padding({ left: 4, right: 4, top: 1, bottom: 1 })
-            .backgroundColor('#1A1677A8').borderRadius(3);
+            .backgroundColor('#1A1288FA').borderRadius(3);
         }
       }.width('100%');
       Row({ space: 10 }) {
@@ -121,7 +127,23 @@ export struct HotPage {
           .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis });
       }.width('100%');
     }.width('100%')
-      .onClick((): void => { this.openHotDetail(item); });
+      .onClick((): void => {
+        if (this.suppressCardTap) {
+          this.suppressCardTap = false;
+          return;
+        }
+        this.openHotDetail(item);
+      });
+  }
+
+  private openAuthor(item: VideoItem): void {
+    if ((item.authorMid ?? 0) <= 0) {
+      return;
+    }
+    router.pushUrl({ url: 'pages/UserSpace', params: { mid: item.authorMid, name: item.author } })
+      .catch((error: Object): void => {
+        console.error('Pilihos hot author space failed: ' + String(error));
+      });
   }
 
   private formatPublishTime(timestamp: number): string {
@@ -149,8 +171,8 @@ export struct HotPage {
             .width('100%').padding({ left: 4, bottom: 12 });
           if (this.hotList.length === 0 && this.loading) {
             Row({ space: 8 }) {
-              LoadingProgress().width(26).height(26).color('#1677A8');
-              Text('正在加载热门榜单...').fontSize(14).fontColor('#1677A8');
+              LoadingProgress().width(26).height(26).color('#1288FA');
+              Text('正在加载热门榜单...').fontSize(14).fontColor('#1288FA');
             }.justifyContent(FlexAlign.Center).width('100%').margin({ top: 60 });
           } else if (this.hotList.length === 0 && this.loadError !== '') {
             Column({ space: 12 }) {

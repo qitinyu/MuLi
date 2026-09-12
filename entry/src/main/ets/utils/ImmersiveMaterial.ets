@@ -1,58 +1,103 @@
+import { uiMaterial } from '@kit.ArkUI';
+import { deviceInfo } from '@kit.BasicServicesKit';
+import { hdsMaterial } from '@kit.UIDesignKit';
 import { AdvancedFeatures } from './AdvancedFeatures';
 
 /**
  * 沉浸光感材质管理器
- * 统一通过 backgroundBlurStyle 呈现毛玻璃效果（系统 uiMaterial 材质在真机上
- * 渲染过薄或不渲染，导致卡片不可见），白色底衬仅作轻度提亮。
+ * 材质策略管理器。
+ * 顶部栏、底部栏和侧栏仍然是普通 ArkUI 组件，因此必须同时处理两条路径：
+ * API 26 且设备提供系统材质时使用 ImmersiveMaterial；其他设备使用半透明降级层。
+ * 系统材质可用时不叠加不透明的 fallback 背景，避免动态光感被覆盖。
  */
 export class ImmersiveMaterial {
-  private static strength: number = 1;
-
-  static setStrength(value: number): void {
-    ImmersiveMaterial.strength = Math.max(0, Math.min(2, value));
-  }
+  private static thinMaterial: uiMaterial.Material | null = null;
+  private static regularMaterial: uiMaterial.Material | null = null;
+  private static thickMaterial: uiMaterial.Material | null = null;
 
   /**
-   * 检查沉浸式材质是否可用
-   * 条件：设备系统 API 26 或更高
+   * 检查沉浸式材质是否可用（API 26+）。
+   * API 24/25 由调用方使用半透明白色背景降级。
    */
   static isAvailable(): boolean {
-    return AdvancedFeatures.isApi26Supported();
+    return AdvancedFeatures.isImmersiveMaterialEnabled()
+      && deviceInfo.apiAvailable('26.0.0')
+      && hdsMaterial.getSystemMaterialTypes().length > 0;
   }
 
   /**
-   * 组件背景毛玻璃样式：真机稳定渲染的"沉浸光感"实现，
-   * 参考系统弹窗/toast 的厚毛玻璃观感
+   * 系统材质表面颜色。材质可用时返回透明，让系统材质直接采样背后的内容；
+   * 材质不可用时才返回兼容性背景。
    */
+  static surfaceBackground(opacity: number = 0.85): ResourceColor {
+    return ImmersiveMaterial.isAvailable() ? Color.Transparent : ImmersiveMaterial.fallbackBackground(opacity);
+  }
+
+  private static createMaterial(style: uiMaterial.ImmersiveStyle): uiMaterial.Material {
+    return new uiMaterial.ImmersiveMaterial({
+      style: style,
+      interactive: true,
+      lightEffect: { color: undefined }
+    });
+  }
+
+  /**
+   * 获取 THIN 级别材质（轻薄透明，适合搜索框、小面积悬浮工具栏）
+   */
+  static getThin(): uiMaterial.Material | null {
+    if (!ImmersiveMaterial.isAvailable()) return null;
+    if (ImmersiveMaterial.thinMaterial === null) {
+      ImmersiveMaterial.thinMaterial = ImmersiveMaterial.createMaterial(uiMaterial.ImmersiveStyle.THIN);
+    }
+    return ImmersiveMaterial.thinMaterial;
+  }
+
+  /**
+   * 获取 REGULAR 级别材质（标准厚度，适合导航栏、标签栏）
+   */
+  static getRegular(): uiMaterial.Material | null {
+    if (!ImmersiveMaterial.isAvailable()) return null;
+    if (ImmersiveMaterial.regularMaterial === null) {
+      ImmersiveMaterial.regularMaterial = ImmersiveMaterial.createMaterial(uiMaterial.ImmersiveStyle.REGULAR);
+    }
+    return ImmersiveMaterial.regularMaterial;
+  }
+
+  /**
+   * 获取 THICK 级别材质（厚重模糊，适合弹窗、底部面板）
+   */
+  static getThick(): uiMaterial.Material | null {
+    if (!ImmersiveMaterial.isAvailable()) return null;
+    if (ImmersiveMaterial.thickMaterial === null) {
+      ImmersiveMaterial.thickMaterial = ImmersiveMaterial.createMaterial(uiMaterial.ImmersiveStyle.THICK);
+    }
+    return ImmersiveMaterial.thickMaterial;
+  }
+
+  /**
+   * 浅色材质表面：API 24/25 作为降级背景，API 26+ 作为材质叠加层
+   */
+  static fallbackBackground(opacity: number = 0.85): ResourceColor {
+    const clamped: number = Math.max(0, Math.min(1, opacity));
+    // Keep a visible surface behind ordinary components; lowering it for a
+    // material that the component cannot render produces a washed-out layer.
+    const alpha: string = Math.round(clamped * 255).toString(16).padStart(2, '0');
+    // Use a cool blue translucent surface for the fallback path so it still
+    // reads as light passing through glass when ordinary ArkUI components do
+    // not render the HDS system material.
+    return `#${alpha}EAF5FF`;
+  }
+
   static blurStyle(): BlurStyle {
     return BlurStyle.COMPONENT_THICK;
   }
 
   /**
-   * 组件背景底衬：材质开启时给轻度白色提亮（避免完全透底），
-   * API 24/25 或关闭时用较实的白色替代模糊。
-   * @param opacity 透明度 0.0-1.0，默认 0.85
+   * 深色材质表面：API 24/25 作为降级背景，API 26+ 作为材质叠加层
    */
-  static fallbackBackground(opacity: number = 1.0): ResourceColor {
+  static fallbackBackgroundDark(opacity: number = 0.75): ResourceColor {
     const clamped: number = Math.max(0, Math.min(1, opacity));
-    if (ImmersiveMaterial.isAvailable() && ImmersiveMaterial.strength > 0) {
-      // 材质负责模糊，底衬只轻度提亮
-      const adjusted: number = Math.max(0.25, clamped * 0.35);
-      const alpha: string = Math.round(adjusted * 255).toString(16).padStart(2, '0');
-      return `#${alpha}FFFFFF`;
-    }
     const alpha: string = Math.round(clamped * 255).toString(16).padStart(2, '0');
-    return `#${alpha}FFFFFF`;
-  }
-
-  /**
-   * 深色材质底衬（参考点赞提示气泡的深色半透明观感），
-   * 用于首页底部迷你栏与中间页签栏。
-   */
-  static fallbackBackgroundDark(opacity: number = 1.0): ResourceColor {
-    const clamped: number = Math.max(0, Math.min(1, opacity));
-    const adjusted: number = Math.max(0.45, clamped * 0.75);
-    const alpha: string = Math.round(adjusted * 255).toString(16).padStart(2, '0');
     return `#${alpha}1A1E26`;
   }
 }

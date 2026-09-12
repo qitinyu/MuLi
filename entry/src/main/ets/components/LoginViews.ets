@@ -65,7 +65,7 @@ export struct LoginPage {
             .margin({ top: 28, bottom: 10 });
           Button('打开官方登录')
             .type(ButtonType.ROUNDED_RECTANGLE).width(220).height(48)
-            .fontColor('#1677A8').backgroundColor('#E9F4F8')
+            .fontColor('#1288FA').backgroundColor('#E9F4F8')
             .onClick(() => { this.openWebLogin(); });
           if (this.loginNotice !== '') {
             Text(this.loginNotice).fontSize(13).fontColor('#C51D2A')
@@ -141,7 +141,7 @@ export struct WebLoginPage {
       }
       .width('100%')
       .padding({ left: 12, right: 12, top: this.topInset + 8, bottom: 6 });
-      Text(this.webLoginStatus).fontSize(12).fontColor('#1677A8')
+      Text(this.webLoginStatus).fontSize(12).fontColor('#1288FA')
         .width('100%').padding({ left: 18, right: 18, bottom: 6 });
       Web({ src: 'https://passport.bilibili.com/login', controller: this.webController })
         .width('100%').layoutWeight(1)

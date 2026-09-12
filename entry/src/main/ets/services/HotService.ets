@@ -32,6 +32,7 @@ export class HotService {
       cid: Number(raw['cid'] ?? 0),
       title: String(raw['title'] ?? ''),
       author: String(owner['name'] ?? ''),
+      authorMid: Number(owner['mid'] ?? 0),
       authorFace: String(owner['face'] ?? ''),
       cover: HotService.compactCover(String(raw['pic'] ?? '')),
       viewCount: Number(stat['view'] ?? 0),

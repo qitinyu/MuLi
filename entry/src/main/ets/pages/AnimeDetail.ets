@@ -157,8 +157,8 @@ struct AnimeDetail {
       if (this.loading) {
         Column() {
           Row({ space: 8 }) {
-            LoadingProgress().width(26).height(26).color('#1677A8');
-            Text('正在加载番剧详情...').fontSize(14).fontColor('#1677A8');
+            LoadingProgress().width(26).height(26).color('#1288FA');
+            Text('正在加载番剧详情...').fontSize(14).fontColor('#1288FA');
           }.justifyContent(FlexAlign.Center);
         }.layoutWeight(1).width('100%');
       } else if (this.detail === null) {
@@ -178,9 +178,9 @@ struct AnimeDetail {
                 Text(this.detail.scoreCount + ' 人评分').fontSize(11).fontColor('#A4A9AF');
               }
               ForEach(this.detail.styles.slice(0, 4), (style: string) => {
-                Text(style).fontSize(11).fontColor('#1677A8')
+                Text(style).fontSize(11).fontColor('#1288FA')
                   .padding({ left: 6, right: 6, top: 2, bottom: 2 })
-                  .backgroundColor('#1A1677A8').borderRadius(4);
+                  .backgroundColor('#1A1288FA').borderRadius(4);
               }, (style: string) => style);
             }.width('100%');
             if (this.detail.evaluate !== '') {
@@ -189,7 +189,7 @@ struct AnimeDetail {
                 Text(this.detail.evaluate).fontSize(13).fontColor('#59616B').lineHeight(21)
                   .maxLines(this.descriptionExpanded ? 1000 : 3)
                   .textOverflow({ overflow: TextOverflow.Ellipsis }).width('100%');
-                Text(this.descriptionExpanded ? '收起' : '展开全部').fontSize(13).fontColor('#1677A8')
+                Text(this.descriptionExpanded ? '收起' : '展开全部').fontSize(13).fontColor('#1288FA')
                   .onClick(() => { this.descriptionExpanded = !this.descriptionExpanded; });
               }.width('100%').alignItems(HorizontalAlign.Start);
             }
@@ -211,7 +211,7 @@ struct AnimeDetail {
                       }
                     }
                     .padding({ left: 12, right: 12, top: 7, bottom: 7 })
-                    .backgroundColor(index === this.currentEpisodeIndex ? '#1677A8' : '#F1F4F6')
+                    .backgroundColor(index === this.currentEpisodeIndex ? '#1288FA' : '#F1F4F6')
                     .borderRadius(16)
                     .onClick((): void => { this.playEpisode(index); });
                   }, (episode: AnimeEpisode, index: number) => `ep_${index}_${episode.epId}`);
