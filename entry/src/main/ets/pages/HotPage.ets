@@ -1,214 +1,149 @@
-import router from '@ohos.router';
-import { VideoItem } from '../models/VideoItem';
+import { BOTTOM_PAD_LG, BOTTOM_PAD_PHONE } from '../common/DesignSpec';
+import { VideoCard, VideoOpenParam } from '../model/BiliModels';
 import { HotService } from '../services/HotService';
-import { FollowState } from '../utils/FollowState';
+import { VideoCardView } from '../components/VideoCardView';
+import { StateView } from '../components/StateView';
+import { ScrollSignal } from '../common/ScrollSignal';
 
-// 模块级缓存：版块切入切出保留首次内容，仅手动刷新更新
-let cachedHotList: VideoItem[] = [];
-
+/**
+ * 热门页（页签四）：全网排行榜。
+ * 排行榜接口一次返回约 100 条且无分页，因此这里不做上拉翻页，只有下拉刷新。
+ */
 @Component
 export struct HotPage {
-  @Prop bottomInset: number = 8;
-  @Prop showPortraitBadge: boolean = true;
-  @Prop followStamp: number = 0;
-  @State hotList: VideoItem[] = [];
-  @State loading: boolean = true;
-  @State loadingMore: boolean = false;
+  pathStack: NavPathStack | undefined = undefined;
+  scroller: Scroller = new Scroller();
+  @Prop topInset: number = 96;
+  @Prop breakpoint: string = 'sm';
+  @State items: Array<VideoCard> = [];
+  @State loading: boolean = false;
   @State refreshing: boolean = false;
-  @State loadError: string = '';
-  @State suppressCardTap: boolean = false;
-  private page: number = 1;
-  private fetching: boolean = false;
+  @State errorText: string = '';
+  /** 首屏只铺 20 条，其余按需展开，避免一次渲染上百个卡片 */
+  @State visibleCount: number = 20;
 
   aboutToAppear(): void {
-    if (cachedHotList.length > 0) {
-      this.hotList = cachedHotList;
-      this.page = Math.max(1, Math.ceil(cachedHotList.length / 20));
-      this.loading = false;
+    this.loadData();
+  }
+
+  private async loadData(): Promise<void> {
+    if (this.loading) {
       return;
     }
-    this.loadHotList(true);
-  }
-
-  private async loadHotList(refresh: boolean = false): Promise<void> {
-    if (this.fetching) return;
-    this.fetching = true;
-    if (refresh) {
-      this.refreshing = true;
-      this.loading = true;
-      this.loadError = '';
-      this.page = 1;
-    } else {
-      this.loadingMore = true;
-    }
+    this.loading = true;
+    this.errorText = '';
     try {
-      const items: VideoItem[] = await HotService.loadPopular(this.page);
-      this.hotList = refresh ? items : this.hotList.concat(items);
-      cachedHotList = this.hotList;
-    } catch (error) {
-      if (refresh) {
-        this.loadError = '热门榜单加载失败，请检查网络';
-      }
-      console.error('Pilihos hot page load failed: ' + String(error));
+      this.items = await HotService.load();
+      this.visibleCount = 20;
+    } catch (err) {
+      this.errorText = err instanceof Error ? err.message : '加载失败，请稍后重试';
     } finally {
       this.loading = false;
-      this.loadingMore = false;
       this.refreshing = false;
-      this.fetching = false;
     }
   }
 
-  private openHotDetail(item: VideoItem): void {
-    router.pushUrl({
-      url: 'pages/HotDetail',
-      params: { hotItem: item }
-    }).catch((error: Object): void => {
-      console.error('Pilihos hot detail page failed: ' + String(error));
-    });
+  private toast(text: string): void {
+    try {
+      this.getUIContext().getPromptAction().showToast({ message: text, duration: 1800 });
+    } catch (err) {
+      // 提示失败不影响主流程
+    }
   }
 
-  private formatCount(value: number): string {
-    if (value >= 100000000) return `${(value / 100000000).toFixed(2).replace(/\.00$/, '')}亿`;
-    if (value >= 10000) return `${(value / 10000).toFixed(1).replace(/\.0$/, '')}万`;
-    return `${value}`;
+  /** 打开视频二级播放页 */
+  private openVideo(item: VideoCard): void {
+    if (this.pathStack === undefined) {
+      this.toast('播放页暂不可用');
+      return;
+    }
+    this.pathStack.pushPathByName('video', new VideoOpenParam(item.bvid, item.aid, item.cid));
   }
 
   @Builder
-  hotCard(item: VideoItem, rank: number) {
-    Column({ space: 6 }) {
-      Stack({ alignContent: Alignment.BottomStart }) {
-        Image(item.cover).width('100%').aspectRatio(1.6).objectFit(ImageFit.Cover).borderRadius(8);
-        Row() {
-          if (rank <= 3) {
-            Text(String(rank)).fontSize(13).fontWeight(FontWeight.Bold).fontColor(Color.White)
-              .width(24).height(24).textAlign(TextAlign.Center).lineHeight(24)
-              .backgroundColor(rank === 1 ? '#E6A23C' : rank === 2 ? '#98A2AE' : '#C77B4A')
-              .borderRadius(12);
+  hotList() {
+    List({ scroller: this.scroller }) {
+      ListItem() {
+        Row()
+          .width('100%')
+          .height(this.topInset)
+      }
+
+      if (this.loading && this.items.length === 0) {
+        ListItem() {
+          StateView({ kind: 'loading', message: '正在加载热门' })
+        }
+      } else if (this.errorText.length > 0 && this.items.length === 0) {
+        ListItem() {
+          StateView({
+            kind: 'error',
+            message: this.errorText,
+            hint: '排行榜接口偶发限流，稍后重试',
+            onRetry: () => {
+              this.loadData();
+            }
+          })
+        }
+      } else if (this.items.length === 0) {
+        ListItem() {
+          StateView({ kind: 'empty', message: '暂时没有热门内容' })
+        }
+      } else {
+        ForEach(this.items.slice(0, this.visibleCount), (card: VideoCard) => {
+          ListItem() {
+            VideoCardView({
+              card: card,
+              onCardTap: (item: VideoCard) => {
+                this.openVideo(item);
+              },
+              onMoreTap: (item: VideoCard) => {
+                this.toast(`《${item.title}》更多操作待建设`);
+              }
+            })
           }
-          Blank();
-          Text(this.formatDuration(item.duration)).fontSize(11).fontColor(Color.White)
-            .backgroundColor('#B0000000').padding({ left: 5, right: 5, top: 2, bottom: 2 })
-            .borderRadius(4);
-        }.width('100%').padding(6).alignItems(VerticalAlign.Center);
-      }.width('100%');
-      Text(item.title).fontSize(14).fontColor('#20242A').maxLines(2)
-        .textOverflow({ overflow: TextOverflow.Ellipsis }).width('100%').lineHeight(20);
-      Row({ space: 4 }) {
-        Text(item.author === '' ? '未知用户' : item.author).fontSize(12).fontColor('#8B9199')
-          .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis }).layoutWeight(1)
-          .onClick((): void => {
-            // 进入 UP 主空间：抑制卡片本身的打开详情点击
-            this.suppressCardTap = true;
-            this.openAuthor(item);
-          });
-        if (FollowState.isFollowed(item.authorMid ?? 0, item.author)) {
-          Text('已关注').fontSize(9).fontColor('#1288FA')
-            .padding({ left: 4, right: 4, top: 1, bottom: 1 })
-            .backgroundColor('#1A1288FA').borderRadius(3);
-        }
-      }.width('100%');
-      Row({ space: 10 }) {
-        Row({ space: 3 }) {
-          Image($r('app.media.bofang')).width(11).height(11);
-          Text(this.formatCount(item.viewCount)).fontSize(11).fontColor('#A4A9AF');
-        }
-        Row({ space: 3 }) {
-          Image($r('app.media.dm')).width(11).height(11);
-          Text(this.formatCount(item.danmuCount)).fontSize(11).fontColor('#A4A9AF');
-        }
-        if (this.showPortraitBadge && Number(item.videoWidth ?? 0) > 0
-          && Number(item.videoWidth ?? 0) < Number(item.videoHeight ?? 0)) {
-          Text('竖屏').fontSize(9).fontColor('#E661A0')
-            .padding({ left: 4, right: 4, top: 1, bottom: 1 })
-            .backgroundColor('#1AE661A0').borderRadius(3);
-        }
-        Text(this.formatPublishTime(item.publishTime)).fontSize(11).fontColor('#A4A9AF')
-          .layoutWeight(1).textAlign(TextAlign.End)
-          .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis });
-      }.width('100%');
-    }.width('100%')
-      .onClick((): void => {
-        if (this.suppressCardTap) {
-          this.suppressCardTap = false;
-          return;
-        }
-        this.openHotDetail(item);
-      });
-  }
+        }, (card: VideoCard, index: number) => `${index}-${card.bvid}-${card.aid}`)
 
-  private openAuthor(item: VideoItem): void {
-    if ((item.authorMid ?? 0) <= 0) {
-      return;
+        if (this.visibleCount < this.items.length) {
+          ListItem() {
+            Row() {
+              Text(`展开全部 ${this.items.length} 条`)
+                .fontSize(13)
+                .fontColor($r('app.color.brand_primary'))
+            }
+            .width('100%')
+            .height(52)
+            .justifyContent(FlexAlign.Center)
+            .onClick(() => {
+              this.visibleCount = this.items.length;
+            })
+          }
+        }
+      }
+
+      ListItem() {
+        Row()
+          .width('100%')
+          .height(this.breakpoint === 'lg' ? BOTTOM_PAD_LG : BOTTOM_PAD_PHONE)
+      }
     }
-    router.pushUrl({ url: 'pages/UserSpace', params: { mid: item.authorMid, name: item.author } })
-      .catch((error: Object): void => {
-        console.error('Pilihos hot author space failed: ' + String(error));
-      });
-  }
-
-  private formatPublishTime(timestamp: number): string {
-    if (timestamp <= 0) return '';
-    const seconds: number = Math.max(0, Math.floor(Date.now() / 1000) - timestamp);
-    if (seconds < 3600) return `${String(Math.max(1, Math.floor(seconds / 60)))}分钟前`;
-    if (seconds < 86400) return `${Math.floor(seconds / 3600)}小时前`;
-    if (seconds < 259200) return `${Math.floor(seconds / 86400)}天前`;
-    const date: Date = new Date(timestamp * 1000);
-    return `${date.getFullYear()}/${date.getMonth() + 1}/${date.getDate()}`;
-  }
-
-  private formatDuration(seconds: number): string {
-    const total: number = Math.max(0, Math.floor(seconds));
-    const minutes: number = Math.floor(total / 60);
-    const secs: number = total % 60;
-    return `${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+    .width('100%')
+    .height('100%')
+    .scrollBar(BarState.Off)
+    .edgeEffect(EdgeEffect.Spring)
+    .onScroll(() => {
+      ScrollSignal.report(this.scroller);
+    })
   }
 
   build() {
-    Refresh({ refreshing: $$this.refreshing, offset: 56, friction: 80 }) {
-      Scroll() {
-        Column() {
-          Text('热门榜单').fontSize(20).fontWeight(FontWeight.Bold).fontColor('#1E252D')
-            .width('100%').padding({ left: 4, bottom: 12 });
-          if (this.hotList.length === 0 && this.loading) {
-            Row({ space: 8 }) {
-              LoadingProgress().width(26).height(26).color('#1288FA');
-              Text('正在加载热门榜单...').fontSize(14).fontColor('#1288FA');
-            }.justifyContent(FlexAlign.Center).width('100%').margin({ top: 60 });
-          } else if (this.hotList.length === 0 && this.loadError !== '') {
-            Column({ space: 12 }) {
-              Text(this.loadError).fontSize(14).fontColor('#8B9199');
-              Button('重试').onClick(() => this.loadHotList(true));
-            }.width('100%').margin({ top: 60 }).alignItems(HorizontalAlign.Center);
-          } else {
-            Grid() {
-              ForEach(this.hotList, (item: VideoItem, index: number) => {
-                GridItem() {
-                  this.hotCard(item, index + 1);
-                }
-              }, (item: VideoItem) => `hot_${item.aid}_${item.bvid}_${this.followStamp}`);
-              if (this.loadingMore) {
-                GridItem().height(48);
-              }
-            }
-            .columnsTemplate('1fr 1fr')
-            .columnsGap(10)
-            .rowsGap(14)
-            .width('100%');
-          }
-        }
-        .width('100%')
-        .padding({ left: 12, right: 12, bottom: this.bottomInset + 88 });
-      }
-      .width('100%').height('100%')
-      .scrollBar(BarState.Off)
-      .onReachEnd((): void => {
-        if (this.loading || this.loadingMore) return;
-        if (this.hotList.length < 20 * this.page) return;
-        this.page += 1;
-        this.loadHotList(false);
-      });
+    Refresh({ refreshing: $$this.refreshing }) {
+      this.hotList()
     }
-    .width('100%').height('100%')
-    .onRefreshing(() => { this.loadHotList(true); });
+    .width('100%')
+    .height('100%')
+    .onRefreshing(() => {
+      this.refreshing = true;
+      this.loadData();
+    })
   }
 }

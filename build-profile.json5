@@ -5,30 +5,37 @@
         "name": "default",
         "type": "HarmonyOS",
         "material": {
-          "storeFile": "D:/HM/Harmony/Pilihos/pilihoszs/pilihos.p12",
-          "storePassword": "0000001B1AF0C0AA87EAB4D9C393826B3469B8480D738AF9BDDFF9F809D4A33FC0ACABE2B64FEBCD20F9B8",
-          "keyAlias": "pilihos",
-          "keyPassword": "0000001B51C3E87279481E565EB096602BE35CDCBC81711958CF2834E576A969D3B720DBC20A3F97A9558D",
+          "storeFile": "D:/Harmony/MuLi/mulizs/yuts.p12",
+          "storePassword": "000000188B78180C6C06173F581DBB5014859DF74E185B08E3F28AF42A361A01C0B52CF417A02FE3",
+          "keyAlias": "yqts",
+          "keyPassword": "00000018A860532A057A532BC5EAF11A249A116FD725429FE2D3CEFC678E55E1FAAFC66447E0B669",
           "signAlg": "SHA256withECDSA",
-          "profile": "D:/HM/Harmony/Pilihos/pilihoszs/pilihos.p7b",
-          "certpath": "D:/HM/Harmony/Pilihos/pilihoszs/Pilihos.cer"
+          "profile": "D:/Harmony/MuLi/mulizs/mulits.p7b",
+          "certpath": "D:/Harmony/MuLi/mulizs/YQTS.cer"
         }
       }
     ],
     "products": [
       {
         "name": "default",
-        "bundleName": "com.pilihos.player",
         "signingConfig": "default",
+        "targetSdkVersion": "26.0.0",
         "compatibleSdkVersion": "6.1.0(23)",
         "runtimeOS": "HarmonyOS",
-        "targetSdkVersion": "26.0.0"
+        "buildOption": {
+          "strictMode": {
+            "caseSensitiveCheck": true,
+            "useNormalizedOHMUrl": true
+          }
+        }
       }
     ],
     "buildModeSet": [
       {
-        "name": "debug",
-        "buildOption": {}
+        "name": "debug"
+      },
+      {
+        "name": "release"
       }
     ]
   },
