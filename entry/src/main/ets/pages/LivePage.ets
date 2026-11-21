@@ -1,269 +1,200 @@
-import router from '@ohos.router';
-import { AuthService } from '../services/AuthService';
-import { LiveRoom, LiveService } from '../services/LiveService';
+import { BOTTOM_PAD_LG, BOTTOM_PAD_PHONE, PAGE_PADDING } from '../common/DesignSpec';
+import { LiveCard } from '../model/BiliModels';
+import { LiveService } from '../services/LiveService';
+import { LiveCardView } from '../components/LiveCardView';
+import { ListFooter, StateView } from '../components/StateView';
+import { ScrollSignal } from '../common/ScrollSignal';
 
-// 模块级缓存：版块切入切出保留首次内容，仅手动刷新更新
-let cachedFollowedRooms: LiveRoom[] = [];
-let cachedHotRooms: LiveRoom[] = [];
-let cachedOtherRooms: LiveRoom[] = [];
-
+/**
+ * 直播页（页签五）：推荐直播间两列网格。
+ * 接口按 page 分页，上拉到底取下一页。
+ */
 @Component
 export struct LivePage {
-  @Prop bottomInset: number = 8;
-  @State followedRooms: LiveRoom[] = [];
-  @State hotRooms: LiveRoom[] = [];
-  @State otherRooms: LiveRoom[] = [];
-  @State followedHint: string = '登录后查看关注的主播直播';
-  @State loading: boolean = true;
-  @State loadingMore: boolean = false;
+  scroller: Scroller = new Scroller();
+  @Prop topInset: number = 96;
+  @Prop breakpoint: string = 'sm';
+  @State items: Array<LiveCard> = [];
+  @State loading: boolean = false;
   @State refreshing: boolean = false;
-  @State loadError: string = '';
-  private page: number = 1;
-  private fetching: boolean = false;
-  private followedFetching: boolean = false;
+  @State loadingMore: boolean = false;
+  @State errorText: string = '';
+  @State hasMore: boolean = true;
+  private page: number = 0;
 
   aboutToAppear(): void {
-    if (cachedFollowedRooms.length > 0 || cachedHotRooms.length > 0) {
-      this.followedRooms = cachedFollowedRooms;
-      this.hotRooms = cachedHotRooms;
-      this.otherRooms = cachedOtherRooms;
-      this.loading = false;
-      this.refreshFollowedHint();
+    this.loadFirstPage();
+  }
+
+  private async loadFirstPage(): Promise<void> {
+    if (this.loading) {
       return;
     }
-    this.loadFollowed();
-    this.loadLiveList(true);
-  }
-
-  private refreshFollowedHint(): void {
-    if (this.followedRooms.length > 0) return;
-    const session = AuthService.currentSession();
-    this.followedHint = session === null || session.cookie === '' || session.uid === ''
-      ? '登录后查看关注的主播直播' : '暂无关注的主播直播';
-  }
-
-  private async loadFollowed(): Promise<void> {
-    if (this.followedFetching) return;
-    this.followedFetching = true;
+    this.loading = true;
+    this.errorText = '';
     try {
-      const session = AuthService.currentSession();
-      if (session === null || session.cookie === '' || session.uid === '') {
-        this.followedRooms = [];
-        this.followedHint = '登录后查看关注的主播直播';
-        return;
-      }
-      this.followedRooms = await LiveService.loadFollowedLive(session.cookie, session.uid);
-      if (this.followedRooms.length === 0) {
-        this.followedHint = '暂无关注的主播直播';
-      }
-      cachedFollowedRooms = this.followedRooms;
-    } catch (error) {
-      // 关注区静默降级：失败时不阻塞热门直播展示
-      this.followedRooms = [];
-      this.followedHint = '暂无关注的主播直播';
-      console.error('Pilihos followed live load failed: ' + String(error));
-    } finally {
-      this.followedFetching = false;
-    }
-  }
-
-  private async loadLiveList(refresh: boolean = false): Promise<void> {
-    if (this.fetching) return;
-    this.fetching = true;
-    if (refresh) {
-      this.refreshing = true;
-      this.loading = true;
-      this.loadError = '';
+      const cards: Array<LiveCard> = await LiveService.load(1);
+      this.items = cards;
       this.page = 1;
-    } else {
-      this.loadingMore = true;
-    }
-    try {
-      const rooms: LiveRoom[] = await LiveService.loadLiveList(this.page);
-      if (refresh) {
-        this.hotRooms = rooms;
-        this.otherRooms = [];
-      } else {
-        this.otherRooms = this.otherRooms.concat(rooms);
-      }
-      cachedHotRooms = this.hotRooms;
-      cachedOtherRooms = this.otherRooms;
-    } catch (error) {
-      if (refresh) {
-        this.loadError = '直播列表加载失败，请检查网络';
-      }
-      console.error('Pilihos live page load failed: ' + String(error));
+      this.hasMore = cards.length > 0;
+    } catch (err) {
+      this.errorText = err instanceof Error ? err.message : '加载失败，请稍后重试';
     } finally {
       this.loading = false;
-      this.loadingMore = false;
       this.refreshing = false;
-      this.fetching = false;
     }
   }
 
-  private openLiveDetail(room: LiveRoom): void {
-    router.pushUrl({
-      url: 'pages/LiveDetail',
-      params: { room: room }
-    }).catch((error: Object): void => {
-      console.error('Pilihos live detail page failed: ' + String(error));
-    });
-  }
-
-  private formatCount(value: number): string {
-    if (value >= 100000000) return `${(value / 100000000).toFixed(2).replace(/\.00$/, '')}亿`;
-    if (value >= 10000) return `${(value / 10000).toFixed(1).replace(/\.0$/, '')}万`;
-    return `${value}`;
-  }
-
-  @Builder
-  sectionHeader(title: string, subtitle: string) {
-    Row({ space: 8 }) {
-      Text(title).fontSize(17).fontWeight(FontWeight.Bold).fontColor('#1E252D');
-      Text(subtitle).fontSize(11).fontColor('#A4A9AF').layoutWeight(1);
-    }.width('100%').padding({ top: 8, bottom: 10 });
-  }
-
-  @Builder
-  followedCard(room: LiveRoom) {
-    Column({ space: 6 }) {
-      Stack({ alignContent: Alignment.BottomStart }) {
-        Image(room.cover !== '' ? room.cover : room.face)
-          .width('100%').height(78).borderRadius(8).objectFit(ImageFit.Cover);
-        Row({ space: 3 }) {
-          Circle({ width: 5, height: 5 }).fill(Color.White);
-          Text('LIVE').fontSize(9).fontWeight(FontWeight.Bold).fontColor(Color.White);
-        }
-        .padding({ left: 5, right: 5, top: 2, bottom: 2 })
-        .backgroundColor('#E6000044').borderRadius(9)
-        .margin(5);
-      }.width('100%');
-      Row({ space: 5 }) {
-        Image(room.face).width(18).height(18).borderRadius(9).objectFit(ImageFit.Cover);
-        Text(room.uname).fontSize(12).fontColor('#20242A').maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis }).layoutWeight(1);
-      }.width('100%');
-      Text(this.formatCount(room.online) + ' 人观看').fontSize(10).fontColor('#A4A9AF')
-        .width('100%').maxLines(1);
+  private async loadMore(): Promise<void> {
+    if (this.loadingMore || this.loading || !this.hasMore) {
+      return;
     }
-    .width(136)
-    .padding(6)
-    .backgroundColor(Color.White)
-    .borderRadius(10)
-    .onClick((): void => { this.openLiveDetail(room); });
-  }
-
-  @Builder
-  liveCard(room: LiveRoom) {
-    Row({ space: 12 }) {
-      Stack({ alignContent: Alignment.BottomStart }) {
-        Image(room.cover !== '' ? room.cover : room.face)
-          .width(128).height(82).borderRadius(8).objectFit(ImageFit.Cover);
-        Row({ space: 3 }) {
-          Circle({ width: 6, height: 6 }).fill(Color.White);
-          Text('LIVE').fontSize(10).fontWeight(FontWeight.Bold).fontColor(Color.White);
-        }
-        .padding({ left: 6, right: 6, top: 2, bottom: 2 })
-        .backgroundColor('#E6000044').borderRadius(10)
-        .margin(6);
-      };
-      Column({ space: 6 }) {
-        Text(room.title === '' ? '未开播' : room.title).fontSize(15).fontWeight(FontWeight.Medium)
-          .fontColor('#20242A').maxLines(2).textOverflow({ overflow: TextOverflow.Ellipsis })
-          .lineHeight(20).width('100%');
-        Row({ space: 6 }) {
-          Image(room.face).width(20).height(20).borderRadius(10).objectFit(ImageFit.Cover);
-          Text(room.uname).fontSize(12).fontColor('#8B9199').layoutWeight(1)
-            .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis });
-        }.width('100%');
-        Row({ space: 8 }) {
-          if (room.areaName !== '') {
-            Text(room.areaName).fontSize(10).fontColor('#1288FA')
-              .padding({ left: 6, right: 6, top: 2, bottom: 2 })
-              .backgroundColor('#1A1288FA').borderRadius(4);
+    this.loadingMore = true;
+    try {
+      const next: number = this.page + 1;
+      const cards: Array<LiveCard> = await LiveService.load(next);
+      if (cards.length === 0) {
+        this.hasMore = false;
+      } else {
+        const appended: Array<LiveCard> = this.items.slice();
+        for (let i = 0; i < cards.length; i++) {
+          let duplicated: boolean = false;
+          for (let j = 0; j < appended.length; j++) {
+            if (appended[j].roomId === cards[i].roomId) {
+              duplicated = true;
+              break;
+            }
           }
-          Text(this.formatCount(room.online) + ' 人观看').fontSize(11).fontColor('#A4A9AF')
-            .layoutWeight(1).maxLines(1);
-        }.width('100%');
-      }.layoutWeight(1).alignItems(HorizontalAlign.Start);
+          if (!duplicated) {
+            appended.push(cards[i]);
+          }
+        }
+        this.items = appended;
+        this.page = next;
+      }
+    } catch (err) {
+      this.hasMore = false;
+    } finally {
+      this.loadingMore = false;
+    }
+  }
+
+  private toast(text: string): void {
+    try {
+      this.getUIContext().getPromptAction().showToast({ message: text, duration: 1800 });
+    } catch (err) {
+      // 提示失败不影响主流程
+    }
+  }
+
+  /** 两列网格：每行两间直播间 */
+  @Builder
+  liveGrid() {
+    List({ scroller: this.scroller }) {
+      ListItem() {
+        Row()
+          .width('100%')
+          .height(this.topInset)
+      }
+
+      if (this.loading && this.items.length === 0) {
+        ListItem() {
+          StateView({ kind: 'loading', message: '正在加载直播间' })
+        }
+      } else if (this.errorText.length > 0 && this.items.length === 0) {
+        ListItem() {
+          StateView({
+            kind: 'error',
+            message: this.errorText,
+            hint: '直播接口对未登录请求限流，稍后重试',
+            onRetry: () => {
+              this.loadFirstPage();
+            }
+          })
+        }
+      } else if (this.items.length === 0) {
+        ListItem() {
+          StateView({ kind: 'empty', message: '暂时没有直播推荐' })
+        }
+      } else {
+        ForEach(this.pairRows(), (row: Array<LiveCard>, rowIndex: number) => {
+          ListItem() {
+            Row({ space: 0 }) {
+              ForEach(row, (card: LiveCard, cellIndex: number) => {
+                Column() {
+                  LiveCardView({
+                    card: card,
+                    onCardTap: (item: LiveCard) => {
+                      this.toast(`「${item.uname}」的直播间待建设`);
+                    }
+                  })
+                }
+                .layoutWeight(1)
+              }, (card: LiveCard, cellIndex: number) => `${rowIndex}-${cellIndex}-${card.roomId}`)
+              // 单数个时补一个占位，保持左对齐布局
+              if (row.length === 1) {
+                Column()
+                  .layoutWeight(1)
+              }
+            }
+            .width('100%')
+            .alignItems(VerticalAlign.Top)
+          }
+        }, (row: Array<LiveCard>, rowIndex: number) => `${rowIndex}-${row.length}`)
+
+        if (this.loadingMore) {
+          ListItem() {
+            ListFooter({ text: '正在加载更多' })
+          }
+        } else if (!this.hasMore) {
+          ListItem() {
+            ListFooter({ text: '没有更多直播间了', showProgress: false })
+          }
+        }
+      }
+
+      ListItem() {
+        Row()
+          .width('100%')
+          .height(this.breakpoint === 'lg' ? BOTTOM_PAD_LG : BOTTOM_PAD_PHONE)
+      }
     }
     .width('100%')
-    .padding(10)
-    .backgroundColor(Color.White)
-    .borderRadius(10)
-    .onClick((): void => { this.openLiveDetail(room); });
+    .height('100%')
+    .padding({ left: PAGE_PADDING - 4, right: PAGE_PADDING - 4 })
+    .scrollBar(BarState.Off)
+    .edgeEffect(EdgeEffect.Spring)
+    .onScroll(() => {
+      ScrollSignal.report(this.scroller);
+    })
+    .onReachEnd(() => {
+      this.loadMore();
+    })
+  }
+
+  /** 把一维列表切成每行两个 */
+  private pairRows(): Array<Array<LiveCard>> {
+    const rows: Array<Array<LiveCard>> = [];
+    for (let i = 0; i < this.items.length; i += 2) {
+      const row: Array<LiveCard> = [this.items[i]];
+      if (i + 1 < this.items.length) {
+        row.push(this.items[i + 1]);
+      }
+      rows.push(row);
+    }
+    return rows;
   }
 
   build() {
-    Refresh({ refreshing: $$this.refreshing, offset: 56, friction: 80 }) {
-      Scroll() {
-        Column() {
-          this.sectionHeader('我的关注', '关注的主播');
-          if (this.followedRooms.length > 0) {
-            Scroll() {
-              Row({ space: 10 }) {
-                ForEach(this.followedRooms, (room: LiveRoom) => {
-                  this.followedCard(room);
-                }, (room: LiveRoom) => `followed_${room.roomId}`);
-              }.padding({ left: 2, right: 2 });
-            }
-            .width('100%')
-            .scrollable(ScrollDirection.Horizontal)
-            .scrollBar(BarState.Off)
-            .padding({ bottom: 10 });
-          } else {
-            Text(this.followedHint).fontSize(13).fontColor('#8B9199').width('100%')
-              .textAlign(TextAlign.Center).padding({ top: 8, bottom: 14 });
-          }
-          this.sectionHeader('推荐直播', '全平台实时人气排行');
-          if (this.hotRooms.length === 0 && this.loading) {
-            Row({ space: 8 }) {
-              LoadingProgress().width(26).height(26).color('#1288FA');
-              Text('正在获取直播列表...').fontSize(14).fontColor('#1288FA');
-            }.justifyContent(FlexAlign.Center).width('100%').margin({ top: 50 });
-          } else if (this.hotRooms.length === 0 && this.loadError !== '') {
-            Column({ space: 12 }) {
-              Text(this.loadError).fontSize(14).fontColor('#8B9199');
-              Button('重试').onClick(() => this.loadLiveList(true));
-            }.width('100%').margin({ top: 50 }).alignItems(HorizontalAlign.Center);
-          } else {
-            ForEach(this.hotRooms, (room: LiveRoom) => {
-              Column() {
-                this.liveCard(room);
-              }.width('100%').padding({ bottom: 10 });
-            }, (room: LiveRoom) => `hot_${room.roomId}`);
-          }
-          if (this.otherRooms.length > 0) {
-            this.sectionHeader('相关直播', '继续探索更多直播间');
-            ForEach(this.otherRooms, (room: LiveRoom) => {
-              Column() {
-                this.liveCard(room);
-              }.width('100%').padding({ bottom: 10 });
-            }, (room: LiveRoom) => `other_${room.roomId}`);
-          }
-          if (this.loadingMore) {
-            Row({ space: 8 }) {
-              LoadingProgress().width(22).height(22).color('#1288FA');
-              Text('加载中...').fontSize(13).fontColor('#1288FA');
-            }.justifyContent(FlexAlign.Center).width('100%').padding({ top: 10 });
-          }
-        }
-        .width('100%')
-        .padding({ left: 12, right: 12, bottom: this.bottomInset + 88 });
-      }
-      .width('100%').height('100%')
-      .scrollBar(BarState.Off)
-      .onReachEnd((): void => {
-        if (this.loading || this.loadingMore) return;
-        if (this.hotRooms.length + this.otherRooms.length < 20 * this.page) return;
-        this.page += 1;
-        this.loadLiveList(false);
-      });
+    Refresh({ refreshing: $$this.refreshing }) {
+      this.liveGrid()
     }
-    .width('100%').height('100%')
+    .width('100%')
+    .height('100%')
     .onRefreshing(() => {
-      this.loadFollowed();
-      this.loadLiveList(true);
-    });
+      this.refreshing = true;
+      this.hasMore = true;
+      this.loadFirstPage();
+    })
   }
 }

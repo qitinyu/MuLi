@@ -1,0 +1,16 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "沐哩主模块"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "沐哩 · 第三方哔哩哔哩客户端"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "沐哩"
+    }
+  ]
+}

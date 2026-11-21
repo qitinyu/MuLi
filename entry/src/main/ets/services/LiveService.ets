@@ -1,224 +1,56 @@
-import { BiliHttpClient } from './BiliHttpClient';
+import { BiliHttp, J } from './BiliHttp';
+import { LiveCard } from '../model/BiliModels';
+import { shortCount } from '../common/Format';
 
-export class LiveRoom {
-  roomId: number = 0;
-  title: string = '';
-  uname: string = '';
-  face: string = '';
-  cover: string = '';
-  online: number = 0;
-  areaName: string = '';
-}
+const TAG = 'MuLiLive';
 
-export class LiveRoomStatus {
-  liveStatus: number = 0;
-  online: number = 0;
-  title: string = '';
-  areaName: string = '';
-  keyframe: string = '';
-}
-
-export class LiveQnOption {
-  qn: number = 0;
-  desc: string = '';
-}
-
-export class LivePlayResult {
-  url: string = '';
-  currentQn: number = 0;
-  qnOptions: LiveQnOption[] = [];
-  lineCount: number = 1;
-  lineIndex: number = 0;
-  anchorMid: number = 0;
-}
-
+/**
+ * 直播页数据源。
+ * 实测 xlive/web-interface/v1/second/getList 无 cookie 时恒 -352，
+ * 因此改用 room/v1/room/get_user_recommend：分页有效、字段足够渲染卡片。
+ * 注意 data 本身就是数组（不是 { list: [] }），解析时要兼容两种形状。
+ */
 export class LiveService {
-  private static readonly liveHost: string = 'api.live.bilibili.com';
-
-  static async loadLiveList(page: number = 1): Promise<LiveRoom[]> {
+  static async load(page: number): Promise<Array<LiveCard>> {
     const query: Record<string, string> = {};
-    query['parent_area_id'] = '0';
-    query['area_id'] = '0';
-    query['page'] = String(page);
-    query['page_size'] = '20';
-    query['sort_type'] = 'online';
-    const result: Record<string, Object> =
-      await BiliHttpClient.getJsonHost(LiveService.liveHost, '/room/v1/Area/getRoomList', query);
-    if (Number(result['code'] ?? -1) !== 0) {
-      throw new Error(String(result['message'] ?? '直播列表获取失败'));
+    query['page'] = `${page}`;
+    query['page_size'] = '12';
+    const body: Record<string, Object> = await BiliHttp.getJson(
+      BiliHttp.LIVE_HOST, '/room/v1/room/get_user_recommend', query, 'https://live.bilibili.com/');
+    const code: number = J.num(body, 'code');
+    if (code !== 0) {
+      const message: string = J.str(body, 'message');
+      throw new Error(message.length > 0 ? message : `直播接口返回 ${code}`);
     }
-    const rawList: Object[] = (result['data'] as Object[]) ?? [];
-    return rawList.map((raw: Object): LiveRoom => LiveService.parseRoom(raw as Record<string, Object>))
-      .filter((room: LiveRoom): boolean => room.roomId > 0);
-  }
-
-  static async loadFollowedLive(cookie: string, uid: string): Promise<LiveRoom[]> {
-    if (cookie === '' || uid === '' || uid === '0') return [];
-    const query: Record<string, string> = {};
-    query['vmid'] = uid;
-    query['ps'] = '50';
-    query['pn'] = '1';
-    const result: Record<string, Object> =
-      await BiliHttpClient.getJson('/x/relation/followings', query, cookie);
-    if (Number(result['code'] ?? -1) !== 0) {
-      throw new Error(String(result['message'] ?? '关注列表获取失败'));
+    const raw: Object | undefined = body['data'];
+    let list: Array<Object> = [];
+    if (Array.isArray(raw)) {
+      list = raw as Array<Object>;
+    } else {
+      list = J.arr(J.obj(body, 'data'), 'list');
     }
-    const data: Record<string, Object> = (result['data'] ?? {}) as Record<string, Object>;
-    const rawList: Object[] = (data['list'] as Object[]) ?? [];
-    const mids: number[] = [];
-    rawList.forEach((raw: Object): void => {
-      const mid: number = Number((raw as Record<string, Object>)['mid'] ?? 0);
-      if (mid > 0) mids.push(mid);
-    });
-    if (mids.length === 0) return [];
-    const body: Record<string, Object> = {};
-    body['uids'] = mids;
-    const statusResult: Record<string, Object> = await BiliHttpClient.postJsonHost(
-      LiveService.liveHost, '/room/v1/Room/get_status_info_by_uids', body, cookie);
-    if (Number(statusResult['code'] ?? -1) !== 0) {
-      throw new Error(String(statusResult['message'] ?? '关注主播状态获取失败'));
-    }
-    const statusData: Record<string, Object> = (statusResult['data'] ?? {}) as Record<string, Object>;
-    const rooms: LiveRoom[] = [];
-    Object.keys(statusData).forEach((key: string): void => {
-      const info: Record<string, Object> = (statusData[key] ?? {}) as Record<string, Object>;
-      if (Number(info['live_status'] ?? 0) !== 1) return;
-      const room: LiveRoom = new LiveRoom();
-      room.roomId = Number(info['room_id'] ?? 0);
-      room.title = String(info['title'] ?? '');
-      room.uname = String(info['uname'] ?? '');
-      room.face = String(info['face'] ?? '');
-      room.online = Number(info['online'] ?? 0);
-      room.areaName = String(info['area_v2_name'] ?? '');
-      room.cover = String(info['cover_from_user'] ?? info['user_cover'] ?? info['keyframe'] ?? '');
-      if (room.roomId > 0) rooms.push(room);
-    });
-    return rooms;
-  }
-
-  static async loadRoomStatus(roomId: number): Promise<LiveRoomStatus> {
-    const query: Record<string, string> = {};
-    query['room_id'] = String(roomId);
-    const result: Record<string, Object> =
-      await BiliHttpClient.getJsonHost(LiveService.liveHost, '/room/v1/Room/get_info', query);
-    if (Number(result['code'] ?? -1) !== 0) {
-      throw new Error(String(result['message'] ?? '直播间信息获取失败'));
-    }
-    const data: Record<string, Object> = (result['data'] ?? {}) as Record<string, Object>;
-    const status: LiveRoomStatus = new LiveRoomStatus();
-    status.liveStatus = Number(data['live_status'] ?? 0);
-    status.online = Number(data['online'] ?? 0);
-    status.title = String(data['title'] ?? '');
-    status.areaName = String(data['area_name'] ?? '');
-    status.keyframe = String(data['keyframe'] ?? '');
-    return status;
-  }
-
-  static async loadPlayUrl(roomId: number): Promise<string> {
-    const result: LivePlayResult = await LiveService.loadPlayUrlEx(roomId, 0, 0);
-    return result.url;
-  }
-
-  /**
-   * 解析直播流：qn 指定清晰度（0=原画），lineIndex 选择线路（同一流的多 CDN）；
-   * 返回可选清晰度列表与线路数供切换 UI 使用。
-   */
-  static async loadPlayUrlEx(roomId: number, qn: number, lineIndex: number): Promise<LivePlayResult> {
-    const query: Record<string, string> = {};
-    query['room_id'] = String(roomId);
-    query['protocol'] = '1';
-    query['format'] = '1,2';
-    query['codec'] = '0';
-    query['qn'] = String(qn > 0 ? qn : 10000);
-    query['platform'] = 'web';
-    query['ptype'] = '8';
-    const result: Record<string, Object> =
-      await BiliHttpClient.getJsonHost(LiveService.liveHost, '/xlive/web-room/v2/index/getRoomPlayInfo', query);
-    if (Number(result['code'] ?? -1) !== 0) {
-      throw new Error(String(result['message'] ?? '直播流获取失败'));
-    }
-    const data: Record<string, Object> = (result['data'] ?? {}) as Record<string, Object>;
-    const playurlInfo: Record<string, Object> = (data['playurl_info'] ?? {}) as Record<string, Object>;
-    const playurl: Record<string, Object> = (playurlInfo['playurl'] ?? {}) as Record<string, Object>;
-    const streams: Object[] = (playurl['stream'] as Object[]) ?? [];
-    const out: LivePlayResult = new LivePlayResult();
-    out.anchorMid = Number(data['uid'] ?? 0);
-    out.currentQn = Number(playurl['base_qn'] ?? 0);
-    const qnDescs: Object[] = (playurl['g_qn_desc'] as Object[]) ?? [];
-    qnDescs.forEach((rawQn: Object): void => {
-      const record: Record<string, Object> = rawQn as Record<string, Object>;
-      const option: LiveQnOption = new LiveQnOption();
-      option.qn = Number(record['qn'] ?? 0);
-      option.desc = String(record['desc'] ?? '');
-      if (option.qn > 0 && option.desc !== '') out.qnOptions.push(option);
-    });
-    let fallback: string = '';
-    for (const rawStream of streams) {
-      const stream: Record<string, Object> = rawStream as Record<string, Object>;
-      const isHls: boolean = String(stream['protocol_name'] ?? '') === 'http_hls';
-      const formats: Object[] = (stream['format'] as Object[]) ?? [];
-      for (const rawFormat of formats) {
-        const format: Record<string, Object> = rawFormat as Record<string, Object>;
-        const codecs: Object[] = (format['codec'] as Object[]) ?? [];
-        if (codecs.length === 0) continue;
-        const codec: Record<string, Object> = codecs[0] as Record<string, Object>;
-        const urlInfos: Object[] = (codec['url_info'] as Object[]) ?? [];
-        if (urlInfos.length === 0) continue;
-        out.currentQn = Number(codec['current_qn'] ?? out.currentQn);
-        const chosen: Record<string, Object> =
-          urlInfos[Math.min(Math.max(0, lineIndex), urlInfos.length - 1)] as Record<string, Object>;
-        const url: string = LiveService.assembleUrlWith(codec, chosen);
-        if (url === '') continue;
-        if (isHls) {
-          out.url = url;
-          out.lineCount = urlInfos.length;
-          out.lineIndex = Math.min(Math.max(0, lineIndex), urlInfos.length - 1);
-          return out;
-        }
-        if (fallback === '') {
-          fallback = url;
-          out.lineCount = urlInfos.length;
-          out.lineIndex = Math.min(Math.max(0, lineIndex), urlInfos.length - 1);
-        }
+    const cards: Array<LiveCard> = [];
+    for (let i = 0; i < list.length; i++) {
+      const item: Record<string, Object> = list[i] as Record<string, Object>;
+      const card: LiveCard = {
+        roomId: J.num(item, 'roomid'),
+        uid: J.num(item, 'uid'),
+        title: J.str(item, 'title'),
+        uname: J.str(item, 'uname'),
+        face: J.str(item, 'face').replace(/^http:/, 'https:'),
+        cover: J.str(item, 'user_cover').length > 0
+          ? J.str(item, 'user_cover').replace(/^http:/, 'https:')
+          : J.str(item, 'system_cover').replace(/^http:/, 'https:'),
+        onlineText: J.str(J.obj(item, 'watched_show'), 'text_small').length > 0
+          ? J.str(J.obj(item, 'watched_show'), 'text_small')
+          : shortCount(J.num(item, 'online')),
+        areaName: J.str(item, 'areaName')
+      };
+      if (card.roomId > 0 && card.title.length > 0) {
+        cards.push(card);
       }
     }
-    if (fallback !== '') {
-      out.url = fallback;
-      return out;
-    }
-    throw new Error('直播间暂未开播或没有可用线路');
-  }
-
-  private static assembleUrlWith(codec: Record<string, Object>, urlInfo: Record<string, Object>): string {
-    const baseUrl: string = String(codec['base_url'] ?? '');
-    const host: string = String(urlInfo['host'] ?? '');
-    const extra: string = String(urlInfo['extra'] ?? '');
-    if (baseUrl === '' || host === '') return '';
-    let url: string = host + baseUrl;
-    if (url.indexOf('?') < 0) {
-      url += '?';
-    } else if (!url.endsWith('?')) {
-      url += '&';
-    }
-    return url + extra;
-  }
-
-  private static assembleUrl(codec: Record<string, Object>): string {
-    const urlInfos: Object[] = (codec['url_info'] as Object[]) ?? [];
-    if (urlInfos.length === 0) return '';
-    return LiveService.assembleUrlWith(codec, urlInfos[0] as Record<string, Object>);
-  }
-
-  private static parseRoom(raw: Record<string, Object>): LiveRoom {
-    const room: LiveRoom = new LiveRoom();
-    room.roomId = Number(raw['roomid'] ?? 0);
-    room.title = String(raw['title'] ?? '');
-    room.uname = String(raw['uname'] ?? '');
-    room.face = String(raw['face'] ?? '');
-    room.online = Number(raw['online'] ?? 0);
-    room.areaName = String(raw['area_v2_name'] ?? '');
-    const cover: string = String(raw['cover'] ?? raw['user_cover'] ?? raw['system_cover'] ?? '');
-    room.cover = cover.trim();
-    return room;
+    console.info(`${TAG} loaded ${cards.length} rooms at page ${page}`);
+    return cards;
   }
 }

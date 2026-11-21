@@ -1,66 +1,61 @@
-import { VideoItem } from '../models/VideoItem';
-import { BiliHttpClient } from './BiliHttpClient';
+import { BiliHttp, J } from './BiliHttp';
+import { VideoCard } from '../model/BiliModels';
+import { shortCount } from '../common/Format';
 
+const TAG = 'MuLiHot';
+
+/**
+ * 热门页数据源。
+ * 排行榜接口一次给约 100 条且无分页，因此「加载更多」只是把剩余条目继续铺到列表中。
+ * 名次用接口返回的顺序 +1 计算，写入 cornerText。
+ */
 export class HotService {
-  static async loadPopular(page: number = 1): Promise<VideoItem[]> {
+  static async load(): Promise<Array<VideoCard>> {
     const query: Record<string, string> = {};
-    query['ps'] = '20';
-    query['pn'] = String(page);
-    const result: Record<string, Object> = await BiliHttpClient.getJson('/x/web-interface/popular', query);
-    if (Number(result['code'] ?? -1) !== 0) {
-      throw new Error(String(result['message'] ?? '热门榜单获取失败'));
+    query['rid'] = '0';
+    query['type'] = 'all';
+    const body: Record<string, Object> = await BiliHttp.getJson(
+      BiliHttp.API_HOST, '/x/web-interface/ranking/v2', query,
+      'https://www.bilibili.com/v/popular/rank/all');
+    const code: number = J.num(body, 'code');
+    if (code !== 0) {
+      const message: string = J.str(body, 'message');
+      throw new Error(message.length > 0 ? message : `热门接口返回 ${code}`);
     }
-    const data: Record<string, Object> = (result['data'] ?? {}) as Record<string, Object>;
-    const rawList: Object[] = (data['list'] as Object[]) ?? [];
-    return rawList.map((raw: Object): VideoItem => HotService.parseItem(raw as Record<string, Object>))
-      .filter((item: VideoItem): boolean => item.aid > 0 && item.title !== '');
-  }
-
-  private static parseItem(raw: Record<string, Object>): VideoItem {
-    const owner: Record<string, Object> = (raw['owner'] ?? {}) as Record<string, Object>;
-    const stat: Record<string, Object> = (raw['stat'] ?? {}) as Record<string, Object>;
-    const reason: Record<string, Object> = (raw['rcmd_reason'] ?? {}) as Record<string, Object>;
-    const dimension: Record<string, Object> = (raw['dimension'] ?? {}) as Record<string, Object>;
-    const aid: number = Number(raw['aid'] ?? 0);
-    const tags: string[] = [];
-    const reasonText: string = String(reason['content'] ?? '');
-    if (reasonText !== '') tags.push(reasonText);
-    return {
-      id: aid,
-      aid: aid,
-      bvid: String(raw['bvid'] ?? ''),
-      cid: Number(raw['cid'] ?? 0),
-      title: String(raw['title'] ?? ''),
-      author: String(owner['name'] ?? ''),
-      authorMid: Number(owner['mid'] ?? 0),
-      authorFace: String(owner['face'] ?? ''),
-      cover: HotService.compactCover(String(raw['pic'] ?? '')),
-      viewCount: Number(stat['view'] ?? 0),
-      danmuCount: Number(stat['danmaku'] ?? 0),
-      likeCount: Number(stat['like'] ?? 0),
-      commentCount: Number(stat['reply'] ?? 0),
-      shareCount: Number(stat['share'] ?? 0),
-      followed: false,
-      duration: Number(raw['duration'] ?? 0),
-      playUrl: '',
-      placeholder: false,
-      publishTime: Number(raw['pubdate'] ?? 0),
-      description: String(raw['desc'] ?? ''),
-      tags: tags,
-      detailLoaded: false,
-      videoWidth: Number(dimension['width'] ?? 0),
-      videoHeight: Number(dimension['height'] ?? 0)
-    };
-  }
-
-  private static compactCover(value: string): string {
-    const cover: string = value.trim();
-    if (cover === '') return '';
-    const atIndex: number = cover.indexOf('@');
-    const queryIndex: number = cover.indexOf('?');
-    let cutIndex: number = cover.length;
-    if (atIndex >= 0 && atIndex < cutIndex) cutIndex = atIndex;
-    if (queryIndex >= 0 && queryIndex < cutIndex) cutIndex = queryIndex;
-    return cover.substring(0, cutIndex) + '@320w_180h_1c.webp';
+    const data: Record<string, Object> = J.obj(body, 'data');
+    const list: Array<Object> = J.arr(data, 'list');
+    const cards: Array<VideoCard> = [];
+    for (let i = 0; i < list.length; i++) {
+      const item: Record<string, Object> = list[i] as Record<string, Object>;
+      const owner: Record<string, Object> = J.obj(item, 'owner');
+      const stat: Record<string, Object> = J.obj(item, 'stat');
+      const dimension: Record<string, Object> = J.obj(item, 'dimension');
+      const width: number = J.num(dimension, 'width');
+      const height: number = J.num(dimension, 'height');
+      const card: VideoCard = {
+        aid: J.num(item, 'aid'),
+        bvid: J.str(item, 'bvid'),
+        cid: J.num(item, 'cid'),
+        title: J.str(item, 'title'),
+        cover: J.str(item, 'pic').replace(/^http:/, 'https:'),
+        author: J.str(owner, 'name'),
+        authorFace: J.str(owner, 'face').replace(/^http:/, 'https:'),
+        authorMid: J.num(owner, 'mid'),
+        duration: J.num(item, 'duration'),
+        pubTs: J.num(item, 'pubdate'),
+        viewText: `${shortCount(J.num(stat, 'view'))}播放`,
+        danmuText: `${shortCount(J.num(stat, 'danmaku'))}弹幕`,
+        likeText: shortCount(J.num(stat, 'like')),
+        replyText: shortCount(J.num(stat, 'reply')),
+        cornerText: `${i + 1}`,
+        followed: false,
+        vertical: width > 0 && height > width
+      };
+      if (card.title.length > 0) {
+        cards.push(card);
+      }
+    }
+    console.info(`${TAG} loaded ${cards.length} ranking items`);
+    return cards;
   }
 }

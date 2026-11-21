@@ -1,3 +1,5 @@
 {
-  "src": ["pages/SplashPage", "pages/Index", "pages/Settings", "pages/SearchPage", "pages/HotDetail", "pages/LiveDetail", "pages/AnimeDetail", "pages/UserSpace", "pages/MyFav", "pages/WebBrowser", "pages/MessagePage", "pages/ChatPage", "pages/WatchListPage"]
+  "src": [
+    "pages/Index"
+  ]
 }

@@ -1,335 +1,247 @@
-import { VideoItem } from '../models/VideoItem';
+import { BOTTOM_PAD_LG, BOTTOM_PAD_PHONE, PAGE_PADDING } from '../common/DesignSpec';
+import { DynamicCard, VideoCard, VideoOpenParam } from '../model/BiliModels';
 import { AuthService } from '../services/AuthService';
-import { DynamicAuthor, DynamicEntry, DynamicFeedBatch, DynamicPic, DynamicService } from '../services/DynamicService';
-import { FilterWords } from '../utils/FilterWords';
-import router from '@ohos.router';
+import { DynamicService } from '../services/DynamicService';
+import { DynamicCardView } from '../components/DynamicCardView';
+import { ListFooter, StateView } from '../components/StateView';
+import { ScrollSignal } from '../common/ScrollSignal';
 
-// 模块级缓存：版块切入切出保留首次内容，仅手动刷新更新
-let cachedEntries: DynamicEntry[] = [];
-let cachedAuthors: DynamicAuthor[] = [];
-let cachedOffset: string = '';
-let cachedHasMore: boolean = false;
-
+/**
+ * 动态页（页签二）：关注 UP 主动态流。
+ * 该接口未登录恒返回 -101，因此未登录时不发请求，直接给登录引导；
+ * 登录成功后由 AppStorage 的 loginTick 信号触发重载（登录页在别的路由，无法直接回调）。
+ */
 @Component
 export struct DynamicPage {
-  @Prop bottomInset: number = 8;
-  onPlayVideo: (item: VideoItem, showComments: boolean) => void =
-    (_item: VideoItem, _showComments: boolean) => {};
-  onLikeVideo: (item: VideoItem) => void = (_item: VideoItem) => {};
-  onShareVideo: (item: VideoItem) => void = (_item: VideoItem) => {};
-  // 统计行点赞/分享目标为动态本身
-  onLikeEntry: (entry: DynamicEntry) => void = (_entry: DynamicEntry) => {};
-  onShareEntry: (entry: DynamicEntry) => void = (_entry: DynamicEntry) => {};
-  @State suppressCardTap: boolean = false;
-  @State entries: DynamicEntry[] = [];
-  @State authors: DynamicAuthor[] = [];
-  @State loading: boolean = true;
+  pathStack: NavPathStack | undefined = undefined;
+  scroller: Scroller = new Scroller();
+  @Prop topInset: number = 96;
+  @Prop breakpoint: string = 'sm';
+  @StorageLink('loginTick') @Watch('onLoginTick') loginTick: number = 0;
+  @State items: Array<DynamicCard> = [];
+  @State loading: boolean = false;
   @State refreshing: boolean = false;
   @State loadingMore: boolean = false;
-  @State loadError: string = '';
-  @State selectedAuthor: string = '';
-  private feedOffset: string = '';
-  private hasMore: boolean = false;
-  private fetching: boolean = false;
+  @State errorText: string = '';
+  @State needLogin: boolean = false;
+  @State hasMore: boolean = true;
+  /** 翻页游标：用上一页最后一条动态的 id（不能叫 offset，会与 CustomComponent 的同名属性冲突） */
+  private nextOffset: string = '';
 
   aboutToAppear(): void {
-    if (cachedEntries.length > 0) {
-      this.entries = cachedEntries;
-      this.authors = cachedAuthors;
-      this.feedOffset = cachedOffset;
-      this.hasMore = cachedHasMore;
-      this.loading = false;
+    this.loadFirstPage();
+  }
+
+  private onLoginTick(): void {
+    // 登录态变化：重置并重新加载
+    this.items = [];
+    this.nextOffset = '';
+    this.hasMore = true;
+    this.loadFirstPage();
+  }
+
+  private async loadFirstPage(): Promise<void> {
+    if (this.loading) {
       return;
     }
-    this.loadFeed(true);
-  }
-
-  private visibleEntries(): DynamicEntry[] {
-    if (this.selectedAuthor === '') return this.entries;
-    return this.entries.filter((entry: DynamicEntry): boolean =>
-      entry.authorName === this.selectedAuthor);
-  }
-
-  private toggleAuthorFilter(name: string): void {
-    this.selectedAuthor = this.selectedAuthor === name ? '' : name;
-  }
-
-  private async loadFeed(refresh: boolean = false): Promise<void> {
-    if (this.fetching) return;
-    if (!refresh && !this.hasMore) return;
-    this.fetching = true;
-    if (refresh) {
-      this.refreshing = true;
-      this.loading = true;
-      this.loadError = '';
-      this.feedOffset = '';
-    } else {
-      this.loadingMore = true;
+    if (!AuthService.isLogin()) {
+      this.needLogin = true;
+      this.items = [];
+      this.refreshing = false;
+      return;
     }
+    this.needLogin = false;
+    this.loading = true;
+    this.errorText = '';
     try {
-      const session = AuthService.currentSession();
-      const cookie: string = session === null ? '' : session.cookie;
-      if (cookie === '') {
-        this.entries = [];
-        this.loadError = '登录后查看关注用户的最新动态';
-        return;
+      const cards: Array<DynamicCard> = await DynamicService.load('');
+      this.items = cards;
+      this.nextOffset = cards.length > 0 ? cards[cards.length - 1].id : '';
+      this.hasMore = cards.length > 0;
+    } catch (err) {
+      const message: string = err instanceof Error ? err.message : '加载失败，请稍后重试';
+      if (message.indexOf('未登录') >= 0) {
+        this.needLogin = true;
+      } else {
+        this.errorText = message;
       }
-      const batch: DynamicFeedBatch =
-        await DynamicService.loadFeed(cookie, refresh ? '' : this.feedOffset);
-      this.feedOffset = batch.offset;
-      this.hasMore = batch.hasMore;
-      const visible: DynamicEntry[] = batch.entries.filter((entry: DynamicEntry): boolean => {
-        const title: string = entry.video !== null ? entry.video.title : '';
-        return !FilterWords.isVideoFiltered(title) && !FilterWords.isVideoFiltered(entry.text);
-      });
-      this.entries = refresh ? visible : this.entries.concat(visible);
-      this.authors = refresh ? batch.authors : this.authors;
-      if (!refresh) {
-        const merged: DynamicAuthor[] = this.authors.slice();
-        batch.authors.forEach((author: DynamicAuthor): void => {
-          if (!merged.some((candidate: DynamicAuthor): boolean => candidate.name === author.name)) {
-            merged.push(author);
-          }
-        });
-        this.authors = merged;
-      }
-      cachedEntries = this.entries;
-      cachedAuthors = this.authors;
-      cachedOffset = this.feedOffset;
-      cachedHasMore = this.hasMore;
-    } catch (error) {
-      if (refresh) {
-        this.loadError = '动态加载失败，请检查网络或登录状态';
-      }
-      console.error('Pilihos dynamic page load failed: ' + String(error));
     } finally {
       this.loading = false;
       this.refreshing = false;
-      this.loadingMore = false;
-      this.fetching = false;
     }
   }
 
-  private formatPublishTime(timestamp: number): string {
-    if (timestamp <= 0) return '';
-    const seconds: number = Math.max(0, Math.floor(Date.now() / 1000) - timestamp);
-    if (seconds < 3600) return `${String(Math.max(1, Math.floor(seconds / 60)))}分钟前`;
-    if (seconds < 86400) return `${Math.floor(seconds / 3600)}小时前`;
-    if (seconds < 2592000) return `${Math.floor(seconds / 86400)}天前`;
-    const date: Date = new Date(timestamp * 1000);
-    return `${date.getFullYear()}/${date.getMonth() + 1}/${date.getDate()}`;
-  }
-
-  private formatCount(value: number): string {
-    if (value >= 100000000) return `${(value / 100000000).toFixed(2).replace(/\.00$/, '')}亿`;
-    if (value >= 10000) return `${(value / 10000).toFixed(1).replace(/\.0$/, '')}万`;
-    return `${value}`;
-  }
-
-  @Builder
-  picGrid(entry: DynamicEntry) {
-    if (entry.pics.length === 1) {
-      Image(entry.pics[0].url).width('100%').height(210).objectFit(ImageFit.Cover)
-        .borderRadius(8);
-    } else {
-      Grid() {
-        ForEach(entry.pics.slice(0, 9), (pic: DynamicPic) => {
-          GridItem() {
-            Image(pic.url).width('100%').height(96).objectFit(ImageFit.Cover).borderRadius(6);
-          }
-        }, (pic: DynamicPic, index: number) => `pic_${index}_${pic.url.length}`);
-      }
-      .columnsTemplate('1fr 1fr 1fr')
-      .columnsGap(4)
-      .rowsGap(4)
-      .height(entry.pics.length <= 3 ? 96 : entry.pics.length <= 6 ? 196 : 296)
-      .width('100%');
-    }
-  }
-
-  @Builder
-  videoCard(item: VideoItem) {
-    Row({ space: 10 }) {
-      Stack({ alignContent: Alignment.BottomEnd }) {
-        Image(item.cover).width(128).height(80).borderRadius(8).objectFit(ImageFit.Cover);
-        if (item.duration > 0) {
-          Text(this.formatDuration(item.duration)).fontSize(10).fontColor(Color.White)
-            .backgroundColor('#B0000000').padding({ left: 4, right: 4, top: 1, bottom: 1 })
-            .borderRadius(3).margin(4);
-        }
-      };
-      Text(item.title).fontSize(14).fontColor('#20242A').maxLines(2)
-        .textOverflow({ overflow: TextOverflow.Ellipsis }).lineHeight(20).layoutWeight(1);
-    }
-    .width('100%')
-    .padding(8)
-    .backgroundColor('#F4F6F8')
-    .borderRadius(8)
-    .onClick((): void => { this.onPlayVideo(item, false); });
-  }
-
-  private formatDuration(seconds: number): string {
-    const total: number = Math.max(0, Math.floor(seconds));
-    const minutes: number = Math.floor(total / 60);
-    const secs: number = total % 60;
-    return `${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
-  }
-
-  private openAuthorSpace(entry: DynamicEntry): void {
-    if (entry.authorMid <= 0) {
+  private async loadMore(): Promise<void> {
+    if (this.loadingMore || this.loading || !this.hasMore || this.needLogin || this.nextOffset.length === 0) {
       return;
     }
-    router.pushUrl({ url: 'pages/UserSpace', params: { mid: entry.authorMid, name: entry.authorName } })
-      .catch((error: Object): void => {
-        console.error('Pilihos dynamic author space failed: ' + String(error));
-      });
+    this.loadingMore = true;
+    try {
+      const cards: Array<DynamicCard> = await DynamicService.load(this.nextOffset);
+      if (cards.length === 0) {
+        this.hasMore = false;
+      } else {
+        const appended: Array<DynamicCard> = this.items.slice();
+        for (let i = 0; i < cards.length; i++) {
+          let duplicated: boolean = false;
+          for (let j = 0; j < appended.length; j++) {
+            if (appended[j].id === cards[i].id) {
+              duplicated = true;
+              break;
+            }
+          }
+          if (!duplicated) {
+            appended.push(cards[i]);
+          }
+        }
+        this.items = appended;
+        this.nextOffset = cards[cards.length - 1].id;
+      }
+    } catch (err) {
+      this.hasMore = false;
+    } finally {
+      this.loadingMore = false;
+    }
+  }
+
+  private openLogin(): void {
+    if (this.pathStack !== undefined) {
+      this.pathStack.pushPathByName('login', '');
+    }
+  }
+
+  private toast(text: string): void {
+    try {
+      this.getUIContext().getPromptAction().showToast({ message: text, duration: 1800 });
+    } catch (err) {
+      // 提示失败不影响主流程
+    }
   }
 
   @Builder
-  dynamicEntryCard(entry: DynamicEntry) {
-    Column({ space: 10 }) {
-      Row({ space: 10 }) {
-        Image(entry.authorFace).width(40).height(40).borderRadius(20).objectFit(ImageFit.Cover);
-        Column({ space: 2 }) {
-          Text(entry.authorName).fontSize(14).fontWeight(FontWeight.Bold).fontColor('#20242A')
-            .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis });
-          Text(this.formatPublishTime(entry.publishTime)).fontSize(11).fontColor('#A4A9AF');
-        }.layoutWeight(1).alignItems(HorizontalAlign.Start);
-      }.width('100%')
-        .onClick((): void => { this.openAuthorSpace(entry); });
-      if (entry.text !== '') {
-        Text(entry.text).fontSize(15).fontColor('#20242A').lineHeight(23).width('100%');
+  loginGuide() {
+    Column({ space: 12 }) {
+      SymbolGlyph($r('sys.symbol.person_crop_circle_fill_1'))
+        .fontSize(44)
+        .fontColor([$r('app.color.text_tertiary')])
+      Text('登录后查看动态')
+        .fontSize(15)
+        .fontWeight(FontWeight.Medium)
+        .fontColor($r('app.color.text_primary'))
+      Text('关注的人发布了什么，登录沐哩即可同步')
+        .fontSize(12)
+        .fontColor($r('app.color.text_tertiary'))
+        .textAlign(TextAlign.Center)
+        .padding({ left: PAGE_PADDING * 2, right: PAGE_PADDING * 2 })
+      Row() {
+        Text('扫码登录')
+          .fontSize(14)
+          .fontColor($r('app.color.text_on_brand'))
+          .padding({ left: 26, right: 26, top: 9, bottom: 9 })
+          .backgroundColor($r('app.color.brand_primary'))
+          .borderRadius(19)
       }
-      if (entry.type === 'video' && entry.video !== null) {
-        this.videoCard(entry.video);
-      } else if (entry.type === 'pics' && entry.pics.length > 0) {
-        this.picGrid(entry);
-      }
-      if (entry.repostName !== '') {
-        Column({ space: 8 }) {
-          Text('转发自 @' + entry.repostName).fontSize(12).fontColor('#1288FA').width('100%');
-          if (entry.repostVideo !== null) {
-            this.videoCard(entry.repostVideo);
-          } else if (entry.repostText !== '') {
-            Text(entry.repostText).fontSize(13).fontColor('#59616B').lineHeight(20).width('100%');
-          }
-        }
-        .width('100%')
-        .padding(10)
-        .backgroundColor('#F4F6F8')
-        .borderRadius(8)
-        .alignItems(HorizontalAlign.Start);
-      }
-      Row({ space: 24 }) {
-        // 点赞：直接点赞该动态
-        Row({ space: 5 }) {
-          Image($r('app.media.dianzan')).width(16).height(16).fillColor('#8B9199');
-          Text(this.formatCount(entry.stat.like)).fontSize(12).fontColor('#8B9199');
-        }
-          .onClick((): void => { this.onLikeEntry(entry); });
-        Row({ space: 5 }) {
-          Image($r('app.media.pl')).width(16).height(16).fillColor('#8B9199');
-          Text(this.formatCount(entry.stat.comment)).fontSize(12).fontColor('#8B9199');
-        }
-          .onClick((): void => {
-            if (entry.video !== null) {
-              this.onPlayVideo(entry.video, true);
-            } else if (entry.repostVideo !== null) {
-              this.onPlayVideo(entry.repostVideo, true);
-            }
-          });
-        // 分享：分享动态链接
-        Row({ space: 5 }) {
-          Image($r('app.media.share')).width(16).height(16).fillColor('#8B9199');
-          Text(this.formatCount(entry.stat.share)).fontSize(12).fontColor('#8B9199');
-        }
-          .onClick((): void => { this.onShareEntry(entry); });
-      }.width('100%').justifyContent(FlexAlign.Start);
+      .margin({ top: 6 })
+      .onClick(() => {
+        this.openLogin();
+      })
     }
     .width('100%')
-    .padding(14)
-    .backgroundColor(Color.White)
-    .borderRadius(10)
-    .alignItems(HorizontalAlign.Start);
+    .padding({ top: 90, bottom: 80 })
+    .justifyContent(FlexAlign.Center)
+  }
+
+  @Builder
+  dynamicList() {
+    List({ scroller: this.scroller }) {
+      ListItem() {
+        Row()
+          .width('100%')
+          .height(this.topInset)
+      }
+
+      if (this.needLogin) {
+        ListItem() {
+          this.loginGuide()
+        }
+      } else if (this.loading && this.items.length === 0) {
+        ListItem() {
+          StateView({ kind: 'loading', message: '正在加载动态' })
+        }
+      } else if (this.errorText.length > 0 && this.items.length === 0) {
+        ListItem() {
+          StateView({
+            kind: 'error',
+            message: this.errorText,
+            hint: '动态接口偶发限流，稍后重试',
+            onRetry: () => {
+              this.loadFirstPage();
+            }
+          })
+        }
+      } else if (this.items.length === 0) {
+        ListItem() {
+          StateView({ kind: 'empty', message: '关注的 UP 还没有新动态', hint: '去首页逛逛，关注更多人' })
+        }
+      } else {
+        ForEach(this.items, (card: DynamicCard) => {
+          ListItem() {
+            DynamicCardView({
+              card: card,
+              onCardTap: (item: DynamicCard) => {
+                if (item.kind === 'video' && item.video !== null) {
+                  const video: VideoCard = item.video as VideoCard;
+                  if (this.pathStack !== undefined) {
+                    this.pathStack.pushPathByName('video', new VideoOpenParam(video.bvid, video.aid, video.cid));
+                  }
+                  return;
+                }
+                this.toast(`动态「${item.authorName}」详情待建设`);
+              }
+            })
+          }
+        }, (card: DynamicCard) => card.id)
+
+        if (this.loadingMore) {
+          ListItem() {
+            ListFooter({ text: '正在加载更多' })
+          }
+        } else if (!this.hasMore) {
+          ListItem() {
+            ListFooter({ text: '没有更多动态了', showProgress: false })
+          }
+        }
+      }
+
+      ListItem() {
+        Row()
+          .width('100%')
+          .height(this.breakpoint === 'lg' ? BOTTOM_PAD_LG : BOTTOM_PAD_PHONE)
+      }
+    }
+    .width('100%')
+    .height('100%')
+    .scrollBar(BarState.Off)
+    .edgeEffect(EdgeEffect.Spring)
+    .onScroll(() => {
+      ScrollSignal.report(this.scroller);
+    })
+    .onReachEnd(() => {
+      this.loadMore();
+    })
   }
 
   build() {
-    Refresh({ refreshing: $$this.refreshing, offset: 56, friction: 80 }) {
-      Scroll() {
-        Column({ space: 10 }) {
-          Row({ space: 8 }) {
-            Text('最近更新').fontSize(18).fontWeight(FontWeight.Bold).fontColor('#1E252D')
-              .layoutWeight(1);
-            if (this.selectedAuthor !== '') {
-              Row({ space: 5 }) {
-                Text('只看 @' + this.selectedAuthor).fontSize(11).fontColor('#1288FA')
-                  .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
-                  .constraintSize({ maxWidth: 150 });
-                Text('✕').fontSize(11).fontColor('#1288FA').fontWeight(FontWeight.Bold);
-              }
-              .padding({ left: 8, right: 8, top: 4, bottom: 4 })
-              .backgroundColor('#1A1288FA').borderRadius(12)
-              .onClick(() => { this.selectedAuthor = ''; });
-            }
-          }.width('100%').height(40);
-          if (this.authors.length > 0) {
-            Scroll() {
-              Row({ space: 14 }) {
-                ForEach(this.authors, (author: DynamicAuthor) => {
-                  Column({ space: 4 }) {
-                    Image(author.face).width(50).height(50).borderRadius(25).objectFit(ImageFit.Cover)
-                      .border({
-                        width: this.selectedAuthor === author.name ? 2.5 : 0,
-                        color: '#1288FA'
-                      });
-                    Text(author.name).fontSize(11)
-                      .fontColor(this.selectedAuthor === author.name ? '#1288FA' : '#59616B')
-                      .fontWeight(this.selectedAuthor === author.name ? FontWeight.Bold : FontWeight.Normal)
-                      .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
-                      .width(58).textAlign(TextAlign.Center);
-                  }.width(58)
-                    .onClick(() => { this.toggleAuthorFilter(author.name); });
-                }, (author: DynamicAuthor) => `dynamic_author_${author.name}`);
-              }.width(Math.max(4, this.authors.length * 72 + 4))
-                .padding({ left: 2, right: 2 });
-            }.width('100%').height(78)
-              .scrollable(ScrollDirection.Horizontal).scrollBar(BarState.Off);
-          }
-          if (this.entries.length === 0 && this.loading) {
-            Row({ space: 8 }) {
-              LoadingProgress().width(26).height(26).color('#1288FA');
-              Text('正在加载动态...').fontSize(14).fontColor('#1288FA');
-            }.justifyContent(FlexAlign.Center).width('100%').margin({ top: 50 });
-          } else if (this.entries.length === 0 && this.loadError !== '') {
-            Text(this.loadError).fontSize(14).fontColor('#8B9199').width('100%')
-              .textAlign(TextAlign.Center).margin({ top: 50 });
-          } else if (this.visibleEntries().length === 0) {
-            Text('该UP主暂无可展示的动态').fontSize(14).fontColor('#8B9199').width('100%')
-              .textAlign(TextAlign.Center).margin({ top: 50 });
-          } else {
-            ForEach(this.visibleEntries(), (entry: DynamicEntry) => {
-              this.dynamicEntryCard(entry);
-            }, (entry: DynamicEntry) => `entry_${entry.id}_${entry.authorName}`);
-            if (this.loadingMore) {
-              Row({ space: 8 }) {
-                LoadingProgress().width(22).height(22).color('#1288FA');
-                Text('加载更多动态...').fontSize(13).fontColor('#1288FA');
-              }.justifyContent(FlexAlign.Center).width('100%').padding({ top: 8, bottom: 8 });
-            } else if (!this.hasMore && this.entries.length > 0) {
-              Text('没有更多动态了').fontSize(12).fontColor('#A4A9AF').width('100%')
-                .textAlign(TextAlign.Center).padding({ top: 8, bottom: 8 });
-            }
-          }
-        }
-        .width('100%')
-        .padding({ left: 12, right: 12, bottom: this.bottomInset + 88 })
-        .alignItems(HorizontalAlign.Start);
-      }
-      .width('100%').height('100%')
-      .scrollBar(BarState.Off)
-      .onReachEnd((): void => { this.loadFeed(false); });
+    Refresh({ refreshing: $$this.refreshing }) {
+      this.dynamicList()
     }
-    .width('100%').height('100%')
-    .onRefreshing(() => { this.loadFeed(true); });
+    .width('100%')
+    .height('100%')
+    .onRefreshing(() => {
+      this.refreshing = true;
+      this.nextOffset = '';
+      this.hasMore = true;
+      this.loadFirstPage();
+    })
   }
 }

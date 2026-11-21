@@ -1,0 +1,131 @@
+import { common } from '@kit.AbilityKit';
+import { preferences } from '@kit.ArkData';
+import { ChannelRegistry } from '../model/ChannelRegistry';
+
+/**
+ * 应用级设置（V2.0.3）：统一持久化到 preferences，并同步到 AppStorage。
+ *
+ * 为什么走 AppStorage：设置页与首页 / 我的页是不同页面实例，
+ * 用 @StorageLink 订阅同一份 key 才能做到「设置里一改，其他页面立刻生效」。
+ * 因此约定：**所有可即时生效的设置都以 AppStorage key 为准**，preferences 只负责跨启动留存。
+ */
+export class AppPrefs {
+  private static readonly STORE: string = 'muli_app_prefs';
+
+  /** 设置是否已从磁盘载入（未载入前页面按默认值渲染） */
+  static readonly KEY_READY: string = 'muli_prefsReady';
+  /** 底部隐藏：开启后上滑收起底部栏，关闭后底部栏常驻 */
+  static readonly KEY_BOTTOM_HIDE: string = 'muli_bottomHide';
+  /** 默认启动页（下标对应 START_TAB_LABELS） */
+  static readonly KEY_START_TAB: string = 'muli_startTab';
+  /** 推荐页卡片布局：0 = 1×N，1 = 2×N，2 = 自适应 */
+  static readonly KEY_CARD_LAYOUT: string = 'muli_cardLayout';
+  /** 顶部分区条是否显示 */
+  static readonly KEY_LIST_VISIBLE: string = 'muli_listVisible';
+  /** 顶部分区条是否跟随界面移动隐藏 */
+  static readonly KEY_LIST_FOLLOW: string = 'muli_listFollow';
+  /** 顶部分区选择集（逗号分隔 key 串） */
+  static readonly KEY_PARTITIONS: string = 'muli_partitions';
+  /** 我的页背景（http 链接或沙箱图片路径） */
+  static readonly KEY_MINE_COVER: string = 'muli_mineCover';
+
+  /** 默认启动页候选：与底部栏版块一一对应，番剧暂未建版块 */
+  static readonly START_TAB_LABELS: Array<string> = ['首页', '动态', '番剧', '热门', '直播'];
+  /** 候选 → 底部栏页签下标，-1 表示该版块尚未建立 */
+  private static readonly START_TAB_TO_MAIN: Array<number> = [0, 1, -1, 3, 4];
+
+  static readonly CARD_LAYOUT_LABELS: Array<string> = ['1×N 单列', '2×N 双列', '自适应'];
+
+  /** 启动时把磁盘设置灌进 AppStorage（默认值先写，磁盘值覆盖） */
+  static async load(context: common.UIAbilityContext): Promise<void> {
+    AppPrefs.publishDefaults();
+    try {
+      const store: preferences.Preferences = await preferences.getPreferences(context, AppPrefs.STORE);
+      AppStorage.setOrCreate(AppPrefs.KEY_BOTTOM_HIDE, store.getSync('bottom_hide', true) as boolean);
+      AppStorage.setOrCreate(AppPrefs.KEY_START_TAB, store.getSync('start_tab', 0) as number);
+      AppStorage.setOrCreate(AppPrefs.KEY_CARD_LAYOUT, store.getSync('card_layout', 1) as number);
+      AppStorage.setOrCreate(AppPrefs.KEY_LIST_VISIBLE, store.getSync('list_visible', true) as boolean);
+      AppStorage.setOrCreate(AppPrefs.KEY_LIST_FOLLOW, store.getSync('list_follow', true) as boolean);
+      AppStorage.setOrCreate(AppPrefs.KEY_PARTITIONS,
+        store.getSync('partitions', ChannelRegistry.defaultKeys()) as string);
+      AppStorage.setOrCreate(AppPrefs.KEY_MINE_COVER, store.getSync('mine_cover', '') as string);
+    } catch (err) {
+      console.warn(`MuLiAppPrefs load failed: ${String(err)}`);
+    }
+    AppStorage.setOrCreate(AppPrefs.KEY_READY, true);
+  }
+
+  /** 默认值：保证首帧就有合法值，页面不必判空 */
+  static publishDefaults(): void {
+    AppStorage.setOrCreate(AppPrefs.KEY_BOTTOM_HIDE, true);
+    AppStorage.setOrCreate(AppPrefs.KEY_START_TAB, 0);
+    AppStorage.setOrCreate(AppPrefs.KEY_CARD_LAYOUT, 1);
+    AppStorage.setOrCreate(AppPrefs.KEY_LIST_VISIBLE, true);
+    AppStorage.setOrCreate(AppPrefs.KEY_LIST_FOLLOW, true);
+    AppStorage.setOrCreate(AppPrefs.KEY_PARTITIONS, ChannelRegistry.defaultKeys());
+    AppStorage.setOrCreate(AppPrefs.KEY_MINE_COVER, '');
+  }
+
+  static async save(context: common.UIAbilityContext, key: string, value: number | boolean | string): Promise<void> {
+    try {
+      const store: preferences.Preferences = await preferences.getPreferences(context, AppPrefs.STORE);
+      store.putSync(AppPrefs.diskKey(key), value);
+      await store.flush();
+    } catch (err) {
+      console.warn(`MuLiAppPrefs save ${key} failed: ${String(err)}`);
+    }
+  }
+
+  /** AppStorage key → 磁盘字段名 */
+  private static diskKey(key: string): string {
+    switch (key) {
+      case AppPrefs.KEY_BOTTOM_HIDE:
+        return 'bottom_hide';
+      case AppPrefs.KEY_START_TAB:
+        return 'start_tab';
+      case AppPrefs.KEY_CARD_LAYOUT:
+        return 'card_layout';
+      case AppPrefs.KEY_LIST_VISIBLE:
+        return 'list_visible';
+      case AppPrefs.KEY_LIST_FOLLOW:
+        return 'list_follow';
+      case AppPrefs.KEY_PARTITIONS:
+        return 'partitions';
+      case AppPrefs.KEY_MINE_COVER:
+        return 'mine_cover';
+      default:
+        return key;
+    }
+  }
+
+  /** 默认启动页 → 底部栏页签下标；番剧未建版块时回退首页 */
+  static mainTabOfStart(startIndex: number): number {
+    if (startIndex < 0 || startIndex >= AppPrefs.START_TAB_TO_MAIN.length) {
+      return 0;
+    }
+    const mainIndex: number = AppPrefs.START_TAB_TO_MAIN[startIndex];
+    return mainIndex < 0 ? 0 : mainIndex;
+  }
+
+  /** 该启动项是否已建立对应版块（番剧当前未建） */
+  static startTabAvailable(startIndex: number): boolean {
+    if (startIndex < 0 || startIndex >= AppPrefs.START_TAB_TO_MAIN.length) {
+      return false;
+    }
+    return AppPrefs.START_TAB_TO_MAIN[startIndex] >= 0;
+  }
+
+  static startTabLabel(startIndex: number): string {
+    if (startIndex < 0 || startIndex >= AppPrefs.START_TAB_LABELS.length) {
+      return AppPrefs.START_TAB_LABELS[0];
+    }
+    return AppPrefs.START_TAB_LABELS[startIndex];
+  }
+
+  static cardLayoutLabel(layout: number): string {
+    if (layout < 0 || layout >= AppPrefs.CARD_LAYOUT_LABELS.length) {
+      return AppPrefs.CARD_LAYOUT_LABELS[1];
+    }
+    return AppPrefs.CARD_LAYOUT_LABELS[layout];
+  }
+}

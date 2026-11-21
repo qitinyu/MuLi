@@ -1,5 +1,6 @@
 {
-  "modelVersion": "5.0.0",
-  "description": "Pilihos ArkTS video client",
-  "dependencies": {}
+  "modelVersion": "26.0.0",
+  "description": "MuLi（沐哩）HarmonyOS 第三方 B 站客户端",
+  "dependencies": {},
+  "devDependencies": {}
 }

@@ -1,425 +1,565 @@
-﻿import http from '@ohos.net.http';
-import { cryptoFramework } from '@kit.CryptoArchitectureKit';
-import util from '@ohos.util';
-import common from '@ohos.app.ability.common';
+import { common } from '@kit.AbilityKit';
 import { preferences } from '@kit.ArkData';
-import huks from '@ohos.security.huks';
-import { AdvancedFeatures } from '../utils/AdvancedFeatures';
+import { BiliCookie, BiliHttp, J } from './BiliHttp';
+import { QrSession, QR_EXPIRED, QR_SCANNED, QR_SUCCESS, QR_WAITING, UserProfile } from '../model/BiliModels';
 
-export class AuthSession {
-  uid: string = '';
-  name: string = '';
-  face: string = '';
-  cookie: string = '';
-  csrf: string = '';
-  isLogin: boolean = false;
-  dynamicCount: number = 0;
-  followingCount: number = 0;
-  followerCount: number = 0;
-  sign: string = '';
-  level: number = 0;
-  ipLocation: string = '';
-  bcoin: number = 0;
-  coin: number = 0;
-  expCurrent: number = 0;
-  expMin: number = 0;
-  expNext: number = 0;
+const TAG = 'MuLiAuth';
+
+/** 扫码轮询结果 */
+export class QrPollResult {
+  code: number = QR_WAITING;
+  message: string = '';
+  /** code=0 时是否已拿到登录 cookie（false 表示扫码成功但 cookie 缺失，需要提示重试） */
+  filled: boolean = false;
 }
 
-class AuthParam {
-  key: string = '';
+/** 短信验证码发送结果：区分「网络失败」「服务端风控要求图形校验」「发送成功」 */
+export class SmsSendResult {
+  ok: boolean = false;
+  code: number = 0;
+  message: string = '';
+  /** 服务端要求先过图形校验（geetest），本机无法直接完成 */
+  captchaRequired: boolean = false;
+}
+
+/** 账号自检的一行结果（关于页「登录诊断」用） */
+export class AuthDiagLine {
+  label: string = '';
   value: string = '';
+  ok: boolean = false;
 
-  constructor(key: string, value: string) {
-    this.key = key;
+  constructor(label: string, value: string, ok: boolean) {
+    this.label = label;
     this.value = value;
+    this.ok = ok;
   }
 }
 
-class AuthHeaders {
-  cookie: string = '';
-  referer: string = '';
-  contentType: string = '';
+/** 落盘的资料快照：只存展示字段，不存 cookie */
+interface ProfileCache {
+  mid: number;
+  name: string;
+  face: string;
+  level: number;
+  expCurrent: number;
+  expNext: number;
+  bcoin: number;
+  coin: number;
+  sign: string;
+  ipLocation: string;
+  follower: number;
+  following: number;
+  likes: number;
+  publicOnly: boolean;
 }
 
+/**
+ * 账号服务：二维码登录（passport 扫码）+ 用户资料汇总 + 登出。
+ *
+ * 登录态完全由 cookie 承载（SESSDATA / bili_jct / DedeUserID），
+ * 轮询成功时 passport 通过 Set-Cookie 下发，交给 BiliCookie 合并并落盘。
+ */
 export class AuthService {
-  private static readonly passportBase: string = 'https://passport.bilibili.com';
-  private static readonly apiBase: string = 'https://api.bilibili.com';
-  private static readonly appKey: string = 'dfca71928277209b';
-  private static readonly appSecret: string = 'b5475a8825547a4fc26c7d518eaaa02e';
-  private static readonly secureKeyAlias: string = 'pilihos.auth.session';
-  private static session: AuthSession | null = null;
-  private static credentialPreferences: preferences.Preferences | null = null;
+  private static profile: UserProfile = new UserProfile();
+  private static readonly PROFILE_STORE: string = 'muli_profile';
+  private static ctx: common.UIAbilityContext | undefined = undefined;
 
-  static currentSession(): AuthSession | null {
-    return AuthService.session;
+  static current(): UserProfile {
+    return AuthService.profile;
   }
 
-  static async restoreSession(context: common.UIAbilityContext): Promise<AuthSession | null> {
+  /**
+   * 绑定 AbilityContext 并把上次的资料读回来。
+   * 资料必须落盘：nav 被风控挡回时如果内存里也没有，界面就只剩「已登录 + 一排 0」。
+   */
+  static bind(context: common.UIAbilityContext): void {
+    AuthService.ctx = context;
+    AuthService.restore();
+  }
+
+  /** 资料快照的 preferences 实例（同步打开，调用前必须已 bind） */
+  private static profileStore(): preferences.Preferences {
+    const ctx: common.UIAbilityContext = AuthService.ctx as common.UIAbilityContext;
+    const options: preferences.Options = { name: AuthService.PROFILE_STORE };
+    return preferences.getPreferencesSync(ctx, options);
+  }
+
+  private static restore(): void {
+    const ctx: common.UIAbilityContext | undefined = AuthService.ctx;
+    if (ctx === undefined || !BiliCookie.isLogin()) {
+      return;
+    }
     try {
-      await AuthService.ensureCredentialPreferences(context);
-      if (AuthService.credentialPreferences === null) return null;
-      let cookie: string = AuthService.credentialPreferences.getSync('cookie', '') as string;
-      if (cookie === '') {
-        const encryptedCookie: string =
-          AuthService.credentialPreferences.getSync('cookie_cipher', '') as string;
-        if (encryptedCookie !== '') {
-          cookie = await AuthService.decryptCookie(encryptedCookie);
-        }
+      const store: preferences.Preferences = AuthService.profileStore();
+      const raw: string = store.getSync('json', '') as string;
+      if (raw.length === 0) {
+        return;
       }
-      if (cookie === '') return null;
-      try {
-        return await AuthService.validateCookie(cookie, context);
-      } catch (error) {
-        const stored: AuthSession | null = AuthService.readStoredSession(cookie);
-        if (stored !== null) {
-          AuthService.session = stored;
-          console.error('Pilihos auth validation deferred after restart: ' + String(error));
-          return stored;
-        }
-        throw new Error(String(error));
+      const cache: ProfileCache = JSON.parse(raw) as ProfileCache;
+      const profile: UserProfile = new UserProfile();
+      profile.isLogin = true;
+      profile.mid = cache.mid;
+      profile.name = cache.name;
+      profile.face = cache.face;
+      profile.level = cache.level;
+      profile.expCurrent = cache.expCurrent;
+      profile.expNext = cache.expNext;
+      profile.bcoin = cache.bcoin;
+      profile.coin = cache.coin;
+      profile.sign = cache.sign;
+      profile.ipLocation = cache.ipLocation;
+      profile.follower = cache.follower;
+      profile.following = cache.following;
+      profile.likes = cache.likes;
+      profile.publicOnly = cache.publicOnly;
+      AuthService.profile = profile;
+      console.info(`${TAG} profile restored mid=${profile.mid} name=${profile.name}`);
+    } catch (err) {
+      console.warn(`${TAG} profile restore failed: ${String(err)}`);
+    }
+  }
+
+  /** 把当前资料写盘（无 context 或未登录时跳过） */
+  static persist(): void {
+    const ctx: common.UIAbilityContext | undefined = AuthService.ctx;
+    if (ctx === undefined) {
+      return;
+    }
+    try {
+      const profile: UserProfile = AuthService.profile;
+      if (!profile.isLogin) {
+        return;
       }
-    } catch (error) {
-      console.error('Pilihos stored auth restore failed: ' + String(error));
-      AuthService.session = null;
-      return null;
-    }
-  }
-
-  private static async ensureCredentialPreferences(context?: common.UIAbilityContext): Promise<void> {
-    if (AuthService.credentialPreferences !== null || context === undefined) return;
-    AuthService.credentialPreferences = await preferences.getPreferences(context, 'pilihos_auth');
-  }
-
-  private static async persistCookie(cookie: string, context?: common.UIAbilityContext): Promise<void> {
-    await AuthService.ensureCredentialPreferences(context);
-    if (AuthService.credentialPreferences === null || cookie === '') return;
-    try {
-      // Write the durable session value before optional keystore work.
-      AuthService.credentialPreferences.putSync('cookie', cookie);
-      AuthService.credentialPreferences.flushSync();
-      const encryptedCookie: string = await AuthService.encryptCookie(cookie);
-      AuthService.credentialPreferences.putSync('cookie_cipher', encryptedCookie);
-      AuthService.credentialPreferences.flushSync();
-    } catch (error) {
-      console.error('Pilihos secure auth persistence failed: ' + String(error));
-    }
-  }
-
-  private static async ensureSecureKey(): Promise<void> {
-    const exists: boolean = await huks.isKeyItemExist(AuthService.secureKeyAlias, {});
-    if (exists) return;
-    await huks.generateKeyItem(AuthService.secureKeyAlias, {
-      properties: [
-        { tag: huks.HuksTag.HUKS_TAG_ALGORITHM, value: huks.HuksKeyAlg.HUKS_ALG_AES },
-        { tag: huks.HuksTag.HUKS_TAG_PURPOSE,
-          value: huks.HuksKeyPurpose.HUKS_KEY_PURPOSE_ENCRYPT | huks.HuksKeyPurpose.HUKS_KEY_PURPOSE_DECRYPT },
-        { tag: huks.HuksTag.HUKS_TAG_KEY_SIZE, value: huks.HuksKeySize.HUKS_AES_KEY_SIZE_256 },
-        { tag: huks.HuksTag.HUKS_TAG_BLOCK_MODE, value: huks.HuksCipherMode.HUKS_MODE_GCM },
-        { tag: huks.HuksTag.HUKS_TAG_DIGEST, value: huks.HuksKeyDigest.HUKS_DIGEST_NONE }
-      ]
-    });
-  }
-
-  private static async encryptCookie(cookie: string): Promise<string> {
-    await AuthService.ensureSecureKey();
-    const nonce: Uint8Array = cryptoFramework.createRandom().generateRandomSync(12).data;
-    const encoder = new util.TextEncoder();
-    const input: Uint8Array = encoder.encodeInto(cookie);
-
-    let ciphertext: Uint8Array;
-
-    // 使用会话式 API（API 26+）
-    const session = await huks.initSession(AuthService.secureKeyAlias, {
-      properties: [
-        { tag: huks.HuksTag.HUKS_TAG_PURPOSE, value: huks.HuksKeyPurpose.HUKS_KEY_PURPOSE_ENCRYPT },
-        { tag: huks.HuksTag.HUKS_TAG_NONCE, value: nonce }
-      ]
-    });
-    const updated = await huks.updateSession(session.handle, { inData: input });
-    const finished = await huks.finishSession(session.handle, { inData: new Uint8Array(0) });
-    ciphertext = AuthService.concatBytes(updated.outData ?? new Uint8Array(0),
-      finished.outData ?? new Uint8Array(0));
-
-    return new util.Base64Helper().encodeToStringSync(AuthService.concatBytes(nonce, ciphertext));
-  }
-
-  private static async decryptCookie(encrypted: string): Promise<string> {
-    await AuthService.ensureSecureKey();
-    const bytes: Uint8Array = new util.Base64Helper().decodeSync(encrypted);
-    if (bytes.length <= 12) return '';
-    const nonce: Uint8Array = bytes.slice(0, 12);
-    const ciphertext: Uint8Array = bytes.slice(12);
-
-    let plaintext: Uint8Array;
-
-    // 使用会话式 API（API 26+）
-    const session = await huks.initSession(AuthService.secureKeyAlias, {
-      properties: [
-        { tag: huks.HuksTag.HUKS_TAG_PURPOSE, value: huks.HuksKeyPurpose.HUKS_KEY_PURPOSE_DECRYPT },
-        { tag: huks.HuksTag.HUKS_TAG_NONCE, value: nonce }
-      ]
-    });
-    const updated = await huks.updateSession(session.handle, { inData: ciphertext });
-    const finished = await huks.finishSession(session.handle, { inData: new Uint8Array(0) });
-    plaintext = AuthService.concatBytes(updated.outData ?? new Uint8Array(0),
-      finished.outData ?? new Uint8Array(0));
-
-    return new util.TextDecoder().decodeToString(plaintext);
-  }
-
-  private static concatBytes(left: Uint8Array, right: Uint8Array): Uint8Array {
-    const result = new Uint8Array(left.length + right.length);
-    result.set(left, 0);
-    result.set(right, left.length);
-    return result;
-  }
-
-  static async validateCookie(cookieText: string, context?: common.UIAbilityContext): Promise<AuthSession> {
-    const cookie: string = AuthService.normalizeCookie(cookieText);
-    if (cookie === '') throw new Error('Cookie 为空');
-    const headers: AuthHeaders = new AuthHeaders();
-    headers.cookie = cookie;
-    headers.referer = 'https://www.bilibili.com/';
-    const body: Record<string, Object> = await AuthService.requestJson(
-      `${AuthService.apiBase}/x/web-interface/nav`,
-      http.RequestMethod.GET,
-      headers
-    );
-    const code: number = Number(body['code'] ?? -1);
-    const data: Record<string, Object> = (body['data'] ?? {}) as Record<string, Object>;
-    if (code !== 0 || data['isLogin'] !== true) {
-      throw new Error(String(body['message'] ?? 'Cookie 无效或已过期'));
-    }
-    const session: AuthSession = new AuthSession();
-    session.uid = String(data['mid'] ?? '');
-    session.name = String(data['uname'] ?? '');
-    session.face = String(data['face'] ?? '');
-    session.cookie = cookie;
-    session.csrf = AuthService.findCookie(cookie, 'bili_jct');
-    session.isLogin = true;
-    // nav 返回的 level_info 是等级弹窗使用的经验区间数据。
-    const navLevelInfo: Record<string, Object> = (data['level_info'] ?? {}) as Record<string, Object>;
-    session.level = Number(data['level'] ?? navLevelInfo['current_level'] ?? 0);
-    session.expCurrent = Number(navLevelInfo['current_exp'] ?? 0);
-    session.expMin = Number(navLevelInfo['current_min'] ?? 0);
-    session.expNext = Number(navLevelInfo['next_exp'] ?? 0);
-    // 钱包：B币/硬币余额随 nav 一次带回（coin/log 接口不含余额）
-    const wallet: Record<string, Object> = (data['wallet'] ?? {}) as Record<string, Object>;
-    session.bcoin = Number(wallet['bcoin_balance'] ?? 0);
-    session.coin = Number(wallet['coin_balance'] ?? 0);
-    await AuthService.loadUserStats(session, headers);
-    await AuthService.loadUserProfile(session, headers);
-    AuthService.session = session;
-    await AuthService.persistCookie(cookie, context);
-    await AuthService.persistSession(session);
-    return session;
-  }
-
-  private static async persistSession(session: AuthSession): Promise<void> {
-    if (AuthService.credentialPreferences === null) return;
-    try {
-      AuthService.credentialPreferences.putSync('session_uid', session.uid);
-      AuthService.credentialPreferences.putSync('session_name', session.name);
-      AuthService.credentialPreferences.putSync('session_face', session.face);
-      AuthService.credentialPreferences.putSync('session_csrf', session.csrf);
-      AuthService.credentialPreferences.putSync('session_sign', session.sign);
-      AuthService.credentialPreferences.putSync('session_level', String(session.level));
-      AuthService.credentialPreferences.putSync('session_ip_location', session.ipLocation);
-      AuthService.credentialPreferences.putSync('session_bcoin', String(session.bcoin));
-      AuthService.credentialPreferences.putSync('session_coin', String(session.coin));
-      AuthService.credentialPreferences.putSync('session_exp_current', String(session.expCurrent));
-      AuthService.credentialPreferences.putSync('session_exp_min', String(session.expMin));
-      AuthService.credentialPreferences.putSync('session_exp_next', String(session.expNext));
-      AuthService.credentialPreferences.putSync('session_is_login', 'true');
-      AuthService.credentialPreferences.flushSync();
-    } catch (error) {
-      console.error('Pilihos local auth session persistence failed: ' + String(error));
-    }
-  }
-
-  private static readStoredSession(cookie: string): AuthSession | null {
-    if (AuthService.credentialPreferences === null) return null;
-    const isLogin: string = AuthService.credentialPreferences.getSync('session_is_login', '') as string;
-    const uid: string = AuthService.credentialPreferences.getSync('session_uid', '') as string;
-    if (isLogin !== 'true' || uid === '') return null;
-    const session: AuthSession = new AuthSession();
-    session.uid = uid;
-    session.name = AuthService.credentialPreferences.getSync('session_name', '') as string;
-    session.face = AuthService.credentialPreferences.getSync('session_face', '') as string;
-    session.csrf = AuthService.credentialPreferences.getSync('session_csrf', '') as string;
-    session.sign = AuthService.credentialPreferences.getSync('session_sign', '') as string;
-      session.level = Number(AuthService.credentialPreferences.getSync('session_level', '0'));
-      session.ipLocation = AuthService.credentialPreferences.getSync('session_ip_location', '') as string;
-      session.bcoin = Number(AuthService.credentialPreferences.getSync('session_bcoin', '0'));
-      session.coin = Number(AuthService.credentialPreferences.getSync('session_coin', '0'));
-      session.expCurrent = Number(AuthService.credentialPreferences.getSync('session_exp_current', '0'));
-      session.expMin = Number(AuthService.credentialPreferences.getSync('session_exp_min', '0'));
-      session.expNext = Number(AuthService.credentialPreferences.getSync('session_exp_next', '0'));
-      session.cookie = cookie;
-    session.isLogin = true;
-    return session;
-  }
-
-  private static async loadUserProfile(session: AuthSession, headers: AuthHeaders): Promise<void> {
-    try {
-      const body: Record<string, Object> = await AuthService.requestJson(
-        AuthService.apiBase + '/x/space/myinfo',
-        http.RequestMethod.GET,
-        headers
-      );
-      if (Number(body['code'] ?? -1) !== 0) return;
-      const data: Record<string, Object> = (body['data'] ?? {}) as Record<string, Object>;
-      session.sign = String(data['sign'] ?? '');
-      session.ipLocation = String(data['ip_location'] ?? '');
-      // 某些版本的 myinfo 不返回 level_info，保留 nav 已读取到的值。
-      const levelInfo: Record<string, Object> = (data['level_info'] ?? {}) as Record<string, Object>;
-      session.level = Number(data['level'] ?? levelInfo['current_level'] ?? session.level);
-      session.expCurrent = Number(levelInfo['current_exp'] ?? session.expCurrent);
-      session.expMin = Number(levelInfo['current_min'] ?? session.expMin);
-      session.expNext = Number(levelInfo['next_exp'] ?? session.expNext);
-      session.coin = Number(data['coins'] ?? session.coin);
-    } catch (error) {
-      console.error('Pilihos user profile request failed: ' + String(error));
-    }
-  }
-
-  private static async loadUserStats(session: AuthSession, headers: AuthHeaders): Promise<void> {
-    try {
-      const body: Record<string, Object> = await AuthService.requestJson(
-        `${AuthService.apiBase}/x/web-interface/nav/stat`,
-        http.RequestMethod.GET,
-        headers
-      );
-      if (Number(body['code'] ?? -1) !== 0) return;
-      const data: Record<string, Object> = (body['data'] ?? {}) as Record<string, Object>;
-      session.dynamicCount = Number(data['dynamic_count'] ?? 0);
-      session.followingCount = Number(data['following'] ?? 0);
-      session.followerCount = Number(data['follower'] ?? 0);
-    } catch (error) {
-      console.error(`Pilihos user stats request failed: ${String(error)}`);
-    }
-  }
-  static async logout(): Promise<void> {
-    const session: AuthSession | null = AuthService.session;
-    if (session !== null && session.cookie !== '') {
-      try {
-        const headers: AuthHeaders = new AuthHeaders();
-        headers.cookie = session.cookie;
-        headers.contentType = 'application/x-www-form-urlencoded';
-        await AuthService.requestJson(
-          `${AuthService.passportBase}/login/exit/v2`,
-          http.RequestMethod.POST,
-          headers,
-          `biliCSRF=${encodeURIComponent(session.csrf)}`
-        );
-      } catch (error) {
-        console.error(`Pilihos logout request failed: ${String(error)}`);
-      }
-    }
-    AuthService.session = null;
-    if (AuthService.credentialPreferences !== null) {
-      try {
-        AuthService.credentialPreferences.deleteSync('cookie_cipher');
-        AuthService.credentialPreferences.deleteSync('cookie');
-        AuthService.credentialPreferences.deleteSync('session_uid');
-        AuthService.credentialPreferences.deleteSync('session_name');
-        AuthService.credentialPreferences.deleteSync('session_face');
-        AuthService.credentialPreferences.deleteSync('session_csrf');
-        AuthService.credentialPreferences.deleteSync('session_sign');
-        AuthService.credentialPreferences.deleteSync('session_level');
-        AuthService.credentialPreferences.deleteSync('session_ip_location');
-        AuthService.credentialPreferences.deleteSync('session_bcoin');
-        AuthService.credentialPreferences.deleteSync('session_coin');
-        AuthService.credentialPreferences.deleteSync('session_exp_current');
-        AuthService.credentialPreferences.deleteSync('session_exp_min');
-        AuthService.credentialPreferences.deleteSync('session_exp_next');
-        AuthService.credentialPreferences.deleteSync('session_is_login');
-        AuthService.credentialPreferences.flushSync();
-      } catch (error) {
-        console.error('Pilihos auth persistence clear failed: ' + String(error));
-      }
-    }
-  }
-
-  static normalizeCookie(value: string): string {
-    const parts: string[] = value.split(';');
-    const valid: string[] = [];
-    parts.forEach((part: string): void => {
-      const item: string = part.trim();
-      const separator: number = item.indexOf('=');
-      if (separator > 0) {
-        const name: string = item.substring(0, separator).trim();
-        const cookieValue: string = item.substring(separator + 1).trim();
-        if (name !== '' && cookieValue !== '') valid.push(`${name}=${cookieValue}`);
-      }
-    });
-    return valid.join('; ');
-  }
-
-  private static async md5Hex(value: string): Promise<string> {
-    const md = cryptoFramework.createMd('MD5');
-    const encoder = new util.TextEncoder();
-    await md.update({ data: encoder.encodeInto(value) });
-    const output = await md.digest();
-    let result: string = '';
-    output.data.forEach((item: number): void => {
-      result += item.toString(16).padStart(2, '0');
-    });
-    return result;
-  }
-
-  private static async signedQuery(params: AuthParam[]): Promise<string> {
-    params.push(new AuthParam('appkey', AuthService.appKey));
-    params.push(new AuthParam('ts', `${Math.floor(Date.now() / 1000)}`));
-    params.sort((left: AuthParam, right: AuthParam): number => left.key.localeCompare(right.key));
-    const encoded: string[] = params.map((item: AuthParam): string =>
-      `${encodeURIComponent(item.key)}=${encodeURIComponent(item.value)}`);
-    const query: string = encoded.join('&');
-    const sign: string = await AuthService.md5Hex(query + AuthService.appSecret);
-    return `${query}&sign=${sign}`;
-  }
-  private static findCookie(cookie: string, name: string): string {
-    const prefix: string = `${name}=`;
-    const item: string | undefined = cookie.split('; ').find((part: string): boolean => part.startsWith(prefix));
-    return item === undefined ? '' : item.substring(prefix.length);
-  }
-
-  private static cookieListToString(cookies: Object[]): string {
-    const values: string[] = [];
-    cookies.forEach((raw: Object): void => {
-      const item: Record<string, Object> = raw as Record<string, Object>;
-      const name: string = String(item['name'] ?? '');
-      const value: string = String(item['value'] ?? '');
-      if (name !== '' && value !== '') values.push(`${name}=${value}`);
-    });
-    return values.join('; ');
-  }
-
-  private static async requestJson(
-    url: string,
-    method: http.RequestMethod,
-    header: AuthHeaders,
-    extraData?: string
-  ): Promise<Record<string, Object>> {
-    const request: http.HttpRequest = http.createHttp();
-    try {
-      const requestHeaders: Record<string, string> = {};
-      requestHeaders['User-Agent'] = 'Pilihos/1.0.0';
-      if (header.cookie !== '') requestHeaders['Cookie'] = header.cookie;
-      if (header.referer !== '') requestHeaders['Referer'] = header.referer;
-      if (header.contentType !== '') requestHeaders['Content-Type'] = header.contentType;
-      const options: http.HttpRequestOptions = {
-        method: method,
-        header: requestHeaders,
-        connectTimeout: 10000,
-        readTimeout: 15000
+      const cache: ProfileCache = {
+        mid: profile.mid,
+        name: profile.name,
+        face: profile.face,
+        level: profile.level,
+        expCurrent: profile.expCurrent,
+        expNext: profile.expNext,
+        bcoin: profile.bcoin,
+        coin: profile.coin,
+        sign: profile.sign,
+        ipLocation: profile.ipLocation,
+        follower: profile.follower,
+        following: profile.following,
+        likes: profile.likes,
+        publicOnly: profile.publicOnly
       };
-      if (extraData !== undefined) options.extraData = extraData;
-      const response: http.HttpResponse = await request.request(url, options);
-      return JSON.parse(response.result as string) as Record<string, Object>;
-    } finally {
-      request.destroy();
+      const store: preferences.Preferences = AuthService.profileStore();
+      store.putSync('json', JSON.stringify(cache));
+      store.flush();
+    } catch (err) {
+      console.warn(`${TAG} profile persist failed: ${String(err)}`);
+    }
+  }
+
+  /**
+   * 接管外部（浏览器侧）拿到的资料。
+   * 原生接口被风控挡回 but 浏览器里登录态有效时，用它先把界面填上。
+   */
+  static adoptProfile(profile: UserProfile): void {
+    AuthService.profile = profile;
+    AuthService.persist();
+  }
+
+  /** 生成登录二维码：返回扫码 URL 与轮询 key */
+  static async generateQr(): Promise<QrSession> {
+    const query: Record<string, string> = {};
+    const body: Record<string, Object> = await BiliHttp.getJson(
+      BiliHttp.PASSPORT_HOST, '/x/passport-login/web/qrcode/generate', query,
+      'https://www.bilibili.com/');
+    if (J.num(body, 'code') !== 0) {
+      throw new Error(J.str(body, 'message').length > 0 ? J.str(body, 'message') : '二维码生成失败');
+    }
+    const data: Record<string, Object> = J.obj(body, 'data');
+    const session: QrSession = new QrSession();
+    session.url = J.str(data, 'url');
+    session.key = J.str(data, 'qrcode_key');
+    if (session.key.length === 0 || session.url.length === 0) {
+      throw new Error('二维码数据不完整');
+    }
+    console.info(`${TAG} qr generated key len=${session.key.length} url len=${session.url.length}`);
+    return session;
+  }
+
+  /**
+   * 轮询扫码状态。
+   * 86101 = 未扫码，86090 = 已扫码待确认，86038 = 已过期，0 = 成功（此时 cookie 已写入 BiliCookie）。
+   */
+  static async pollQr(key: string): Promise<QrPollResult> {
+    const query: Record<string, string> = {};
+    query['qrcode_key'] = key;
+    const body: Record<string, Object> = await BiliHttp.getJson(
+      BiliHttp.PASSPORT_HOST, '/x/passport-login/web/qrcode/poll', query,
+      'https://www.bilibili.com/');
+    const data: Record<string, Object> = J.obj(body, 'data');
+    const result: QrPollResult = new QrPollResult();
+    result.code = J.num(data, 'code');
+    result.message = J.str(data, 'message');
+    console.info(`${TAG} qr poll code=${result.code} msg=${result.message} cookieLen=${BiliCookie.value('SESSDATA').length}`);
+    if (result.code === QR_SUCCESS) {
+      // 优先用返回 url 里的 cookie 补全登录态：真机实测 Set-Cookie 未必透传到 response.cookies
+      const loginUrl: string = J.str(data, 'url');
+      const filled: boolean = BiliCookie.mergeFromLoginUrl(loginUrl);
+      result.filled = filled || BiliCookie.isLogin();
+      console.info(`${TAG} qr login urlFilled=${filled} sessdataLen=${BiliCookie.value('SESSDATA').length}`);
+    }
+    if (J.num(body, 'code') !== 0 && result.code === 0) {
+      result.code = -1;
+      result.message = J.str(body, 'message');
+    }
+    return result;
+  }
+
+  static isLogin(): boolean {
+    return BiliCookie.isLogin();
+  }
+
+  /**
+   * 拉资料并带重试。
+   * 扫码/短信登录成功后立即请求 nav 偶发被风控挡回 isLogin=false，
+   * 这里重试几次，避免明明登录成功却停在「无法获取登录信息」。
+   */
+  static async loadProfileWithRetry(times: number): Promise<UserProfile> {
+    let profile: UserProfile = await AuthService.loadProfile();
+    for (let i = 1; i < times && !profile.isLogin && BiliCookie.isLogin(); i++) {
+      await AuthService.delay(i === 1 ? 300 : 600);
+      profile = await AuthService.loadProfile();
+    }
+    return profile;
+  }
+
+  private static delay(ms: number): Promise<void> {
+    return new Promise<void>((resolve) => {
+      setTimeout(() => {
+        resolve();
+      }, ms);
+    });
+  }
+
+  /** 发送手机号验证码；返回结果而不是抛错，方便 UI 区分「风控要图形校验」与网络错误 */
+  static async sendSmsCode(tel: string): Promise<SmsSendResult> {
+    const result: SmsSendResult = new SmsSendResult();
+    const form: Record<string, string> = {};
+    form['tel'] = tel;
+    form['cid'] = '86';
+    form['source'] = 'main-fe-header';
+    form['platform'] = 'web';
+    form['csrf'] = BiliCookie.csrf();
+    const body: Record<string, Object> = await BiliHttp.postForm(
+      BiliHttp.PASSPORT_HOST, '/x/passport-login/web/sms/send', form,
+      'https://passport.bilibili.com/login');
+    result.code = J.num(body, 'code');
+    result.message = J.str(body, 'message');
+    result.ok = result.code === 0;
+    // -352 / -105 / 86203 与「验证码错误」都是 passport 要求先过 geetest 图校验的表现
+    result.captchaRequired = !result.ok && (
+      result.code === -352 || result.code === -105 || result.code === 86203 ||
+        result.message.indexOf('验证码') >= 0 || result.message.indexOf('风控') >= 0);
+    console.info(`${TAG} sms send code=${result.code} msg=${result.message} captcha=${result.captchaRequired}`);
+    return result;
+  }
+
+  /** 手机号 + 验证码登录：成功后 cookie 由 Set-Cookie 落进 BiliCookie */
+  static async loginBySms(tel: string, code: string): Promise<void> {
+    const form: Record<string, string> = {};
+    form['tel'] = tel;
+    form['code'] = code;
+    form['cid'] = '86';
+    form['source'] = 'main-fe-header';
+    form['csrf'] = BiliCookie.csrf();
+    const body: Record<string, Object> = await BiliHttp.postForm(
+      BiliHttp.PASSPORT_HOST, '/x/passport-login/web/login/sms', form,
+      'https://www.bilibili.com/');
+    const resultCode: number = J.num(body, 'code');
+    if (resultCode !== 0) {
+      const message: string = J.str(body, 'message');
+      throw new Error(message.length > 0 ? message : `登录失败（${resultCode}）`);
+    }
+  }
+
+  /** 拉取完整用户资料：nav → myinfo → 公开空间资料，逐级兜底 */
+  static async loadProfile(): Promise<UserProfile> {
+    const profile: UserProfile = new UserProfile();
+    const previous: UserProfile = AuthService.profile;
+    if (!BiliCookie.isLogin()) {
+      AuthService.profile = profile;
+      return profile;
+    }
+    try {
+      const navQuery: Record<string, string> = {};
+      const body: Record<string, Object> = await BiliHttp.getJson(
+        BiliHttp.API_HOST, '/x/web-interface/nav', navQuery);
+      const data: Record<string, Object> = J.obj(body, 'data');
+      if (J.num(body, 'code') !== 0 || !J.bool(data, 'isLogin')) {
+        // nav 是登录态的唯一权威接口，但它对陌生设备/新 cookie 会短暂判未登录；
+        // 这里用 myinfo、公开空间资料逐级兜底，至少让界面显示真实身份。
+        console.warn(`${TAG} nav not login code=${J.num(body, 'code')} msg=${J.str(body, 'message')} ` +
+          `isLogin=${J.bool(data, 'isLogin')} cookies=[${BiliCookie.authKeys()}]`);
+        AuthService.profile = await AuthService.resolveWithoutNav(previous);
+        AuthService.persist();
+        return AuthService.profile;
+      }
+      console.info(`${TAG} nav ok mid=${J.num(data, 'mid')} uname=${J.str(data, 'uname')} level=${J.num(data, 'level')}`);
+      profile.isLogin = true;
+      profile.mid = J.num(data, 'mid');
+      profile.name = J.str(data, 'uname');
+      profile.face = J.str(data, 'face');
+      profile.level = J.num(data, 'level');
+      profile.coin = J.num(data, 'money');
+      const wallet: Record<string, Object> = J.obj(data, 'wallet');
+      profile.bcoin = J.num(wallet, 'bcoin_balance');
+      if (profile.coin === 0) {
+        profile.coin = J.num(wallet, 'coin_balance');
+      }
+      const levelInfo: Record<string, Object> = J.obj(data, 'level_info');
+      if (profile.level === 0) {
+        profile.level = J.num(levelInfo, 'current_level');
+      }
+      profile.expCurrent = J.num(levelInfo, 'current_exp');
+      profile.expNext = J.num(levelInfo, 'next_exp');
+      await AuthService.fillRelation(profile);
+      await AuthService.fillDetail(profile);
+    } catch (err) {
+      console.error(`${TAG} load profile failed: ${String(err)}`);
+      profile.isLogin = BiliCookie.isLogin();
+    }
+    AuthService.profile = AuthService.inherit(profile, previous);
+    AuthService.persist();
+    return AuthService.profile;
+  }
+
+  /**
+   * 新结果为空时沿用上一次已知的资料。
+   * 避免「一次接口抖动」把已经显示正确的头像昵称清空，
+   * 也保证浏览器侧兜底拿到的资料不会被后续失败的请求覆盖。
+   */
+  private static inherit(fresh: UserProfile, previous: UserProfile): UserProfile {
+    if (fresh.name.length > 0 || previous.name.length === 0) {
+      return fresh;
+    }
+    fresh.name = previous.name;
+    fresh.face = previous.face;
+    fresh.mid = previous.mid;
+    fresh.level = previous.level;
+    fresh.coin = previous.coin;
+    fresh.bcoin = previous.bcoin;
+    fresh.sign = previous.sign;
+    fresh.ipLocation = previous.ipLocation;
+    fresh.follower = previous.follower;
+    fresh.following = previous.following;
+    fresh.likes = previous.likes;
+    fresh.expCurrent = previous.expCurrent;
+    fresh.expNext = previous.expNext;
+    fresh.isLogin = fresh.isLogin || previous.isLogin;
+    return fresh;
+  }
+
+  /**
+   * nav 失败时的兜底链：myinfo → 公开空间资料。
+   * myinfo 只要 SESSDATA 有效就会返回 mid / name / face；
+   * 连 myinfo 也不认时，用 cookie 里的 DedeUserID 读公开空间资料，
+   * 至少让「头像 / 昵称 / 等级 / 粉丝」显示正确，而不是一排 0。
+   */
+  private static async resolveWithoutNav(previous: UserProfile): Promise<UserProfile> {
+    const identity: UserProfile = await AuthService.loadIdentityFallback();
+    if (identity.mid > 0 && identity.name.length > 0) {
+      return AuthService.inherit(identity, previous);
+    }
+    const cookieMid: number = BiliCookie.mid();
+    const mid: number = cookieMid > 0 ? cookieMid : previous.mid;
+    if (mid > 0) {
+      const pub: UserProfile = await AuthService.publicCard(mid);
+      if (pub.name.length > 0) {
+        return AuthService.inherit(pub, previous);
+      }
+    }
+    return AuthService.inherit(identity, previous);
+  }
+
+  /**
+   * 公开空间资料（/x/web-interface/card）：不需要登录态，只需要 mid。
+   * 拿不到 B币 / 硬币这类私有字段，因此打上 publicOnly 标记。
+   */
+  private static async publicCard(mid: number): Promise<UserProfile> {
+    const profile: UserProfile = new UserProfile();
+    const query: Record<string, string> = {};
+    query['mid'] = `${mid}`;
+    try {
+      const body: Record<string, Object> = await BiliHttp.getJson(
+        BiliHttp.API_HOST, '/x/web-interface/card', query);
+      if (J.num(body, 'code') !== 0) {
+        console.warn(`${TAG} public card code=${J.num(body, 'code')} mid=${mid}`);
+        return profile;
+      }
+      const card: Record<string, Object> = J.obj(J.obj(body, 'data'), 'card');
+      const cardMid: number = J.num(card, 'mid');
+      profile.isLogin = true;
+      profile.publicOnly = true;
+      profile.mid = cardMid > 0 ? cardMid : mid;
+      profile.name = J.str(card, 'name');
+      profile.face = J.str(card, 'face');
+      profile.sign = J.str(card, 'sign');
+      profile.level = J.num(J.obj(card, 'level_info'), 'current_level');
+      profile.follower = J.num(card, 'fans');
+      profile.following = J.num(card, 'attention');
+      console.info(`${TAG} public card ok mid=${profile.mid} name=${profile.name} level=${profile.level}`);
+    } catch (err) {
+      console.error(`${TAG} public card failed: ${String(err)}`);
+    }
+    return profile;
+  }
+
+  /**
+   * 登录诊断：把「cookie 有没有、nav 认不认、公开资料能不能读」逐项列出来。
+   * 登录态问题只能靠这几项定位，界面上的「已登录但没数据」本身不含信息量。
+   */
+  static async diagnose(): Promise<Array<AuthDiagLine>> {
+    const lines: Array<AuthDiagLine> = [];
+    const sessLen: number = BiliCookie.value('SESSDATA').length;
+    const mid: number = BiliCookie.mid();
+    lines.push(new AuthDiagLine('登录凭证', sessLen > 0 ? `SESSDATA 已保存（${sessLen} 字符）` : '没有 SESSDATA，需要登录',
+      sessLen > 0));
+    lines.push(new AuthDiagLine('设备指纹', `buvid3 ${BiliCookie.buvid3.length} 字符 · b_nut ${BiliCookie.bNut}`,
+      BiliCookie.buvid3.length > 0));
+    lines.push(new AuthDiagLine('账号 mid', mid > 0 ? `${mid}` : 'cookie 里没有 DedeUserID', mid > 0));
+    try {
+      const body: Record<string, Object> = await BiliHttp.getJson(BiliHttp.API_HOST, '/x/web-interface/nav', {});
+      const code: number = J.num(body, 'code');
+      const isLogin: boolean = J.bool(J.obj(body, 'data'), 'isLogin');
+      lines.push(new AuthDiagLine('nav 接口',
+        `code ${code} · ${J.str(body, 'message')} · isLogin=${isLogin}`, code === 0 && isLogin));
+    } catch (err) {
+      lines.push(new AuthDiagLine('nav 接口', `请求失败：${String(err)}`, false));
+    }
+    try {
+      const body: Record<string, Object> = await BiliHttp.getJson(BiliHttp.API_HOST, '/x/space/myinfo', {});
+      const code: number = J.num(body, 'code');
+      lines.push(new AuthDiagLine('myinfo 接口', `code ${code} · ${J.str(body, 'message')}`, code === 0));
+    } catch (err) {
+      lines.push(new AuthDiagLine('myinfo 接口', `请求失败：${String(err)}`, false));
+    }
+    if (mid > 0) {
+      const pub: UserProfile = await AuthService.publicCard(mid);
+      lines.push(new AuthDiagLine('公开资料', pub.name.length > 0
+        ? `${pub.name} · LV${pub.level} · ${pub.follower} 粉丝`
+        : '读取失败', pub.name.length > 0));
+    }
+    return lines;
+  }
+
+  /**
+   * myinfo 兜底：nav 被风控挡回时用 myinfo 再确认一次身份。
+   * myinfo 只要 SESSDATA 有效就会返回 mid / name / face，比 nav 宽容得多。
+   */
+  private static async loadIdentityFallback(): Promise<UserProfile> {
+    const profile: UserProfile = new UserProfile();
+    if (!BiliCookie.isLogin()) {
+      return profile;
+    }
+    try {
+      const body: Record<string, Object> = await BiliHttp.getJson(BiliHttp.API_HOST, '/x/space/myinfo', {});
+      if (J.num(body, 'code') === 0) {
+        const data: Record<string, Object> = J.obj(body, 'data');
+        profile.isLogin = true;
+        profile.mid = J.num(data, 'mid');
+        profile.name = J.str(data, 'name');
+        profile.face = J.str(data, 'face');
+        profile.sign = J.str(data, 'sign');
+        profile.level = J.num(data, 'level');
+        profile.ipLocation = J.str(data, 'ip_location');
+        console.info(`${TAG} identity fallback ok mid=${profile.mid}`);
+        await AuthService.fillRelation(profile);
+        return profile;
+      }
+    } catch (err) {
+      console.error(`${TAG} identity fallback failed: ${String(err)}`);
+    }
+    profile.isLogin = BiliCookie.isLogin();
+    return profile;
+  }
+
+  /** 粉丝 / 关注：relation/stat 无需登录即可读 */
+  private static async fillRelation(profile: UserProfile): Promise<void> {
+    try {
+      const query: Record<string, string> = {};
+      query['vmid'] = `${profile.mid}`;
+      const body: Record<string, Object> = await BiliHttp.getJson(
+        BiliHttp.API_HOST, '/x/relation/stat', query);
+      if (J.num(body, 'code') !== 0) {
+        return;
+      }
+      const data: Record<string, Object> = J.obj(body, 'data');
+      profile.follower = J.num(data, 'follower');
+      profile.following = J.num(data, 'following');
+    } catch (err) {
+      console.error(`${TAG} relation stat failed: ${String(err)}`);
+    }
+  }
+
+  /** 个性签名 / IP 属地 / 获赞 */
+  private static async fillDetail(profile: UserProfile): Promise<void> {
+    try {
+      const body: Record<string, Object> = await BiliHttp.getJson(
+        BiliHttp.API_HOST, '/x/space/myinfo', {});
+      if (J.num(body, 'code') === 0) {
+        const data: Record<string, Object> = J.obj(body, 'data');
+        profile.sign = J.str(data, 'sign');
+        profile.ipLocation = J.str(data, 'ip_location');
+        const likes: Record<string, Object> = J.obj(data, 'likes');
+        if (profile.likes === 0 && J.num(likes, 'total') > 0) {
+          profile.likes = J.num(likes, 'total');
+        }
+      }
+    } catch (err) {
+      console.error(`${TAG} myinfo failed: ${String(err)}`);
+    }
+    try {
+      const query: Record<string, string> = {};
+      query['mid'] = `${profile.mid}`;
+      const body: Record<string, Object> = await BiliHttp.getJson(
+        BiliHttp.API_HOST, '/x/space/upstat', query);
+      if (J.num(body, 'code') === 0) {
+        const data: Record<string, Object> = J.obj(body, 'data');
+        profile.likes = J.num(J.obj(data, 'likes'), 'total');
+      }
+    } catch (err) {
+      console.error(`${TAG} upstat failed: ${String(err)}`);
+    }
+  }
+
+  static async logout(context: common.UIAbilityContext): Promise<void> {
+    try {
+      const csrf: string = BiliCookie.csrf();
+      if (csrf.length > 0) {
+        const form: Record<string, string> = {};
+        form['biliCSRF'] = csrf;
+        await BiliHttp.postForm(BiliHttp.PASSPORT_HOST, '/login/exit/v2', form,
+          'https://www.bilibili.com/');
+      }
+    } catch (err) {
+      console.error(`${TAG} logout request failed: ${String(err)}`);
+    }
+    await BiliCookie.clearAuth(context);
+    AuthService.profile = new UserProfile();
+    AuthService.clearCache();
+  }
+
+  /** 退出登录后清掉资料快照，避免下次启动把旧账号显示回来 */
+  private static clearCache(): void {
+    const ctx: common.UIAbilityContext | undefined = AuthService.ctx;
+    if (ctx === undefined) {
+      return;
+    }
+    try {
+      const store: preferences.Preferences = AuthService.profileStore();
+      store.deleteSync('json');
+      store.flush();
+    } catch (err) {
+      console.warn(`${TAG} clear profile cache failed: ${String(err)}`);
     }
   }
 }
+
+export { QR_EXPIRED, QR_SCANNED, QR_SUCCESS, QR_WAITING };
