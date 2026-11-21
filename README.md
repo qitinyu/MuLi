@@ -1,14 +1,14 @@
 
 
-# Pilihos - Bilibili HarmonyOS 手机端
+# Muli（沐哩） - Bilibili HarmonyOS 手机端
 
 ## 项目概述
 
 <div align="center">
-  <img src="entry/src/main/resources/base/media/app_logo.png" alt="Pilihos Logo" width="200">
+  <img src="entry/src/main/resources/base/media/app_logo.png" alt="MuLi Logo" width="200">
 </div>
 
-**Pilihos** 是一个基于 HarmonyOS（鸿蒙）系统的 Bilibili（哔哩哔哩）第三方视频客户端，使用 ArkTS 语言开发，支持 API 24+ 设备。欢迎各位大佬给出建议和批评！
+**MuLi** 是一个基于 HarmonyOS（鸿蒙）系统的 Bilibili（哔哩哔哩）第三方视频客户端，使用 ArkTS 语言开发，支持 API 24+ 设备。欢迎各位大佬给出建议和批评！
 
 ## 主要功能
 - **首页推荐**：个性化推荐视频流，支持下拉刷新和上拉加载更多
@@ -29,7 +29,7 @@
 
 ## 项目结构
 ```
-Pilihos/
+MuLi/
 ├── entry/src/main/ets/
 │   ├── pages/              # 页面组件
 │   │   ├── Index.ets           # 首页（推荐、直播、热门）
@@ -75,7 +75,7 @@ Pilihos/
 >[!warring]
 > 由于暂时没有进行邀测打算，所以只能继续侧载，任选其一，侧载教程：
 
-1. [Release](https://github.com/qitinyu/Pilihos/releases)下载最新HAP包
+1. [Release](https://github.com/qitinyu/MuLi/releases)下载最新HAP包
 2. [小白调试助手](https://yqamm.top/posts/harmony/20260118cz/)
 3. [Hokit](https://yqamm.top/posts/harmony/260713hokit/)
 4. 按照上述侧载教程进行侧载试用
@@ -87,4 +87,4 @@ Pilihos/
 
 ## 相关文档
 - [API 24 兼容性指南](API24_COMPATIBILITY_GUIDE.md)
-- [Pilihos日志及Wiki](https://github.com/qitinyu/Pilihos/wiki)
+- [MuLi日志及Wiki](https://github.com/qitinyu/MuLi/wiki)
