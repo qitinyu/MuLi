@@ -1,6 +1,7 @@
 import { emptyVideoCard, VideoCard } from '../model/BiliModels';
 import { PAGE_PADDING } from '../common/DesignSpec';
 import { durationText, pubDateText } from '../common/Format';
+import { AppPrefs } from '../services/AppPrefs';
 
 /**
  * 视频卡片（推荐流 / 排行榜共用）。
@@ -8,8 +9,11 @@ import { durationText, pubDateText } from '../common/Format';
  * 统一的「三行信息」结构（V2.0.3）：
  *   a. 标题（单行，超出省略）
  *   b. 竖屏标记（仅竖屏视频）+ 播放量 + 弹幕数
- *   c. UP 主名（已关注加标记）+ 发布日期 yy/MM/dd + 更多三点（占位）
+ *   c. 已关注标记 + UP 主名 + 发布日期 yy/MM/dd + 更多三点（占位）
  * 封面保留角标（排行榜名次 / 推荐理由）与右下角时长。
+ *
+ * V2.0.5：UP 名可能很长，「已关注」标记挪到名字前面，免得被长名挤到右边界之外；
+ * 长名处理方式跟随「外观 · 通用设置 → UP 主过长名称」（省略号 / 循环滚动）。
  *
  * compact = true 用于 2×N / 自适应多列布局：去掉左右内边距、整体字号降一级，
  * 由外层 Row 统一给列间距，避免双列时留白过大。
@@ -19,6 +23,8 @@ export struct VideoCardView {
   @Prop card: VideoCard = emptyVideoCard();
   /** 多列紧凑模式 */
   @Prop compact: boolean = false;
+  /** 0 = 过长隐藏，1 = 循环滚动（设置页写入，这里订阅即时生效） */
+  @StorageLink(AppPrefs.KEY_AUTHOR_NAME_MODE) authorNameMode: number = 0;
   /** 点击卡片：进入播放页 */
   onCardTap: (card: VideoCard) => void = () => {
   };
@@ -32,6 +38,10 @@ export struct VideoCardView {
 
   private subSize(): number {
     return this.compact ? 10 : 11;
+  }
+
+  private authorText(): string {
+    return this.card.author.length > 0 ? this.card.author : '未知 UP';
   }
 
   build() {
@@ -139,16 +149,10 @@ export struct VideoCardView {
         this.onCardTap(this.card);
       })
 
-      // c. UP 主（已关注标记）+ 发布日期 + 更多
+      // c. 已关注标记 + UP 主 + 发布日期 + 更多
       Row() {
         Row({ space: this.compact ? 3 : 4 }) {
-          Text(this.card.author.length > 0 ? this.card.author : '未知 UP')
-            .fontSize(this.subSize())
-            .fontColor($r('app.color.text_tertiary'))
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-            .layoutWeight(1)
-
+          // 标记放最前：UP 名再长也挤不掉它
           if (this.card.followed) {
             Text('已关注')
               .fontSize(9)
@@ -156,6 +160,30 @@ export struct VideoCardView {
               .padding({ left: 3, right: 3, top: 1, bottom: 1 })
               .border({ width: 0.5, color: $r('app.color.brand_line') })
               .borderRadius(3)
+              .flexShrink(0)
+          }
+
+          if (this.authorNameMode === 1) {
+            // 循环滚动：只要名字比可用宽度长就自己滚，「已关注」不会跟着动
+            Marquee({
+              start: true,
+              step: 4,
+              loop: -1,
+              fromStart: true,
+              src: this.authorText()
+            })
+              .fontSize(this.subSize())
+              .fontColor($r('app.color.text_tertiary'))
+              .height(this.compact ? 15 : 16)
+              .layoutWeight(1)
+              .margin({ right: 2 })
+          } else {
+            Text(this.authorText())
+              .fontSize(this.subSize())
+              .fontColor($r('app.color.text_tertiary'))
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .layoutWeight(1)
           }
 
           if (this.card.pubTs > 0) {
@@ -163,6 +191,7 @@ export struct VideoCardView {
               .fontSize(this.subSize())
               .fontColor($r('app.color.text_tertiary'))
               .maxLines(1)
+              .flexShrink(0)
           }
         }
         .layoutWeight(1)

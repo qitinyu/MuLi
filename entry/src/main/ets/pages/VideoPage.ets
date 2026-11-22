@@ -13,6 +13,7 @@ import { CommentFeed, CommentService, SubReplyFeed, VideoComment } from '../serv
 import { ListFooter, StateView } from '../components/StateView';
 import { LevelBadge } from '../components/LevelBadge';
 import { PlayerSettingsPanel } from '../components/PlayerSettingsPanel';
+import { AppPrefs } from '../services/AppPrefs';
 
 const PLAYER_BAR_HEIGHT: number = 44;
 const PLAYER_CTRL_HEIGHT: number = 46;
@@ -62,8 +63,10 @@ export struct VideoPage {
   @State durationMs: number = 0;
   @State fullscreen: boolean = false;
   @State canvasHeight: number = 211;
-  /** 竖屏摆放模式：视频铺满竖屏 + 信息浮层 */
+  /** 竖屏连播模式：视频铺满整屏 + 右侧竖排互动 + 底部浮层（参考 B 站竖屏沉浸） */
   @State portraitMode: boolean = false;
+  /** 竖屏模式下底部信息浮层是否展开（展开简介时浮层拉高） */
+  @State portraitDescExpanded: boolean = false;
   /** 控制条（返回 / 中央播放键 / 进度条）是否可见 */
   @State controlsVisible: boolean = true;
   /** 工具行当前选中的信息页：brief / comments / settings */
@@ -117,6 +120,10 @@ export struct VideoPage {
   /** 播完「停止推荐」时悬浮的推荐视频 */
   @State recommendCard: VideoCard = emptyVideoCard();
   @State showRecommendCard: boolean = false;
+  /** 播放区顶部是否沉浸到系统状态栏（设置页可关；关了就用增量色块补那一条） */
+  @StorageLink(AppPrefs.KEY_TOP_IMMERSIVE) @Watch('onTopStyleChanged') topImmersive: boolean = true;
+  /** 关闭沉浸时增量条颜色：0 = 黑色，1 = 白色 */
+  @StorageLink(AppPrefs.KEY_TOP_INSET_COLOR) @Watch('onTopStyleChanged') topInsetColor: number = 0;
 
   /** 拖动进度条期间暂停跟随播放进度 */
   private dragging: boolean = false;
@@ -141,6 +148,11 @@ export struct VideoPage {
   private basePageH: number = 0;
   /** 当前是否已开启屏幕常亮（避免重复下发） */
   private keepOn: boolean = false;
+  /** 切后台前是否在播 + 中断时的进度：回前台按「中断继续播放」决定要不要自动接上 */
+  private interrupted: boolean = false;
+  private interruptMs: number = 0;
+  private appBgHandler: (() => void) | undefined = undefined;
+  private appFgHandler: (() => void) | undefined = undefined;
   /** 播放失败是否已经自动重取过一次地址（避免无限重试） */
   private playRetried: boolean = false;
   private surfaceWatch: number = 0;
@@ -198,7 +210,72 @@ export struct VideoPage {
       this.onPlayCompleted();
     };
     this.bindKeyboard();
+    this.bindAppLifecycle();
     this.bootstrap();
+  }
+
+  /**
+   * 应用前后台：后台记下进度并暂停，回前台按「中断继续播放」自动接上。
+   * 用 eventHub（EntryAbility 的 onForeground / onBackground 发事件）而不是 window 事件，
+   * 各机型表现一致，也不会和全屏 / 键盘的窗口监听抢。
+   */
+  private bindAppLifecycle(): void {
+    try {
+      const hub = this.context().eventHub;
+      this.appBgHandler = () => {
+        this.onAppBackground();
+      };
+      this.appFgHandler = () => {
+        this.onAppForeground();
+      };
+      hub.on('muli_app_background', this.appBgHandler);
+      hub.on('muli_app_foreground', this.appFgHandler);
+    } catch (err) {
+      console.warn(`MuLiVideo app lifecycle bind failed: ${String(err)}`);
+    }
+  }
+
+  private unbindAppLifecycle(): void {
+    try {
+      const hub = this.context().eventHub;
+      if (this.appBgHandler !== undefined) {
+        hub.off('muli_app_background', this.appBgHandler);
+      }
+      if (this.appFgHandler !== undefined) {
+        hub.off('muli_app_foreground', this.appFgHandler);
+      }
+    } catch (err) {
+      // context 已销毁时忽略
+    }
+    this.appBgHandler = undefined;
+    this.appFgHandler = undefined;
+  }
+
+  private onAppBackground(): void {
+    // 只有「正在播」才算中断：本来就是暂停状态，回来也不该自己动起来
+    if (!this.player.isPlaying) {
+      return;
+    }
+    this.interrupted = true;
+    this.interruptMs = this.positionMs;
+    this.player.pause();
+  }
+
+  private async onAppForeground(): Promise<void> {
+    if (!this.interrupted) {
+      return;
+    }
+    this.interrupted = false;
+    if (!this.prefs.continuePlay) {
+      return;
+    }
+    const target: number = this.interruptMs > 0 ? this.interruptMs : this.positionMs;
+    if (target > 0) {
+      this.player.seek(target);
+    }
+    await this.player.play();
+    this.showControls();
+    this.showHud('已从中断处继续播放');
   }
 
   /**
@@ -215,8 +292,8 @@ export struct VideoPage {
         this.mainWin = win;
         this.applyAvoidMode(KeyboardAvoidMode.RESIZE);
         this.readBottomInset(win);
-        // 画布压到状态栏下面了，状态栏文字得用浅色
-        this.applyStatusBarContent(win, true);
+        // 画布压到状态栏下面了，状态栏文字得用浅色（关闭沉浸 / 白色增量条时反过来）
+        this.applyStatusBarContent(win, this.lightStatusBar());
         this.keyboardWatcher = (height: number) => {
           this.keyboardH = height > 0 ? this.getUIContext().px2vp(height) : 0;
           this.syncKbOffset();
@@ -340,6 +417,21 @@ export struct VideoPage {
     }
   }
 
+  /**
+   * 竖屏连播入口（工具行正中那颗向下箭头）。
+   * 进入后画面向下铺满整屏、信息区变成贴底的浮层，退出即回到 16:9 常规排版。
+   */
+  private togglePortraitMode(): void {
+    this.portraitMode = !this.portraitMode;
+    // 画布高度依赖模式，等布局落定再算一次，避免 16:9 的旧高度残留
+    setTimeout(() => {
+      this.syncCanvasSize();
+    }, 60);
+    if (this.portraitMode) {
+      this.showControls();
+    }
+  }
+
   aboutToDisappear(): void {
     if (this.controlTimer !== -1) {
       clearTimeout(this.controlTimer);
@@ -354,6 +446,7 @@ export struct VideoPage {
     }
     this.restoreBrightness();
     this.setKeepScreenOn(false);
+    this.unbindAppLifecycle();
     this.player.release();
     this.restorePortrait();
     // 退出本页把避让模式还原，避免影响其它页面（搜索页等）的默认弹起行为
@@ -1039,6 +1132,11 @@ export struct VideoPage {
   // ---------------- 播放模式：循环 / 随机连播 / 停止推荐 ----------------
 
   private onPlayCompleted(): void {
+    // 竖屏连播模式：播完无条件滑到下一个（这就是「连播」的本义）
+    if (this.portraitMode) {
+      this.playRandomNext();
+      return;
+    }
     const mode: number = this.prefs.playMode;
     if (mode === 0) {
       this.player.seek(0);
@@ -1144,9 +1242,30 @@ export struct VideoPage {
     .alignItems(VerticalAlign.Center)
   }
 
-  /** 状态栏占位：全屏时系统栏已隐藏，不需要再让 */
+  /** 状态栏占位：全屏时系统栏已隐藏；不沉浸时那一条由增量色块本身占住，控件不用再让 */
   private topSafe(): number {
-    return this.fullscreen ? 0 : this.topInset;
+    if (this.fullscreen) {
+      return 0;
+    }
+    return this.topImmersive ? this.topInset : 0;
+  }
+
+  /** 关闭沉浸时顶部增量条的颜色 */
+  private insetColor(): ResourceColor {
+    return this.topInsetColor === 1 ? Color.White : Color.Black;
+  }
+
+  /** 状态栏文字 / 图标的明暗：压在黑底上用浅色，白色增量条上用深色 */
+  private lightStatusBar(): boolean {
+    return this.topImmersive || this.topInsetColor === 0;
+  }
+
+  /** 设置页改了沉浸 / 增量颜色：立刻同步状态栏图标明暗（窗口属性只在下发时生效） */
+  private onTopStyleChanged(): void {
+    if (this.fullscreen || this.mainWin === undefined) {
+      return;
+    }
+    this.applyStatusBarContent(this.mainWin, this.lightStatusBar());
   }
 
   @Builder
@@ -1251,8 +1370,8 @@ export struct VideoPage {
         .backgroundColor($r('app.color.scrim'))
       }
 
-      // 控制层：4s 无操作自动隐藏
-      if (this.controlsVisible) {
+      // 控制层：4s 无操作自动隐藏。竖屏连播模式由 portrait 系列浮层接管，不再叠默认控制层
+      if (this.controlsVisible && !this.portraitMode) {
         Column() {
           this.topBar()
 
@@ -1284,18 +1403,23 @@ export struct VideoPage {
         .transition({ type: TransitionType.Delete, opacity: 0 })
       }
 
-      // 迷你进度条：控制条隐藏时仍保留一条细线
-      if (!this.controlsVisible && this.prefs.miniProgress && this.started) {
-        Progress({
-          value: this.positionMs,
-          total: this.durationMs > 0 ? this.durationMs : 1,
-          type: ProgressType.Linear
-        })
-          .width('100%')
-          .height(2)
-          .color($r('app.color.brand_primary'))
-          .backgroundColor($r('app.color.overlay'))
-          .align(Alignment.Bottom)
+      // 迷你进度条：无操作把界面收干净后，只在视频区域最低边留这一条（竖屏模式由底部浮层自带）
+      if (!this.controlsVisible && this.prefs.miniProgress && this.started && !this.portraitMode) {
+        Column() {
+          Blank()
+          Progress({
+            value: this.positionMs,
+            total: this.durationMs > 0 ? this.durationMs : 1,
+            type: ProgressType.Linear
+          })
+            .width('100%')
+            .height(2)
+            .color($r('app.color.brand_primary'))
+            .backgroundColor($r('app.color.overlay'))
+        }
+        .width('100%')
+        .height('100%')
+        .hitTestBehavior(HitTestMode.None)
       }
 
       // 手势 HUD
@@ -1403,21 +1527,270 @@ export struct VideoPage {
       })
   }
 
-  /** 工具行：简介 / 评论 / 设置靠左 · 中间竖屏摆放切换 · 右侧弹幕输入与开关占位 */
+  // ==================== 竖屏连播沉浸模式 ====================
+
+  /** 竖屏顶部栏：返回 + 正在看人数 · 右侧投屏 / 小窗 / 更多 */
+  @Builder
+  portraitTopBar() {
+    Row() {
+      Row() {
+        SymbolGlyph($r('sys.symbol.chevron_backward'))
+          .fontSize(18)
+          .fontColor([$r('app.color.text_on_media')])
+      }
+      .width(32)
+      .height(32)
+      .justifyContent(FlexAlign.Center)
+      .backgroundColor($r('app.color.scrim'))
+      .borderRadius(16)
+      .onClick(() => {
+        this.onBack();
+      })
+
+      Text('正在看')
+        .fontSize(13)
+        .fontColor($r('app.color.text_on_media'))
+        .margin({ left: 10 })
+
+      Blank()
+
+      Row({ space: 16 }) {
+        SymbolGlyph($r('sys.symbol.rectangle_stack'))
+          .fontSize(18)
+          .fontColor([$r('app.color.text_on_media')])
+        SymbolGlyph($r('sys.symbol.rectangle_on_rectangle'))
+          .fontSize(18)
+          .fontColor([$r('app.color.text_on_media')])
+        SymbolGlyph($r('sys.symbol.ellipsis_circle'))
+          .fontSize(18)
+          .fontColor([$r('app.color.text_on_media')])
+      }
+    }
+    .width('100%')
+    .height(PLAYER_BAR_HEIGHT)
+    .padding({ left: PAGE_PADDING, right: PAGE_PADDING })
+    .alignItems(VerticalAlign.Center)
+    .backgroundColor($r('app.color.scrim'))
+  }
+
+  /** 竖屏右侧竖排互动：点赞 / 评论 / 收藏 / 分享 + 弹幕开关（白图标 + 数字，参考图） */
+  @Builder
+  portraitSideActions() {
+    Column({ space: 22 }) {
+      this.portraitActionItem($r('sys.symbol.hand_thumbsup'),
+        this.detail.likeText.length > 0 ? this.bareCount(this.detail.likeText) : '赞')
+      this.portraitActionItem($r('sys.symbol.message'),
+        this.detail.replyText.length > 0 ? this.bareCount(this.detail.replyText) : '评')
+      this.portraitActionItem($r('sys.symbol.star'),
+        this.detail.favText.length > 0 ? this.bareCount(this.detail.favText) : '藏')
+      this.portraitActionItem($r('sys.symbol.share'),
+        this.detail.shareText.length > 0 ? this.bareCount(this.detail.shareText) : '享')
+
+      // 弹幕开关：独立圆形
+      Column({ space: 3 }) {
+        SymbolGlyph($r('sys.symbol.waveform_bubble'))
+          .fontSize(22)
+          .fontColor([this.prefs.danmakuOn
+            ? $r('app.color.brand_primary') : $r('app.color.text_on_media')])
+        Text('弹幕')
+          .fontSize(10)
+          .fontColor($r('app.color.text_on_media'))
+      }
+      .alignItems(HorizontalAlign.Center)
+      .onClick(() => {
+        this.prefs.danmakuOn = !this.prefs.danmakuOn;
+        this.prefs.save(this.context(), 'danmakuOn', this.prefs.danmakuOn);
+      })
+    }
+    .alignItems(HorizontalAlign.Center)
+  }
+
+  /** 竖屏右侧单个互动项 */
+  @Builder
+  portraitActionItem(icon: Resource, label: string) {
+    Column({ space: 4 }) {
+      SymbolGlyph(icon)
+        .fontSize(26)
+        .fontColor([$r('app.color.text_on_media')])
+      Text(label)
+        .fontSize(11)
+        .fontColor($r('app.color.text_on_media'))
+        .maxLines(1)
+    }
+    .alignItems(HorizontalAlign.Center)
+    .onClick(() => {
+      this.toast(`${label} 功能待接入`);
+    })
+  }
+
+  /** 竖屏底部浮层：UP 主 + 标题 / 简介 + 弹幕输入 + 细进度条 */
+  @Builder
+  portraitBottomSheet() {
+    Column({ space: 10 }) {
+      // UP 主行：头像 + 名字（+ 粉丝）+ 关注
+      Row({ space: 10 }) {
+        if (this.detail.authorFace.length > 0) {
+          Image(this.detail.authorFace)
+            .width(40)
+            .height(40)
+            .borderRadius(20)
+            .objectFit(ImageFit.Cover)
+            .alt($r('app.color.bg_field'))
+            .draggable(false)
+        } else {
+          Column() {
+            SymbolGlyph($r('sys.symbol.person_crop_circle_fill_1'))
+              .fontSize(40)
+              .fontColor([$r('app.color.text_on_media')])
+          }
+          .width(40)
+          .height(40)
+        }
+
+        Column({ space: 2 }) {
+          Text(this.detail.authorName.length > 0 ? this.detail.authorName : 'UP 主')
+            .fontSize(14)
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('app.color.text_on_media'))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+          if (this.detail.followerText.length > 0) {
+            Text(`${this.detail.followerText} 粉丝`)
+              .fontSize(11)
+              .fontColor($r('app.color.text_tertiary'))
+              .maxLines(1)
+          }
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+
+        Row({ space: 3 }) {
+          SymbolGlyph($r('sys.symbol.plus'))
+            .fontSize(12)
+            .fontColor([$r('app.color.brand_primary')])
+          Text('关注')
+            .fontSize(13)
+            .fontColor($r('app.color.brand_primary'))
+        }
+        .padding({ left: 10, right: 14, top: 6, bottom: 6 })
+        .backgroundColor($r('app.color.brand_tint'))
+        .borderRadius(15)
+        .onClick(() => {
+          this.toast('关注功能待建设');
+        })
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+
+      // 标题 + 展开箭头
+      Row({ space: 8 }) {
+        Text(this.detail.title)
+          .fontSize(14)
+          .fontWeight(FontWeight.Medium)
+          .lineHeight(20)
+          .fontColor($r('app.color.text_on_media'))
+          .maxLines(this.portraitDescExpanded ? 8 : 1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .layoutWeight(1)
+        SymbolGlyph(this.portraitDescExpanded
+          ? $r('sys.symbol.chevron_up') : $r('sys.symbol.chevron_down'))
+          .fontSize(16)
+          .fontColor([$r('app.color.text_on_media')])
+          .onClick(() => {
+            this.portraitDescExpanded = !this.portraitDescExpanded;
+          })
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+
+      // 弹幕输入框
+      Row() {
+        SymbolGlyph($r('sys.symbol.waveform_bubble'))
+          .fontSize(15)
+          .fontColor([$r('app.color.text_tertiary')])
+        Text('发一条友善的弹幕')
+          .fontSize(12)
+          .fontColor($r('app.color.text_tertiary'))
+      }
+      .width('100%')
+      .height(36)
+      .padding({ left: 14, right: 14 })
+      .backgroundColor($r('app.color.scrim'))
+      .borderRadius(18)
+      .alignItems(VerticalAlign.Center)
+      .onClick(() => {
+        this.toast('弹幕发送待接入');
+      })
+
+      // 白色细进度条
+      Progress({
+        value: this.positionMs,
+        total: this.durationMs > 0 ? this.durationMs : 1,
+        type: ProgressType.Linear
+      })
+        .width('100%')
+        .height(2)
+        .color($r('app.color.text_on_media'))
+        .backgroundColor($r('app.color.overlay'))
+    }
+    .width('100%')
+    .padding({ left: PAGE_PADDING, right: PAGE_PADDING, bottom: 12 + this.bottomInset, top: 24 })
+    .alignItems(HorizontalAlign.Start)
+    .linearGradient({
+      angle: 180,
+      colors: [[$r('app.color.scrim'), 0.0], [Color.Transparent, 1.0]]
+    })
+  }
+
+  /** 工具行：左侧简介 / 评论 / 设置 · 正中竖屏连播入口 · 右侧弹幕输入（总开关并入其中） */
   @Builder
   actionBar() {
-    Row() {
-      Row({ space: 18 }) {
-        this.infoTabText('简介', 'brief', 0)
-        this.infoTabText('评论', 'comments', 1)
-        this.infoTabText('设置', 'settings', 2)
-      }
-
-      Blank().layoutWeight(1)
-
-      // 中间的竖屏摆放模式切换（参考图里的「≡」按钮）
+    Stack({ alignContent: Alignment.Center }) {
       Row() {
-        SymbolGlyph($r('sys.symbol.line_3_horizontal'))
+        Row({ space: 18 }) {
+          this.infoTabText('简介', 'brief', 0)
+          this.infoTabText('评论', 'comments', 1)
+          this.infoTabText('设置', 'settings', 2)
+        }
+
+        Blank()
+
+        // 弹幕输入与总开关合成一颗胶囊：开关就贴在输入框最右侧，不再单独占一个图标位
+        Row() {
+          Text('发一条弹幕')
+            .fontSize(12)
+            .fontColor($r('app.color.text_tertiary'))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .layoutWeight(1)
+            .onClick(() => {
+              this.toast('弹幕发送待接入');
+            })
+
+          SymbolGlyph($r('sys.symbol.waveform_bubble'))
+            .fontSize(16)
+            .fontColor([this.prefs.danmakuOn
+              ? $r('app.color.brand_primary') : $r('app.color.text_tertiary')])
+            .onClick(() => {
+              this.prefs.danmakuOn = !this.prefs.danmakuOn;
+              this.prefs.save(this.context(), 'danmakuOn', this.prefs.danmakuOn);
+              this.toast(this.prefs.danmakuOn ? '弹幕显示已开启（占位）' : '弹幕显示已关闭（占位）');
+            })
+        }
+        .width(132)
+        .height(30)
+        .padding({ left: 12, right: 10 })
+        .backgroundColor($r('app.color.bg_field'))
+        .borderRadius(15)
+        .alignItems(VerticalAlign.Center)
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+
+      // 这一行的正中间：竖屏连播入口（下箭头 = 画面向下铺满，进入后变上箭头收起）
+      Row() {
+        SymbolGlyph(this.portraitMode
+          ? $r('sys.symbol.chevron_up') : $r('sys.symbol.chevron_down'))
           .fontSize(16)
           .fontColor([$r('app.color.text_secondary')])
       }
@@ -1426,46 +1799,13 @@ export struct VideoPage {
       .justifyContent(FlexAlign.Center)
       .backgroundColor($r('app.color.bg_field'))
       .borderRadius(15)
-      .margin({ right: 10 })
       .onClick(() => {
-        this.portraitMode = !this.portraitMode;
-        setTimeout(() => {
-          this.syncCanvasSize();
-        }, 60);
+        this.togglePortraitMode();
       })
-
-      // 右侧：弹幕输入占位 + 弹幕开关
-      Row({ space: 6 }) {
-        Row() {
-          Text('发一条弹幕')
-            .fontSize(12)
-            .fontColor($r('app.color.text_tertiary'))
-        }
-        .height(30)
-        .layoutWeight(1)
-        .padding({ left: 12, right: 12 })
-        .backgroundColor($r('app.color.bg_field'))
-        .borderRadius(15)
-        .onClick(() => {
-          this.toast('弹幕发送待接入');
-        })
-
-        SymbolGlyph($r('sys.symbol.waveform_bubble'))
-          .fontSize(16)
-          .fontColor([this.prefs.danmakuOn
-            ? $r('app.color.brand_primary') : $r('app.color.text_tertiary')])
-          .onClick(() => {
-            this.prefs.danmakuOn = !this.prefs.danmakuOn;
-            this.prefs.save(this.context(), 'danmakuOn', this.prefs.danmakuOn);
-            this.toast(this.prefs.danmakuOn ? '弹幕显示已开启（占位）' : '弹幕显示已关闭（占位）');
-          })
-      }
-      .width(170)
     }
     .width('100%')
     .height(ACTION_BAR_HEIGHT)
     .padding({ left: PAGE_PADDING, right: PAGE_PADDING })
-    .alignItems(VerticalAlign.Center)
     // 用页面底色而不是纯白：纯白条紧贴视频下沿时，看起来像一层白膜盖住了画面
     .backgroundColor($r('app.color.bg_page'))
     .border({ width: { bottom: 1 }, color: $r('app.color.divider') })
@@ -2335,7 +2675,7 @@ export struct VideoPage {
     }
   }
 
-  /** 简介版块：作者 → 标题 → 元信息 → 六项互动 → 简介 / 推荐 */
+  /** 简介版块：作者 → 标题 → 元信息 → （展开的简介）→ 六项互动 → 推荐 */
   @Builder
   briefTab() {
     Scroll(this.scroller) {
@@ -2343,11 +2683,12 @@ export struct VideoPage {
         this.authorBlock()
         this.titleRow()
         this.metaRow()
-        this.actionRow()
-        Divider().color($r('app.color.divider'))
+        // 简介紧跟在「播放量 · 弹幕数」这一行下面展开，不再压到互动行之后
         if (this.briefExpanded) {
           this.briefBlock()
+          Divider().color($r('app.color.divider'))
         }
+        this.actionRow()
         this.recommendBlock()
         Row()
           .width('100%')
@@ -2476,18 +2817,69 @@ export struct VideoPage {
         }
         .width('100%')
         .height('100%')
+        // 关闭顶部沉浸时，用 padding 把内容整体压到增量条下面：
+        // 这条 strip 本身由根 Stack 的底色画出（黑色 / 白色），高度正好一个状态栏。
+        .padding({ top: this.fullscreen ? 0 : (this.topImmersive ? 0 : this.topInset) })
 
-        // 竖屏摆放模式：信息以浮层叠在铺满的视频下方
+        // 竖屏连播沉浸模式：视频铺满整屏，信息作为浮层叠在画面上。
+        // 用纯 flex 流式布局（Column + Row），不依赖 Stack 的 align 对齐（本 SDK 下不可靠）。
         if (this.portraitMode && !this.fullscreen) {
           Column() {
-            this.infoArea()
+            // 顶部沉浸栏
+            Row() {
+              Row() {
+                SymbolGlyph($r('sys.symbol.chevron_backward'))
+                  .fontSize(18)
+                  .fontColor([$r('app.color.text_on_media')])
+              }
+              .width(32)
+              .height(32)
+              .justifyContent(FlexAlign.Center)
+              .backgroundColor($r('app.color.scrim'))
+              .borderRadius(16)
+              .onClick(() => {
+                this.onBack();
+              })
+
+              Text('正在看')
+                .fontSize(13)
+                .fontColor($r('app.color.text_on_media'))
+                .margin({ left: 10 })
+
+              Blank()
+
+              Row({ space: 16 }) {
+                SymbolGlyph($r('sys.symbol.rectangle_stack'))
+                  .fontSize(18)
+                  .fontColor([$r('app.color.text_on_media')])
+                SymbolGlyph($r('sys.symbol.rectangle_on_rectangle'))
+                  .fontSize(18)
+                  .fontColor([$r('app.color.text_on_media')])
+                SymbolGlyph($r('sys.symbol.ellipsis_circle'))
+                  .fontSize(18)
+                  .fontColor([$r('app.color.text_on_media')])
+              }
+            }
+            .width('100%')
+            .height(PLAYER_BAR_HEIGHT)
+            .padding({ left: PAGE_PADDING, right: PAGE_PADDING })
+            .alignItems(VerticalAlign.Center)
+
+            // 中间：左侧留白 + 右侧竖排互动（垂直居中）
+            Row() {
+              Blank()
+              this.portraitSideActions()
+            }
+            .width('100%')
+            .layoutWeight(1)
+            .alignItems(VerticalAlign.Center)
+            .padding({ right: 8 })
+
+            // 底部信息浮层
+            this.portraitBottomSheet()
           }
           .width('100%')
-          .height('58%')
-          .align(Alignment.Bottom)
-          .backgroundColor($r('app.color.bg_page'))
-          .borderRadius({ topLeft: 16, topRight: 16 })
-          .shadow({ radius: 12, color: $r('app.color.shadow_strong'), offsetY: -3 })
+          .height('100%')
         }
 
         // 评论输入浮层：盖住整页，含标题栏区域（本页 hideTitleBar）
@@ -2497,9 +2889,10 @@ export struct VideoPage {
       .height('100%')
       // 状态栏那一条铺黑：NavDestination 只放开了底部安全区（列表能铺到屏幕下沿），
       // 顶部仍是窗口底色（#F5F6F7），不铺黑就会留一条白边。用 expandSafeArea 把绘制区域顶到屏幕最上沿，
-      // 布局仍从状态栏下方开始，所以黑色只出现在状态栏这一条上。
+      // 布局仍从状态栏下方开始，所以底色只出现在状态栏这一条上。
+      // 关闭沉浸后这条改用「增量颜色」（黑 / 白），内容靠上层 padding 让开这一条。
       .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP])
-      .backgroundColor(Color.Black)
+      .backgroundColor(this.topImmersive ? Color.Black : this.insetColor())
       // 键盘避让用 RESIZE：页面被压矮时能在这里量到，输入卡据此判断还要不要自己上移
       .onAreaChange((oldValue: Area, newValue: Area) => {
         this.onPageResize(Number(newValue.height));
