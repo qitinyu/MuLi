@@ -320,7 +320,7 @@ export struct MinePage {
   @Builder
   levelBadge() {
     Row() {
-      LevelBadge({ level: this.profile.isLogin ? this.profile.level : 0, badgeHeight: 18 })
+      LevelBadge({ level: this.profile.isLogin ? this.profile.level : 0, badgeHeight: 22 })
     }
     .onClick(() => {
       this.openSheet('level');
@@ -362,14 +362,16 @@ export struct MinePage {
 
         Column() {
           // 第一行：昵称 + 等级徽章
-          Row({ space: 6 }) {
+          Row({ space: 5 }) {
             Text(this.displayName())
               .fontSize(19)
               .fontWeight(FontWeight.Medium)
               .fontColor($r('app.color.text_primary'))
               .maxLines(1)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
-              .layoutWeight(1)
+              // 不用 layoutWeight 撑满整行，否则徽章被顶到最右、和昵称间隔过大；
+              // 改为按内容宽度并设上限，超长昵称省略，徽章紧跟在昵称右侧。
+              .constraintSize({ maxWidth: '78%' })
             this.levelBadge()
           }
           .width('100%')
@@ -724,7 +726,7 @@ export struct MinePage {
           .fontWeight(FontWeight.Medium)
           .fontColor($r('app.color.text_primary'))
         Blank()
-        LevelBadge({ level: this.profile.isLogin ? this.profile.level : 0, badgeHeight: 20 })
+        LevelBadge({ level: this.profile.isLogin ? this.profile.level : 0, badgeHeight: 22 })
       }
       .width('100%')
       .alignItems(VerticalAlign.Center)
