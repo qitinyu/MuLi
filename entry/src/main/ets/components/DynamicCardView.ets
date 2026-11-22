@@ -1,5 +1,4 @@
 import { DynamicCard, emptyDynamicCard, emptyVideoCard, VideoCard } from '../model/BiliModels';
-import { PAGE_PADDING } from '../common/DesignSpec';
 
 /** 动态主体里的视频小卡（横向：封面在左，标题/作者在右） */
 @Component
@@ -145,7 +144,9 @@ export struct DynamicCardView {
     }
     .width('100%')
     .padding(12)
-    .margin({ left: PAGE_PADDING, right: PAGE_PADDING, bottom: 10 })
+    // 不能再设左右 margin：width('100%') 已占满父容器，叠加左右外边距会溢出被裁，
+    // 右半边就看不见了。左右留白改由列表项容器（DynamicPage）统一提供。
+    .margin({ bottom: 10 })
     .backgroundColor($r('app.color.bg_card'))
     .borderRadius(14)
     .alignItems(HorizontalAlign.Start)

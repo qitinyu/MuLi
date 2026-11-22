@@ -186,19 +186,25 @@ export struct DynamicPage {
       } else {
         ForEach(this.items, (card: DynamicCard) => {
           ListItem() {
-            DynamicCardView({
-              card: card,
-              onCardTap: (item: DynamicCard) => {
-                if (item.kind === 'video' && item.video !== null) {
-                  const video: VideoCard = item.video as VideoCard;
-                  if (this.pathStack !== undefined) {
-                    this.pathStack.pushPathByName('video', new VideoOpenParam(video.bvid, video.aid, video.cid));
+            // 左右留白由这里统一提供：卡片自身已是 width('100%')，
+            // 若卡片再加左右 margin 会溢出被裁（右半边不可见）。
+            Column() {
+              DynamicCardView({
+                card: card,
+                onCardTap: (item: DynamicCard) => {
+                  if (item.kind === 'video' && item.video !== null) {
+                    const video: VideoCard = item.video as VideoCard;
+                    if (this.pathStack !== undefined) {
+                      this.pathStack.pushPathByName('video', new VideoOpenParam(video.bvid, video.aid, video.cid));
+                    }
+                    return;
                   }
-                  return;
+                  this.toast(`动态「${item.authorName}」详情待建设`);
                 }
-                this.toast(`动态「${item.authorName}」详情待建设`);
-              }
-            })
+              })
+            }
+            .width('100%')
+            .padding({ left: PAGE_PADDING, right: PAGE_PADDING })
           }
         }, (card: DynamicCard) => card.id)
 
