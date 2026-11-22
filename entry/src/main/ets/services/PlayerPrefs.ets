@@ -70,10 +70,42 @@ export class PlayerPrefs {
   async save(context: common.UIAbilityContext, key: string, value: number | boolean): Promise<void> {
     try {
       const store: preferences.Preferences = await preferences.getPreferences(context, PlayerPrefs.STORE);
-      store.putSync(key, value);
+      // 调用方传的是内存字段名（驼峰，如 miniProgress），load() 读的是磁盘字段名（下划线），
+      // 必须在这里统一映射，否则写进去读不出来、每次重启都回默认值。
+      store.putSync(PlayerPrefs.diskKey(key), value);
       await store.flush();
     } catch (err) {
       console.warn(`MuLiPrefs save ${key} failed: ${String(err)}`);
+    }
+  }
+
+  /** 内存字段名 → 磁盘字段名（与 load() 中 getSync 的 key 一一对应） */
+  private static diskKey(key: string): string {
+    switch (key) {
+      case 'quality':
+        return 'quality';
+      case 'continuePlay':
+        return 'continue_play';
+      case 'miniProgress':
+        return 'mini_progress';
+      case 'quickGestures':
+        return 'quick_gestures';
+      case 'longPressSpeed':
+        return 'long_press_speed';
+      case 'playMode':
+        return 'play_mode';
+      case 'danmakuOn':
+        return 'danmaku_on';
+      case 'danmakuArea':
+        return 'danmaku_area';
+      case 'danmakuOpacity':
+        return 'danmaku_opacity';
+      case 'danmakuSize':
+        return 'danmaku_size';
+      case 'danmakuSpeed':
+        return 'danmaku_speed';
+      default:
+        return key;
     }
   }
 

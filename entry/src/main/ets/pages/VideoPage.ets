@@ -1,6 +1,8 @@
 import { HdsNavDestination } from '@kit.UIDesignKit';
 import { display, window, KeyboardAvoidMode } from '@kit.ArkUI';
 import { audio } from '@kit.AudioKit';
+import { systemShare } from '@kit.ShareKit';
+import { uniformTypeDescriptor } from '@kit.ArkData';
 import { common } from '@kit.AbilityKit';
 import { BOTTOM_PAD_PHONE, PAGE_PADDING } from '../common/DesignSpec';
 import { durationText, plainCount, pubTimeText } from '../common/Format';
@@ -26,8 +28,12 @@ const HUD_HIDE_MS: number = 900;
 /** 左右滑动每一档对应的像素距离与毫秒数（每档 5s） */
 const SEEK_STEP_VP: number = 60;
 const SEEK_STEP_MS: number = 5000;
-/** 滑动区域判定：左 35% 亮度 / 右 35% 音量，中间为盲区 */
+/** 普通 / 全屏滑动区域判定：左 35% 亮度 / 右 35% 音量，中间为盲区 */
 const SIDE_ZONE_RATIO: number = 0.35;
+/** 竖屏连播滑动区域判定：视频竖直上半 50% 内，左 20% 亮度 / 右 20% 音量，中间为盲区 */
+const PORTRAIT_SIDE_ZONE_RATIO: number = 0.20;
+/** 竖屏连播：下半屏上滑切换下一个视频的位移阈值（vp），超过才切换，避免误触 */
+const SWIPE_SWITCH_THRESHOLD: number = 80;
 /** 信息区三个版块：与 Tabs 下标一一对应（支持左右滑动切换） */
 const TAB_KEYS: Array<string> = ['brief', 'comments', 'settings'];
 /** 评论输入框的组件 id：打开浮层后按 id 申请焦点，弹出键盘 */
@@ -67,6 +73,10 @@ export struct VideoPage {
   @State portraitMode: boolean = false;
   /** 竖屏模式下底部信息浮层是否展开（展开简介时浮层拉高） */
   @State portraitDescExpanded: boolean = false;
+  /** 竖屏顶部「设置」唤起的底部弹窗（内容与播放区设置面板一致） */
+  @State portraitSettingsVisible: boolean = false;
+  /** 竖屏连播：底部 up 信息 + 视频名称是否显示（点击屏幕切换，进度条与操作行固定显示） */
+  @State portraitInfoVisible: boolean = true;
   /** 控制条（返回 / 中央播放键 / 进度条）是否可见 */
   @State controlsVisible: boolean = true;
   /** 工具行当前选中的信息页：brief / comments / settings */
@@ -162,6 +172,8 @@ export struct VideoPage {
   private resumeMs: number = 0;
   /** 画布宽度 vp，用于判定左 / 右滑动区域 */
   private surfaceWidth: number = 360;
+  /** 画布高度 vp，竖屏连播下用于判定上半（亮度/音量）与下半（切换视频） */
+  private surfaceHeight: number = 211;
 
   // 手势状态
   private gestureMode: string = '';
@@ -428,8 +440,30 @@ export struct VideoPage {
       this.syncCanvasSize();
     }, 60);
     if (this.portraitMode) {
+      this.portraitInfoVisible = true;
       this.showControls();
     }
+  }
+
+  /** 竖屏连播点「评论」：退出连播回到普通播放页，并直接把信息区切到评论区 */
+  private exitPortraitToComments(): void {
+    this.portraitMode = false;
+    // 退出连播后画布回到 16:9，布局落定再校一次高度
+    setTimeout(() => {
+      this.syncCanvasSize();
+    }, 60);
+    // 强制切到评论 tab（即使当前下标已是 1，也要保证 Tabs controller 与高亮同步）
+    this.infoTabIndex = 1;
+    this.infoTab = TAB_KEYS[1];
+    try {
+      this.tabsController.changeIndex(1);
+    } catch (err) {
+      // Tabs 尚未挂载时忽略
+    }
+    if (!this.commentLoaded) {
+      this.loadComments(true);
+    }
+    this.showControls();
   }
 
   aboutToDisappear(): void {
@@ -974,6 +1008,30 @@ export struct VideoPage {
     }
   }
 
+  /** 竖屏顶部「分享」：调起系统分享面板，把标题 + b 站链接作为纯文本分享出去 */
+  private async shareVideo(): Promise<void> {
+    try {
+      const title: string = this.detail.title.length > 0 ? this.detail.title : '沐哩视频';
+      const bvid: string = this.detail.bvid;
+      const content: string = bvid.length > 0
+        ? `${title} https://www.bilibili.com/video/${bvid}` : title;
+      const record: systemShare.SharedRecord = {
+        utd: uniformTypeDescriptor.UniformDataType.PLAIN_TEXT,
+        title: title,
+        content: content
+      };
+      const data: systemShare.SharedData = new systemShare.SharedData(record);
+      const controller: systemShare.ShareController = new systemShare.ShareController(data);
+      await controller.show(this.context(), {
+        previewMode: systemShare.SharePreviewMode.DEFAULT,
+        selectionMode: systemShare.SelectionMode.SINGLE
+      });
+    } catch (err) {
+      console.warn(`MuLiVideo share failed: ${String(err)}`);
+      this.toast('分享未完成');
+    }
+  }
+
   private toast(text: string): void {
     try {
       this.getUIContext().getPromptAction().showToast({ message: text, duration: 1600 });
@@ -986,6 +1044,23 @@ export struct VideoPage {
 
   private gestureZone(event: GestureEvent): string {
     const localX: number = event.fingerList.length > 0 ? event.fingerList[0].localX : this.surfaceWidth / 2;
+    const localY: number = event.fingerList.length > 0 ? event.fingerList[0].localY : this.surfaceHeight / 2;
+    // 竖屏连播：视频区固定铺满，按上下半分区。
+    // 下半 50%（全宽）：上下切换视频；上半 50%：左 20% 亮度 / 右 20% 音量，中间盲区。
+    if (this.portraitMode && !this.fullscreen) {
+      if (localY >= this.surfaceHeight / 2) {
+        return 'portraitSwitch';
+      }
+      const portraitBound: number = this.surfaceWidth * PORTRAIT_SIDE_ZONE_RATIO;
+      if (localX < portraitBound) {
+        return 'brightness';
+      }
+      if (localX > this.surfaceWidth - portraitBound) {
+        return 'volume';
+      }
+      return 'center';
+    }
+    // 其它模式（普通竖屏 / 全屏）保持原判定：左 35% 亮度 / 右 35% 音量，中间盲区。
     const bound: number = this.surfaceWidth * SIDE_ZONE_RATIO;
     if (localX < bound) {
       return 'brightness';
@@ -1000,7 +1075,15 @@ export struct VideoPage {
     if (!this.prefs.quickGestures) {
       return;
     }
-    this.gestureMode = this.gestureZone(event);
+    const zone: string = this.gestureZone(event);
+    // 竖屏连播下半屏由 gestureZone 直接判为 portraitSwitch（上滑切换下一个视频），
+    // 不初始化亮度/音量；上半屏左右两侧仍走原亮度/音量，中间盲区空处理。
+    // 与水平快进、单击双击、长按都互不干扰。
+    if (zone === 'portraitSwitch') {
+      this.gestureMode = 'portraitSwitch';
+      return;
+    }
+    this.gestureMode = zone;
     try {
       const manager: audio.AudioManager = audio.getAudioManager();
       this.startVolume = await manager.getVolume(audio.AudioVolumeType.MEDIA);
@@ -1027,6 +1110,15 @@ export struct VideoPage {
       return;
     }
     const dy: number = event.offsetY;
+    // 竖屏中间区域：持续提示「上滑切换下一个」，松手时按最终位移决定是否切换
+    if (this.gestureMode === 'portraitSwitch') {
+      if (dy < -SWIPE_SWITCH_THRESHOLD) {
+        this.showHud('松开切换下一个视频');
+      } else {
+        this.hudVisible = false;
+      }
+      return;
+    }
     if (this.gestureMode === 'brightness') {
       const brightness: number = Math.max(0.05, Math.min(1, this.startBrightness - dy / 500));
       try {
@@ -1051,7 +1143,17 @@ export struct VideoPage {
     }
   }
 
-  private onVerticalEnd(): void {
+  private onVerticalEnd(event?: GestureEvent): void {
+    // 竖屏中间区域上滑超过阈值 → 切换下一个推荐视频（连播）；下滑或位移不够则只收起手势态
+    if (this.gestureMode === 'portraitSwitch') {
+      const dy: number = event !== undefined ? event.offsetY : 0;
+      this.gestureMode = '';
+      this.hudVisible = false;
+      if (dy < -SWIPE_SWITCH_THRESHOLD) {
+        this.playRandomNext();
+        return;
+      }
+    }
     this.gestureMode = '';
     this.showControls();
   }
@@ -1211,7 +1313,7 @@ export struct VideoPage {
 
   @Builder
   topBar() {
-    Row() {
+    Row({ space: 8 }) {
       Row() {
         SymbolGlyph($r('sys.symbol.chevron_backward'))
           .fontSize(20)
@@ -1226,14 +1328,39 @@ export struct VideoPage {
         this.onBack();
       })
 
-      Text(this.detail.title)
-        .fontSize(13)
-        .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.text_on_media'))
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-        .layoutWeight(1)
-        .margin({ left: 8 })
+      Blank()
+
+      // 分享（调起系统分享面板）
+      Row() {
+        SymbolGlyph($r('sys.symbol.share'))
+          .fontSize(17)
+          .fontColor([$r('app.color.text_on_media')])
+      }
+      .width(34)
+      .height(34)
+      .justifyContent(FlexAlign.Center)
+      .backgroundColor($r('app.color.scrim'))
+      .borderRadius(17)
+      .onClick(() => {
+        this.shareVideo();
+      })
+
+      // 悬浮窗（xfcb 白色填充，与其他按钮同用 scrim 半透明圆底）
+      Row() {
+        Image($r('app.media.xfcb'))
+          .width(18)
+          .height(18)
+          .objectFit(ImageFit.Contain)
+          .draggable(false)
+      }
+      .width(34)
+      .height(34)
+      .justifyContent(FlexAlign.Center)
+      .backgroundColor($r('app.color.scrim'))
+      .borderRadius(17)
+      .onClick(() => {
+        this.toast('悬浮窗播放待接入');
+      })
     }
     .width('100%')
     .height(PLAYER_BAR_HEIGHT + this.topSafe())
@@ -1370,11 +1497,15 @@ export struct VideoPage {
         .backgroundColor($r('app.color.scrim'))
       }
 
-      // 控制层：4s 无操作自动隐藏。竖屏连播模式由 portrait 系列浮层接管，不再叠默认控制层
+      // 控制层：4s 无操作自动隐藏。竖屏连播模式不再复用这套控制条，
+      // 顶栏 / 进度条 / 操作行改由独立的底部浮层承载，避免两套进度条和顶栏重复。
       if (this.controlsVisible && !this.portraitMode) {
         Column() {
           this.topBar()
 
+          // 中央播放图标只作暂停态视觉提示，不绑 onClick：
+          // 暂停/继续统一交给 GestureGroup 的双击分支，单击只切换控制条（隐藏/显示 UP 区），
+          // 否则单击空白想收起 UP 区时会被这里的 onClick 判成暂停（手势冲突）。
           Column() {
             if (!this.playing && this.playError.length === 0 && !this.loading) {
               SymbolGlyph($r('sys.symbol.play_circle_fill'))
@@ -1385,9 +1516,7 @@ export struct VideoPage {
           .width('100%')
           .layoutWeight(1)
           .justifyContent(FlexAlign.Center)
-          .onClick(() => {
-            this.togglePlay();
-          })
+          .hitTestBehavior(HitTestMode.None)
 
           if (this.started) {
             this.bottomBar()
@@ -1403,7 +1532,8 @@ export struct VideoPage {
         .transition({ type: TransitionType.Delete, opacity: 0 })
       }
 
-      // 迷你进度条：无操作把界面收干净后，只在视频区域最低边留这一条（竖屏模式由底部浮层自带）
+      // 迷你进度条：无操作把界面收干净后，只在视频区域最低边留这一条。
+      // 竖屏连播模式由独立底部浮层的固定进度条承载，不需要这条迷你进度条。
       if (!this.controlsVisible && this.prefs.miniProgress && this.started && !this.portraitMode) {
         Column() {
           Blank()
@@ -1480,7 +1610,13 @@ export struct VideoPage {
         this.togglePlay();
       }),
       TapGesture().onAction(() => {
-        this.toggleControls();
+        // 竖屏连播：控制条已移除，单击只切换 up 信息 + 视频名称的显隐；
+        // 顶栏、固定进度条、操作行不受影响。其余模式仍切控制条。
+        if (this.portraitMode && !this.fullscreen) {
+          this.portraitInfoVisible = !this.portraitInfoVisible;
+        } else {
+          this.toggleControls();
+        }
       })
     ))
     // 水平：快进快退（每档 5s，松手跳转）
@@ -1502,8 +1638,8 @@ export struct VideoPage {
       .onActionUpdate((event: GestureEvent) => {
         this.onVerticalUpdate(event);
       })
-      .onActionEnd(() => {
-        this.onVerticalEnd();
+      .onActionEnd((event: GestureEvent) => {
+        this.onVerticalEnd(event);
       }))
     // 长按：加速播放
     .gesture(LongPressGesture({ repeat: true, duration: 500 })
@@ -1513,6 +1649,37 @@ export struct VideoPage {
       .onActionEnd(() => {
         this.onHoldSpeedEnd();
       }))
+  }
+
+  /**
+   * 竖屏连播浮层：盖在视频区上方的独立图层（视频在下、浮层在上）。
+   * - 顶栏固定显示，不随点击隐藏；
+   * - 底部四块：up 信息 + 视频名称点击屏幕时隐藏/恢复，固定进度条 + 操作行始终显示；
+   * - 顶栏与底部之间不渲染任何组件（SpaceBetween 留空），点击可穿透到视频手势。
+   */
+  @Builder
+  portraitOverlay() {
+    Column() {
+      this.portraitTopBar()
+
+      Column() {
+        if (this.portraitInfoVisible) {
+          this.portraitInfoOverlay()
+        }
+        // 进度条固定显示，位于简介区与操作行之间（与普通播放区同款可拖动 Slider）
+        this.portraitProgressBar()
+        this.portraitActionBar()
+      }
+      .width('100%')
+    }
+    .width('100%')
+    .height('100%')
+    // 浮层挂在展开到屏幕上沿的根 Stack 下，不像主 Column 那样自带状态栏 padding。
+    // 这里补上等价避让：沉浸时状态栏透明浮在画面上、非沉浸时是增量条，两种都要让开一个状态栏高度。
+    .padding({ top: this.fullscreen ? 0 : this.topInset })
+    .justifyContent(FlexAlign.SpaceBetween)
+    // 容器自身不拦截点击，让视频区的单击/滑动手势能穿透（顶栏与底部子组件仍可点）
+    .hitTestBehavior(HitTestMode.Transparent)
   }
 
   /** 工具行的页签文字：选中态用品牌色 + 加粗，与参考图一致 */
@@ -1527,137 +1694,178 @@ export struct VideoPage {
       })
   }
 
-  // ==================== 竖屏连播沉浸模式 ====================
+  // ==================== 竖屏连播沉浸模式（参考 Pilihos verticalExpanded） ====================
 
-  /** 竖屏顶部栏：返回 + 正在看人数 · 右侧投屏 / 小窗 / 更多 */
+  /** 竖屏顶部操作栏：返回 / 悬浮窗(占位) / 分享(系统分享) / 设置(底部弹窗) */
   @Builder
   portraitTopBar() {
     Row() {
+      // 返回
       Row() {
         SymbolGlyph($r('sys.symbol.chevron_backward'))
-          .fontSize(18)
+          .fontSize(20)
           .fontColor([$r('app.color.text_on_media')])
       }
-      .width(32)
-      .height(32)
+      .width(36)
+      .height(36)
       .justifyContent(FlexAlign.Center)
       .backgroundColor($r('app.color.scrim'))
-      .borderRadius(16)
+      .borderRadius(18)
       .onClick(() => {
         this.onBack();
       })
 
-      Text('正在看')
-        .fontSize(13)
-        .fontColor($r('app.color.text_on_media'))
-        .margin({ left: 10 })
-
       Blank()
 
-      Row({ space: 16 }) {
-        SymbolGlyph($r('sys.symbol.rectangle_stack'))
-          .fontSize(18)
-          .fontColor([$r('app.color.text_on_media')])
-        SymbolGlyph($r('sys.symbol.rectangle_on_rectangle'))
-          .fontSize(18)
-          .fontColor([$r('app.color.text_on_media')])
-        SymbolGlyph($r('sys.symbol.ellipsis_circle'))
+      // 悬浮窗（占位，图标用素材 xfcb.svg，白色填充；与其他按钮同用半透明圆底，不再单独铺白底）
+      Row() {
+        Image($r('app.media.xfcb'))
+          .width(20)
+          .height(20)
+          .objectFit(ImageFit.Contain)
+          .draggable(false)
+      }
+      .width(36)
+      .height(36)
+      .justifyContent(FlexAlign.Center)
+      .backgroundColor($r('app.color.scrim'))
+      .borderRadius(18)
+      .onClick(() => {
+        this.toast('悬浮窗播放待接入');
+      })
+
+      // 分享（调起系统分享面板）
+      Row() {
+        SymbolGlyph($r('sys.symbol.share'))
           .fontSize(18)
           .fontColor([$r('app.color.text_on_media')])
       }
+      .width(36)
+      .height(36)
+      .justifyContent(FlexAlign.Center)
+      .backgroundColor($r('app.color.scrim'))
+      .borderRadius(18)
+      .onClick(() => {
+        this.shareVideo();
+      })
+
+      // 设置（底部弹窗，内容与播放区设置面板一致）
+      Row() {
+        SymbolGlyph($r('sys.symbol.gearshape'))
+          .fontSize(18)
+          .fontColor([$r('app.color.text_on_media')])
+      }
+      .width(36)
+      .height(36)
+      .justifyContent(FlexAlign.Center)
+      .backgroundColor($r('app.color.scrim'))
+      .borderRadius(18)
+      .onClick(() => {
+        this.portraitSettingsVisible = true;
+      })
     }
     .width('100%')
     .height(PLAYER_BAR_HEIGHT)
     .padding({ left: PAGE_PADDING, right: PAGE_PADDING })
     .alignItems(VerticalAlign.Center)
-    .backgroundColor($r('app.color.scrim'))
   }
 
-  /** 竖屏右侧竖排互动：点赞 / 评论 / 收藏 / 分享 + 弹幕开关（白图标 + 数字，参考图） */
+  /** 竖屏「设置」底部弹窗：复用播放区设置面板 PlayerSettingsPanel（内容与设置页签一致） */
   @Builder
-  portraitSideActions() {
-    Column({ space: 22 }) {
-      this.portraitActionItem($r('sys.symbol.hand_thumbsup'),
-        this.detail.likeText.length > 0 ? this.bareCount(this.detail.likeText) : '赞')
-      this.portraitActionItem($r('sys.symbol.message'),
-        this.detail.replyText.length > 0 ? this.bareCount(this.detail.replyText) : '评')
-      this.portraitActionItem($r('sys.symbol.star'),
-        this.detail.favText.length > 0 ? this.bareCount(this.detail.favText) : '藏')
-      this.portraitActionItem($r('sys.symbol.share'),
-        this.detail.shareText.length > 0 ? this.bareCount(this.detail.shareText) : '享')
+  portraitSettingsSheet() {
+    if (this.portraitSettingsVisible) {
+      Stack({ alignContent: Alignment.Bottom }) {
+        Column()
+          .width('100%')
+          .height('100%')
+          .backgroundColor($r('app.color.scrim'))
+          .onClick(() => {
+            this.portraitSettingsVisible = false;
+          })
 
-      // 弹幕开关：独立圆形
-      Column({ space: 3 }) {
-        SymbolGlyph($r('sys.symbol.waveform_bubble'))
-          .fontSize(22)
-          .fontColor([this.prefs.danmakuOn
-            ? $r('app.color.brand_primary') : $r('app.color.text_on_media')])
-        Text('弹幕')
-          .fontSize(10)
-          .fontColor($r('app.color.text_on_media'))
+        Column() {
+          Row() {
+            Text('播放设置')
+              .fontSize(16)
+              .fontWeight(FontWeight.Medium)
+              .fontColor($r('app.color.text_primary'))
+            Blank()
+            SymbolGlyph($r('sys.symbol.xmark_circle_fill'))
+              .fontSize(20)
+              .fontColor([$r('app.color.text_tertiary')])
+              .onClick(() => {
+                this.portraitSettingsVisible = false;
+              })
+          }
+          .width('100%')
+          .alignItems(VerticalAlign.Center)
+          .margin({ bottom: 6 })
+
+          Scroll() {
+            PlayerSettingsPanel({
+              prefs: $prefs,
+              onChanged: (key: string, value: number | boolean): void => {
+                this.onSettingsChanged(key, value);
+              },
+              onShare: (): void => {
+                this.shareVideo();
+              }
+            })
+          }
+          .scrollBar(BarState.Off)
+          .width('100%')
+          .constraintSize({ maxHeight: '60%' })
+        }
+        .width('100%')
+        .padding({
+          left: 16,
+          right: 16,
+          top: 14,
+          bottom: 14 + this.bottomInset
+        })
+        .backgroundColor($r('app.color.bg_card'))
+        .borderRadius({ topLeft: 18, topRight: 18 })
       }
-      .alignItems(HorizontalAlign.Center)
-      .onClick(() => {
-        this.prefs.danmakuOn = !this.prefs.danmakuOn;
-        this.prefs.save(this.context(), 'danmakuOn', this.prefs.danmakuOn);
-      })
+      .width('100%')
+      .height('100%')
     }
-    .alignItems(HorizontalAlign.Center)
   }
 
-  /** 竖屏右侧单个互动项 */
+  /** 竖屏视频下方独立信息区：UP 信息 + 简介（占据视频与操作栏之间的空位） */
   @Builder
-  portraitActionItem(icon: Resource, label: string) {
-    Column({ space: 4 }) {
-      SymbolGlyph(icon)
-        .fontSize(26)
-        .fontColor([$r('app.color.text_on_media')])
-      Text(label)
-        .fontSize(11)
-        .fontColor($r('app.color.text_on_media'))
-        .maxLines(1)
-    }
-    .alignItems(HorizontalAlign.Center)
-    .onClick(() => {
-      this.toast(`${label} 功能待接入`);
-    })
-  }
-
-  /** 竖屏底部浮层：UP 主 + 标题 / 简介 + 弹幕输入 + 细进度条 */
-  @Builder
-  portraitBottomSheet() {
-    Column({ space: 10 }) {
-      // UP 主行：头像 + 名字（+ 粉丝）+ 关注
+  portraitInfoOverlay() {
+    Column({ space: 8 }) {
       Row({ space: 10 }) {
         if (this.detail.authorFace.length > 0) {
           Image(this.detail.authorFace)
-            .width(40)
-            .height(40)
-            .borderRadius(20)
+            .width(38)
+            .height(38)
+            .borderRadius(19)
             .objectFit(ImageFit.Cover)
             .alt($r('app.color.bg_field'))
             .draggable(false)
         } else {
           Column() {
             SymbolGlyph($r('sys.symbol.person_crop_circle_fill_1'))
-              .fontSize(40)
+              .fontSize(38)
               .fontColor([$r('app.color.text_on_media')])
           }
-          .width(40)
-          .height(40)
+          .width(38)
+          .height(38)
         }
 
-        Column({ space: 2 }) {
+        Column({ space: 3 }) {
           Text(this.detail.authorName.length > 0 ? this.detail.authorName : 'UP 主')
             .fontSize(14)
-            .fontWeight(FontWeight.Medium)
+            .fontWeight(FontWeight.Bold)
             .fontColor($r('app.color.text_on_media'))
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
           if (this.detail.followerText.length > 0) {
             Text(`${this.detail.followerText} 粉丝`)
-              .fontSize(11)
-              .fontColor($r('app.color.text_tertiary'))
+              .fontSize(10)
+              .fontColor($r('app.color.text_on_media'))
+              .opacity(0.72)
               .maxLines(1)
           }
         }
@@ -1682,63 +1890,143 @@ export struct VideoPage {
       .width('100%')
       .alignItems(VerticalAlign.Center)
 
-      // 标题 + 展开箭头
-      Row({ space: 8 }) {
+      if (this.detail.title.length > 0) {
         Text(this.detail.title)
-          .fontSize(14)
-          .fontWeight(FontWeight.Medium)
-          .lineHeight(20)
+          .fontSize(12)
           .fontColor($r('app.color.text_on_media'))
-          .maxLines(this.portraitDescExpanded ? 8 : 1)
+          .opacity(0.88)
+          .maxLines(this.portraitDescExpanded ? 12 : 1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .layoutWeight(1)
-        SymbolGlyph(this.portraitDescExpanded
-          ? $r('sys.symbol.chevron_up') : $r('sys.symbol.chevron_down'))
-          .fontSize(16)
-          .fontColor([$r('app.color.text_on_media')])
+          .width('100%')
           .onClick(() => {
             this.portraitDescExpanded = !this.portraitDescExpanded;
           })
       }
-      .width('100%')
-      .alignItems(VerticalAlign.Center)
-
-      // 弹幕输入框
-      Row() {
-        SymbolGlyph($r('sys.symbol.waveform_bubble'))
-          .fontSize(15)
-          .fontColor([$r('app.color.text_tertiary')])
-        Text('发一条友善的弹幕')
-          .fontSize(12)
-          .fontColor($r('app.color.text_tertiary'))
-      }
-      .width('100%')
-      .height(36)
-      .padding({ left: 14, right: 14 })
-      .backgroundColor($r('app.color.scrim'))
-      .borderRadius(18)
-      .alignItems(VerticalAlign.Center)
-      .onClick(() => {
-        this.toast('弹幕发送待接入');
-      })
-
-      // 白色细进度条
-      Progress({
-        value: this.positionMs,
-        total: this.durationMs > 0 ? this.durationMs : 1,
-        type: ProgressType.Linear
-      })
-        .width('100%')
-        .height(2)
-        .color($r('app.color.text_on_media'))
-        .backgroundColor($r('app.color.overlay'))
     }
     .width('100%')
-    .padding({ left: PAGE_PADDING, right: PAGE_PADDING, bottom: 12 + this.bottomInset, top: 24 })
-    .alignItems(HorizontalAlign.Start)
-    .linearGradient({
-      angle: 180,
-      colors: [[$r('app.color.scrim'), 0.0], [Color.Transparent, 1.0]]
+    .padding({ left: 16, right: 16, top: 14, bottom: 10 })
+    .backgroundColor(Color.Black)
+  }
+
+  /** 竖屏底部操作行：弹幕输入 + 互动图标横排 + 底部细进度线（黑底，参考 Pilihos） */
+  @Builder
+  portraitActionBar() {
+    Column({ space: 0 }) {
+      Row({ space: 10 }) {
+        // 弹幕输入框（弹幕开关并入最右侧）
+        Row() {
+          SymbolGlyph($r('sys.symbol.waveform_bubble'))
+            .fontSize(15)
+            .fontColor([$r('app.color.text_tertiary')])
+          Text('发弹幕')
+            .fontSize(13)
+            .fontColor($r('app.color.text_tertiary'))
+            .layoutWeight(1)
+            .margin({ left: 6 })
+          SymbolGlyph($r('sys.symbol.waveform_bubble'))
+            .fontSize(16)
+            .fontColor([this.prefs.danmakuOn
+              ? $r('app.color.brand_primary') : $r('app.color.text_tertiary')])
+            .onClick(() => {
+              this.prefs.danmakuOn = !this.prefs.danmakuOn;
+              this.prefs.save(this.context(), 'danmakuOn', this.prefs.danmakuOn);
+            })
+        }
+        .height(38)
+        .layoutWeight(1)
+        .padding({ left: 12, right: 10 })
+        .backgroundColor($r('app.color.overlay'))
+        .borderRadius(17)
+        .alignItems(VerticalAlign.Center)
+        .onClick(() => {
+          this.toast('弹幕发送待接入');
+        })
+
+        this.portraitActionCount($r('sys.symbol.hand_thumbsup'),
+          this.detail.likeText.length > 0 ? this.bareCount(this.detail.likeText) : '赞')
+        this.portraitActionCount($r('sys.symbol.medal'),
+          this.detail.coinText.length > 0 ? this.bareCount(this.detail.coinText) : '币', undefined, $r('app.media.toubi'))
+        this.portraitActionCount($r('sys.symbol.star'),
+          this.detail.favText.length > 0 ? this.bareCount(this.detail.favText) : '藏')
+        // 评论：退出竖屏连播，回到普通播放页并直接切到评论区
+        this.portraitActionCount($r('sys.symbol.message'),
+          this.detail.replyText.length > 0 ? this.bareCount(this.detail.replyText) : '评',
+          () => {
+            this.exitPortraitToComments();
+          })
+      }
+      .width('100%')
+      .padding({ left: 12, right: 12, top: 6, bottom: 8 + this.bottomInset })
+    }
+    .width('100%')
+    .backgroundColor(Color.Black)
+  }
+
+  /** 竖屏连播进度条：与普通播放区 bottomBar 同款可拖动 Slider，夹在简介区与操作行之间 */
+  @Builder
+  portraitProgressBar() {
+    Row({ space: 8 }) {
+      Text(this.formatMs(this.positionMs))
+        .fontSize(11)
+        .fontColor($r('app.color.text_on_media'))
+      Slider({
+        value: this.positionMs,
+        min: 0,
+        max: this.durationMs > 0 ? this.durationMs : 1,
+        style: SliderStyle.OutSet
+      })
+        .selectedColor($r('app.color.brand_primary'))
+        .trackColor($r('app.color.overlay'))
+        .blockColor($r('app.color.text_on_media'))
+        .trackThickness(2)
+        .layoutWeight(1)
+        .onChange((value: number, mode: SliderChangeMode) => {
+          this.dragging = mode !== SliderChangeMode.End;
+          this.positionMs = value;
+          if (mode === SliderChangeMode.End) {
+            this.player.seek(value);
+            this.showControls();
+          }
+        })
+      Text(this.formatMs(this.durationMs))
+        .fontSize(11)
+        .fontColor($r('app.color.text_on_media'))
+    }
+    .width('100%')
+    .height(PLAYER_CTRL_HEIGHT)
+    .padding({ left: PAGE_PADDING, right: PAGE_PADDING })
+    .backgroundColor(Color.Black)
+  }
+
+  /** 竖屏底部单个互动项（图标 + 数字）。action 传入则替换默认的占位 toast */
+  @Builder
+  portraitActionCount(icon: Resource, label: string, action?: () => void, imageIcon?: Resource) {
+    Column({ space: 3 }) {
+      if (imageIcon !== undefined) {
+        Image(imageIcon)
+          .width(24)
+          .height(24)
+          .objectFit(ImageFit.Contain)
+          .draggable(false)
+      } else {
+        SymbolGlyph(icon)
+          .fontSize(24)
+          .fontColor([$r('app.color.text_on_media')])
+      }
+      Text(label)
+        .fontSize(9)
+        .fontColor($r('app.color.text_on_media'))
+        .opacity(0.85)
+        .maxLines(1)
+    }
+    .width(40)
+    .alignItems(HorizontalAlign.Center)
+    .onClick(() => {
+      if (action !== undefined) {
+        action();
+      } else {
+        this.toast(`${label} 功能待接入`);
+      }
     })
   }
 
@@ -1962,13 +2250,21 @@ export struct VideoPage {
     .padding({ bottom: 12 })
   }
 
-  /** 单个互动项：图标在上、数字或动作名在下 */
+  /** 单个互动项：图标在上、数字或动作名在下。action 传入则替换默认的占位 toast */
   @Builder
-  actionItem(icon: Resource, label: string) {
+  actionItem(icon: Resource, label: string, action?: () => void, imageIcon?: Resource) {
     Column({ space: 5 }) {
-      SymbolGlyph(icon)
-        .fontSize(23)
-        .fontColor([$r('app.color.text_secondary')])
+      if (imageIcon !== undefined) {
+        Image(imageIcon)
+          .width(23)
+          .height(23)
+          .objectFit(ImageFit.Contain)
+          .draggable(false)
+      } else {
+        SymbolGlyph(icon)
+          .fontSize(23)
+          .fontColor([$r('app.color.text_secondary')])
+      }
       Text(label)
         .fontSize(11)
         .fontColor($r('app.color.text_tertiary'))
@@ -1977,11 +2273,15 @@ export struct VideoPage {
     .layoutWeight(1)
     .alignItems(HorizontalAlign.Center)
     .onClick(() => {
-      this.toast(`${label} 功能待接入`);
+      if (action !== undefined) {
+        action();
+      } else {
+        this.toast(`${label} 功能待接入`);
+      }
     })
   }
 
-  /** 六项互动：点赞 / 点踩 / 投币 / 收藏 / 再看 / 分享（参考图） */
+  /** 六项互动：点赞 / 点踩 / toubi / 收藏 / 再看 / 分享（参考图） */
   @Builder
   actionRow() {
     Row() {
@@ -1989,12 +2289,14 @@ export struct VideoPage {
         this.detail.likeText.length > 0 ? this.detail.likeText : '点赞')
       this.actionItem($r('sys.symbol.hand_thumbsdown'), '点踩')
       this.actionItem($r('sys.symbol.medal'),
-        this.detail.coinText.length > 0 ? this.detail.coinText : '投币')
+        this.detail.coinText.length > 0 ? this.detail.coinText : 'toubi', undefined, $r('app.media.toubi'))
       this.actionItem($r('sys.symbol.star'),
         this.detail.favText.length > 0 ? this.detail.favText : '收藏')
       this.actionItem($r('sys.symbol.arrow_clockwise'), '再看')
       this.actionItem($r('sys.symbol.share'),
-        this.detail.shareText.length > 0 ? this.detail.shareText : '分享')
+        this.detail.shareText.length > 0 ? this.detail.shareText : '分享', () => {
+          this.shareVideo();
+        })
     }
     .width('100%')
     .padding({ top: 4, bottom: 10 })
@@ -2035,6 +2337,9 @@ export struct VideoPage {
         prefs: $prefs,
         onChanged: (key: string, value: number | boolean): void => {
           this.onSettingsChanged(key, value);
+        },
+        onShare: (): void => {
+          this.shareVideo();
         }
       })
     }
@@ -2189,7 +2494,7 @@ export struct VideoPage {
               .textOverflow({ overflow: TextOverflow.Ellipsis })
               .constraintSize({ maxWidth: '62%' })
             if (item.level > 0) {
-              LevelBadge({ level: item.level, badgeHeight: 13 })
+              LevelBadge({ level: item.level, badgeHeight: 18 })
             }
             if (item.fromUp) {
               Text('UP')
@@ -2225,6 +2530,22 @@ export struct VideoPage {
               }
             }
             .alignItems(VerticalAlign.Center)
+            // 共 N 条回复：移到时间 | 点赞同一行（时间|点赞|共N条回复|回复）
+            if (item.rcount > 0) {
+              Row({ space: 3 }) {
+                Text(`共 ${item.rcount} 条回复`)
+                  .fontSize(11)
+                  .fontColor($r('app.color.brand_primary'))
+                SymbolGlyph($r('sys.symbol.chevron_down'))
+                  .fontSize(10)
+                  .fontColor([$r('app.color.brand_primary')])
+                  .rotate({ angle: this.expandedRpid === item.rpid ? 180 : 0 })
+              }
+              .alignItems(VerticalAlign.Center)
+              .onClick(() => {
+                this.toggleSub(item);
+              })
+            }
             Text('回复')
               .fontSize(11)
               .fontColor($r('app.color.text_tertiary'))
@@ -2236,23 +2557,6 @@ export struct VideoPage {
           .width('100%')
           .alignItems(VerticalAlign.Center)
           .margin({ top: 1 })
-
-          if (item.rcount > 0) {
-            Row({ space: 3 }) {
-              Text(this.expandedRpid === item.rpid ? '收起回复' : `共 ${item.rcount} 条回复`)
-                .fontSize(11)
-                .fontColor($r('app.color.brand_primary'))
-              SymbolGlyph($r('sys.symbol.chevron_down'))
-                .fontSize(10)
-                .fontColor([$r('app.color.brand_primary')])
-                .rotate({ angle: this.expandedRpid === item.rpid ? 180 : 0 })
-            }
-            .padding({ top: 2, bottom: 2 })
-            .alignItems(VerticalAlign.Center)
-            .onClick(() => {
-              this.toggleSub(item);
-            })
-          }
         }
         .layoutWeight(1)
         .alignItems(HorizontalAlign.Start)
@@ -2317,13 +2621,6 @@ export struct VideoPage {
         }
       }
 
-      Text(root.name.length > 0 ? `回复 @${root.name}` : '回复')
-        .fontSize(11)
-        .fontColor($r('app.color.text_secondary'))
-        .padding({ top: 6, bottom: 2 })
-        .onClick(() => {
-          this.openComposer(root.rpid, '', root.name);
-        })
     }
     .width('100%')
     .padding({ left: 48, top: 2, bottom: 6 })
@@ -2377,7 +2674,7 @@ export struct VideoPage {
               .textOverflow({ overflow: TextOverflow.Ellipsis })
               .layoutWeight(1)
           } else if (sub.level > 0) {
-            LevelBadge({ level: sub.level, badgeHeight: 12 })
+            LevelBadge({ level: sub.level, badgeHeight: 17 })
           }
           Blank()
         }
@@ -2592,13 +2889,6 @@ export struct VideoPage {
             Text(this.composerTarget.length > 0 ? `回复 @${this.composerTarget}` : '发一条评论')
               .fontSize(13)
               .fontColor($r('app.color.text_secondary'))
-            Blank()
-            SymbolGlyph($r('sys.symbol.xmark_circle_fill'))
-              .fontSize(18)
-              .fontColor([$r('app.color.text_tertiary')])
-              .onClick(() => {
-                this.closeComposer();
-              })
           }
           .width('100%')
           .alignItems(VerticalAlign.Center)
@@ -2793,13 +3083,17 @@ export struct VideoPage {
             this.playerLayer()
           }
           .width('100%')
+          // 竖屏连播：画布铺满整屏（底部四块改由独立浮层盖在视频之上，不再挤压画布）；
+          // 常规 / 全屏：16:9 或铺满。始终只改这一个画布容器高度，绝不切 if 分支重建 XComponent。
           .height(this.fullscreen || this.portraitMode ? '100%' : this.canvasHeight)
           .backgroundColor(Color.Black)
           .clip(true)
           .onAreaChange((oldValue: Area, newValue: Area) => {
             const width: number = Number(newValue.width);
+            const height: number = Number(newValue.height);
             if (width > 0) {
               this.surfaceWidth = width;
+              this.surfaceHeight = height;
               // 按真实宽度重算 16:9：display 宽度在折叠屏 / 分屏下可能与内容区不一致，
               // 差几 vp 就会让画面上下被裁掉一小条，看起来像被底部白条压住。
               if (!this.fullscreen && !this.portraitMode) {
@@ -2821,69 +3115,17 @@ export struct VideoPage {
         // 这条 strip 本身由根 Stack 的底色画出（黑色 / 白色），高度正好一个状态栏。
         .padding({ top: this.fullscreen ? 0 : (this.topImmersive ? 0 : this.topInset) })
 
-        // 竖屏连播沉浸模式：视频铺满整屏，信息作为浮层叠在画面上。
-        // 用纯 flex 流式布局（Column + Row），不依赖 Stack 的 align 对齐（本 SDK 下不可靠）。
+        // 竖屏连播浮层：顶栏固定 + 底部四块（up 信息/名称可隐藏，进度条/操作行固定），
+        // 盖在视频之上、与视频分属不同图层。中间空白用 Transparent 让点击穿透到视频手势。
         if (this.portraitMode && !this.fullscreen) {
-          Column() {
-            // 顶部沉浸栏
-            Row() {
-              Row() {
-                SymbolGlyph($r('sys.symbol.chevron_backward'))
-                  .fontSize(18)
-                  .fontColor([$r('app.color.text_on_media')])
-              }
-              .width(32)
-              .height(32)
-              .justifyContent(FlexAlign.Center)
-              .backgroundColor($r('app.color.scrim'))
-              .borderRadius(16)
-              .onClick(() => {
-                this.onBack();
-              })
-
-              Text('正在看')
-                .fontSize(13)
-                .fontColor($r('app.color.text_on_media'))
-                .margin({ left: 10 })
-
-              Blank()
-
-              Row({ space: 16 }) {
-                SymbolGlyph($r('sys.symbol.rectangle_stack'))
-                  .fontSize(18)
-                  .fontColor([$r('app.color.text_on_media')])
-                SymbolGlyph($r('sys.symbol.rectangle_on_rectangle'))
-                  .fontSize(18)
-                  .fontColor([$r('app.color.text_on_media')])
-                SymbolGlyph($r('sys.symbol.ellipsis_circle'))
-                  .fontSize(18)
-                  .fontColor([$r('app.color.text_on_media')])
-              }
-            }
-            .width('100%')
-            .height(PLAYER_BAR_HEIGHT)
-            .padding({ left: PAGE_PADDING, right: PAGE_PADDING })
-            .alignItems(VerticalAlign.Center)
-
-            // 中间：左侧留白 + 右侧竖排互动（垂直居中）
-            Row() {
-              Blank()
-              this.portraitSideActions()
-            }
-            .width('100%')
-            .layoutWeight(1)
-            .alignItems(VerticalAlign.Center)
-            .padding({ right: 8 })
-
-            // 底部信息浮层
-            this.portraitBottomSheet()
-          }
-          .width('100%')
-          .height('100%')
+          this.portraitOverlay()
         }
 
         // 评论输入浮层：盖住整页，含标题栏区域（本页 hideTitleBar）
         this.commentComposer()
+
+        // 竖屏顶部「设置」唤起的底部弹窗（内容与播放区设置面板一致）
+        this.portraitSettingsSheet()
       }
       .width('100%')
       .height('100%')

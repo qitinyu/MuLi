@@ -93,7 +93,7 @@ export struct SettingsPage {
           this.entryCard($r('sys.symbol.list_bullet'), '播放页 · List 分区',
             '显示 List、跟随界面移动隐藏、首页分区勾选', ROUTE_PLAYPAGE)
 
-          Text('沐哩 MuLi  V2.0.5')
+          Text('沐哩 MuLi  V2.0.7')
             .width('100%')
             .fontSize(11)
             .fontColor($r('app.color.text_tertiary'))

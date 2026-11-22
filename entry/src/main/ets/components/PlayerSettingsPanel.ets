@@ -19,6 +19,9 @@ export struct PlayerSettingsPanel {
   @Link prefs: PlayerPrefs;
   onChanged: (key: string, value: number | boolean) => void = () => {
   };
+  /** 偏好设置里「分享视频」调起系统分享（由播放页注入，面板本身不持有视频信息） */
+  onShare: () => void = () => {
+  };
 
   private context(): common.UIAbilityContext {
     return this.getUIContext().getHostContext() as common.UIAbilityContext;
@@ -79,8 +82,12 @@ export struct PlayerSettingsPanel {
         this.commitNumber('danmakuSpeed', this.prefs.danmakuSpeed);
         break;
       case 'preference': {
-        const labels: Array<string> = ['分享视频', '减推视频', '举报视频', '进小黑屋'];
-        this.toast(`${labels[index]} 功能待接入`);
+        if (index === 0) {
+          this.onShare();
+        } else {
+          const labels: Array<string> = ['分享视频', '减推视频', '举报视频', '进小黑屋'];
+          this.toast(`${labels[index]} 功能待接入`);
+        }
         break;
       }
       default:

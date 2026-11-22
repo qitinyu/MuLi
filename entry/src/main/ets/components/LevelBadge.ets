@@ -36,7 +36,7 @@ export struct LevelBadge {
   /** 用户等级，超出 0~6 会被夹到区间内 */
   level: number = 0;
   /** 徽章高度（vp），宽度自动按比例算；不能叫 height，会和组件自带的 height() 冲突 */
-  badgeHeight: number = 13;
+  badgeHeight: number = 15;
 
   build() {
     Image(levelBadgeRes(this.level))
