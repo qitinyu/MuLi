@@ -15,6 +15,7 @@ import { WebLoginPage } from './WebLoginPage';
 import { ChangeLogPage } from './ChangeLogPage';
 import { AboutPage } from './AboutPage';
 import { SettingsPage } from './SettingsPage';
+import { SECTION_APPEARANCE, SECTION_PLAYER, SECTION_PLAYPAGE, SettingsDetailPage } from './SettingsDetailPage';
 import { VideoPage } from './VideoPage';
 import { AuthService } from '../services/AuthService';
 import { AppPrefs } from '../services/AppPrefs';
@@ -430,6 +431,12 @@ struct Index {
       VideoPage({ pathStack: this.pathStack, videoParam: this.videoParamOf(param) })
     } else if (name === 'settings') {
       SettingsPage({ pathStack: this.pathStack })
+    } else if (name === 'settings_appearance') {
+      SettingsDetailPage({ pathStack: this.pathStack, section: SECTION_APPEARANCE })
+    } else if (name === 'settings_player') {
+      SettingsDetailPage({ pathStack: this.pathStack, section: SECTION_PLAYER })
+    } else if (name === 'settings_playpage') {
+      SettingsDetailPage({ pathStack: this.pathStack, section: SECTION_PLAYPAGE })
     }
   }
 

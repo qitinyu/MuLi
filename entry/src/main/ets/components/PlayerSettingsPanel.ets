@@ -201,8 +201,10 @@ export struct PlayerSettingsPanel {
       this.menuRow('默认清晰度', 'quality',
         PlayerPrefs.QUALITY_LABELS[this.indexOfValue(PlayerPrefs.QUALITIES, this.prefs.quality)],
         PlayerPrefs.QUALITY_LABELS, '切换后重新载入播放地址')
-      this.toggleRow('终端继续播放', '再次打开时从上次位置继续', 'continuePlay', this.prefs.continuePlay)
-      this.toggleRow('迷你进度条', '控制条隐藏时底部保留细条', 'miniProgress', this.prefs.miniProgress)
+      this.toggleRow('中断继续播放', '被电话 / 切后台等打断后，回到本页自动从原进度接着放',
+        'continuePlay', this.prefs.continuePlay)
+      this.toggleRow('迷你进度条', '无操作时隐藏播放区界面，只在视频最低边留一条进度条',
+        'miniProgress', this.prefs.miniProgress)
       this.toggleRow('快捷手势', '双击 / 滑动 / 长按加速', 'quickGestures', this.prefs.quickGestures)
 
       this.sectionTitle('播放行为')

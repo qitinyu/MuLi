@@ -46,10 +46,22 @@ export default class EntryAbility extends UIAbility {
 
   onForeground(): void {
     hilog.info(DOMAIN, TAG, 'onForeground');
+    // 播放页靠它做「中断续播」：切走再回来时从原进度接着放
+    this.emitAppEvent('muli_app_foreground');
   }
 
   onBackground(): void {
     hilog.info(DOMAIN, TAG, 'onBackground');
+    this.emitAppEvent('muli_app_background');
+  }
+
+  /** 应用前后台事件：页面级订阅（eventHub），比 window 事件在各机型上更稳 */
+  private emitAppEvent(name: string): void {
+    try {
+      this.context.eventHub.emit(name);
+    } catch (err) {
+      hilog.warn(DOMAIN, TAG, 'emit %{public}s failed', name);
+    }
   }
 
   onConfigurationUpdate(newConfig: Configuration): void {

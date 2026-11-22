@@ -28,6 +28,12 @@ export class AppPrefs {
   static readonly KEY_PARTITIONS: string = 'muli_partitions';
   /** 我的页背景（http 链接或沙箱图片路径） */
   static readonly KEY_MINE_COVER: string = 'muli_mineCover';
+  /** 视频卡 UP 主名过长时的处理：0 = 过长隐藏（省略号），1 = 循环滚动 */
+  static readonly KEY_AUTHOR_NAME_MODE: string = 'muli_authorNameMode';
+  /** 播放区顶部是否沉浸到系统状态栏（默认开启；关闭时顶部加一条增量色块） */
+  static readonly KEY_TOP_IMMERSIVE: string = 'muli_playerTopImmersive';
+  /** 关闭沉浸时顶部增量条颜色：0 = 黑色，1 = 白色 */
+  static readonly KEY_TOP_INSET_COLOR: string = 'muli_playerTopInsetColor';
 
   /** 默认启动页候选：与底部栏版块一一对应，番剧暂未建版块 */
   static readonly START_TAB_LABELS: Array<string> = ['首页', '动态', '番剧', '热门', '直播'];
@@ -35,6 +41,11 @@ export class AppPrefs {
   private static readonly START_TAB_TO_MAIN: Array<number> = [0, 1, -1, 3, 4];
 
   static readonly CARD_LAYOUT_LABELS: Array<string> = ['1×N 单列', '2×N 双列', '自适应'];
+
+  /** UP 主名过长策略：下标即存储值 */
+  static readonly AUTHOR_NAME_LABELS: Array<string> = ['过长隐藏', '循环滚动'];
+  /** 关闭顶部沉浸时增量条颜色 */
+  static readonly TOP_INSET_LABELS: Array<string> = ['黑色', '白色'];
 
   /** 启动时把磁盘设置灌进 AppStorage（默认值先写，磁盘值覆盖） */
   static async load(context: common.UIAbilityContext): Promise<void> {
@@ -49,6 +60,9 @@ export class AppPrefs {
       AppStorage.setOrCreate(AppPrefs.KEY_PARTITIONS,
         store.getSync('partitions', ChannelRegistry.defaultKeys()) as string);
       AppStorage.setOrCreate(AppPrefs.KEY_MINE_COVER, store.getSync('mine_cover', '') as string);
+      AppStorage.setOrCreate(AppPrefs.KEY_AUTHOR_NAME_MODE, store.getSync('author_name_mode', 0) as number);
+      AppStorage.setOrCreate(AppPrefs.KEY_TOP_IMMERSIVE, store.getSync('player_top_immersive', true) as boolean);
+      AppStorage.setOrCreate(AppPrefs.KEY_TOP_INSET_COLOR, store.getSync('player_top_inset_color', 0) as number);
     } catch (err) {
       console.warn(`MuLiAppPrefs load failed: ${String(err)}`);
     }
@@ -64,6 +78,9 @@ export class AppPrefs {
     AppStorage.setOrCreate(AppPrefs.KEY_LIST_FOLLOW, true);
     AppStorage.setOrCreate(AppPrefs.KEY_PARTITIONS, ChannelRegistry.defaultKeys());
     AppStorage.setOrCreate(AppPrefs.KEY_MINE_COVER, '');
+    AppStorage.setOrCreate(AppPrefs.KEY_AUTHOR_NAME_MODE, 0);
+    AppStorage.setOrCreate(AppPrefs.KEY_TOP_IMMERSIVE, true);
+    AppStorage.setOrCreate(AppPrefs.KEY_TOP_INSET_COLOR, 0);
   }
 
   static async save(context: common.UIAbilityContext, key: string, value: number | boolean | string): Promise<void> {
@@ -93,6 +110,12 @@ export class AppPrefs {
         return 'partitions';
       case AppPrefs.KEY_MINE_COVER:
         return 'mine_cover';
+      case AppPrefs.KEY_AUTHOR_NAME_MODE:
+        return 'author_name_mode';
+      case AppPrefs.KEY_TOP_IMMERSIVE:
+        return 'player_top_immersive';
+      case AppPrefs.KEY_TOP_INSET_COLOR:
+        return 'player_top_inset_color';
       default:
         return key;
     }
@@ -127,5 +150,19 @@ export class AppPrefs {
       return AppPrefs.CARD_LAYOUT_LABELS[1];
     }
     return AppPrefs.CARD_LAYOUT_LABELS[layout];
+  }
+
+  static authorNameLabel(mode: number): string {
+    if (mode < 0 || mode >= AppPrefs.AUTHOR_NAME_LABELS.length) {
+      return AppPrefs.AUTHOR_NAME_LABELS[0];
+    }
+    return AppPrefs.AUTHOR_NAME_LABELS[mode];
+  }
+
+  static topInsetLabel(index: number): string {
+    if (index < 0 || index >= AppPrefs.TOP_INSET_LABELS.length) {
+      return AppPrefs.TOP_INSET_LABELS[0];
+    }
+    return AppPrefs.TOP_INSET_LABELS[index];
   }
 }
