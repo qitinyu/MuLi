@@ -747,7 +747,7 @@ export struct SearchPage {
   /** 等级小标签：直接用素材里的 Lv0~Lv6 矢量图 */
   @Builder
   levelChip(level: number) {
-    LevelBadge({ level: level, badgeHeight: 13 })
+    LevelBadge({ level: level, badgeHeight: 15 })
   }
 
   @Builder

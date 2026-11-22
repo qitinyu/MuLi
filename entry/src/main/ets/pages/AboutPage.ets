@@ -16,7 +16,7 @@ import { AuthService, AuthDiagLine } from '../services/AuthService';
 export struct AboutPage {
   pathStack: NavPathStack | undefined = undefined;
   @State materialLevel: hdsMaterial.MaterialLevel = hdsMaterial.MaterialLevel.SMOOTH;
-  @State version: string = '2.0.3';
+  @State version: string = '2.0.6';
   @State running: boolean = false;
   @State diagnosed: boolean = false;
   @State lines: Array<AuthDiagLine> = [];
