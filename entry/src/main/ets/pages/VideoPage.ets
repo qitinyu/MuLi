@@ -1806,6 +1806,9 @@ export struct VideoPage {
               prefs: $prefs,
               onChanged: (key: string, value: number | boolean): void => {
                 this.onSettingsChanged(key, value);
+              },
+              onShare: (): void => {
+                this.shareVideo();
               }
             })
           }
@@ -1942,7 +1945,7 @@ export struct VideoPage {
         this.portraitActionCount($r('sys.symbol.hand_thumbsup'),
           this.detail.likeText.length > 0 ? this.bareCount(this.detail.likeText) : '赞')
         this.portraitActionCount($r('sys.symbol.medal'),
-          this.detail.coinText.length > 0 ? this.bareCount(this.detail.coinText) : '币')
+          this.detail.coinText.length > 0 ? this.bareCount(this.detail.coinText) : '币', undefined, $r('app.media.toubi'))
         this.portraitActionCount($r('sys.symbol.star'),
           this.detail.favText.length > 0 ? this.bareCount(this.detail.favText) : '藏')
         // 评论：退出竖屏连播，回到普通播放页并直接切到评论区
@@ -1997,11 +2000,19 @@ export struct VideoPage {
 
   /** 竖屏底部单个互动项（图标 + 数字）。action 传入则替换默认的占位 toast */
   @Builder
-  portraitActionCount(icon: Resource, label: string, action?: () => void) {
+  portraitActionCount(icon: Resource, label: string, action?: () => void, imageIcon?: Resource) {
     Column({ space: 3 }) {
-      SymbolGlyph(icon)
-        .fontSize(24)
-        .fontColor([$r('app.color.text_on_media')])
+      if (imageIcon !== undefined) {
+        Image(imageIcon)
+          .width(24)
+          .height(24)
+          .objectFit(ImageFit.Contain)
+          .draggable(false)
+      } else {
+        SymbolGlyph(icon)
+          .fontSize(24)
+          .fontColor([$r('app.color.text_on_media')])
+      }
       Text(label)
         .fontSize(9)
         .fontColor($r('app.color.text_on_media'))
@@ -2239,13 +2250,21 @@ export struct VideoPage {
     .padding({ bottom: 12 })
   }
 
-  /** 单个互动项：图标在上、数字或动作名在下 */
+  /** 单个互动项：图标在上、数字或动作名在下。action 传入则替换默认的占位 toast */
   @Builder
-  actionItem(icon: Resource, label: string) {
+  actionItem(icon: Resource, label: string, action?: () => void, imageIcon?: Resource) {
     Column({ space: 5 }) {
-      SymbolGlyph(icon)
-        .fontSize(23)
-        .fontColor([$r('app.color.text_secondary')])
+      if (imageIcon !== undefined) {
+        Image(imageIcon)
+          .width(23)
+          .height(23)
+          .objectFit(ImageFit.Contain)
+          .draggable(false)
+      } else {
+        SymbolGlyph(icon)
+          .fontSize(23)
+          .fontColor([$r('app.color.text_secondary')])
+      }
       Text(label)
         .fontSize(11)
         .fontColor($r('app.color.text_tertiary'))
@@ -2254,11 +2273,15 @@ export struct VideoPage {
     .layoutWeight(1)
     .alignItems(HorizontalAlign.Center)
     .onClick(() => {
-      this.toast(`${label} 功能待接入`);
+      if (action !== undefined) {
+        action();
+      } else {
+        this.toast(`${label} 功能待接入`);
+      }
     })
   }
 
-  /** 六项互动：点赞 / 点踩 / 投币 / 收藏 / 再看 / 分享（参考图） */
+  /** 六项互动：点赞 / 点踩 / toubi / 收藏 / 再看 / 分享（参考图） */
   @Builder
   actionRow() {
     Row() {
@@ -2266,12 +2289,14 @@ export struct VideoPage {
         this.detail.likeText.length > 0 ? this.detail.likeText : '点赞')
       this.actionItem($r('sys.symbol.hand_thumbsdown'), '点踩')
       this.actionItem($r('sys.symbol.medal'),
-        this.detail.coinText.length > 0 ? this.detail.coinText : '投币')
+        this.detail.coinText.length > 0 ? this.detail.coinText : 'toubi', undefined, $r('app.media.toubi'))
       this.actionItem($r('sys.symbol.star'),
         this.detail.favText.length > 0 ? this.detail.favText : '收藏')
       this.actionItem($r('sys.symbol.arrow_clockwise'), '再看')
       this.actionItem($r('sys.symbol.share'),
-        this.detail.shareText.length > 0 ? this.detail.shareText : '分享')
+        this.detail.shareText.length > 0 ? this.detail.shareText : '分享', () => {
+          this.shareVideo();
+        })
     }
     .width('100%')
     .padding({ top: 4, bottom: 10 })
@@ -2312,6 +2337,9 @@ export struct VideoPage {
         prefs: $prefs,
         onChanged: (key: string, value: number | boolean): void => {
           this.onSettingsChanged(key, value);
+        },
+        onShare: (): void => {
+          this.shareVideo();
         }
       })
     }
@@ -2502,6 +2530,22 @@ export struct VideoPage {
               }
             }
             .alignItems(VerticalAlign.Center)
+            // 共 N 条回复：移到时间 | 点赞同一行（时间|点赞|共N条回复|回复）
+            if (item.rcount > 0) {
+              Row({ space: 3 }) {
+                Text(`共 ${item.rcount} 条回复`)
+                  .fontSize(11)
+                  .fontColor($r('app.color.brand_primary'))
+                SymbolGlyph($r('sys.symbol.chevron_down'))
+                  .fontSize(10)
+                  .fontColor([$r('app.color.brand_primary')])
+                  .rotate({ angle: this.expandedRpid === item.rpid ? 180 : 0 })
+              }
+              .alignItems(VerticalAlign.Center)
+              .onClick(() => {
+                this.toggleSub(item);
+              })
+            }
             Text('回复')
               .fontSize(11)
               .fontColor($r('app.color.text_tertiary'))
@@ -2513,23 +2557,6 @@ export struct VideoPage {
           .width('100%')
           .alignItems(VerticalAlign.Center)
           .margin({ top: 1 })
-
-          if (item.rcount > 0) {
-            Row({ space: 3 }) {
-              Text(this.expandedRpid === item.rpid ? '收起回复' : `共 ${item.rcount} 条回复`)
-                .fontSize(11)
-                .fontColor($r('app.color.brand_primary'))
-              SymbolGlyph($r('sys.symbol.chevron_down'))
-                .fontSize(10)
-                .fontColor([$r('app.color.brand_primary')])
-                .rotate({ angle: this.expandedRpid === item.rpid ? 180 : 0 })
-            }
-            .padding({ top: 2, bottom: 2 })
-            .alignItems(VerticalAlign.Center)
-            .onClick(() => {
-              this.toggleSub(item);
-            })
-          }
         }
         .layoutWeight(1)
         .alignItems(HorizontalAlign.Start)
@@ -2594,13 +2621,6 @@ export struct VideoPage {
         }
       }
 
-      Text(root.name.length > 0 ? `回复 @${root.name}` : '回复')
-        .fontSize(11)
-        .fontColor($r('app.color.text_secondary'))
-        .padding({ top: 6, bottom: 2 })
-        .onClick(() => {
-          this.openComposer(root.rpid, '', root.name);
-        })
     }
     .width('100%')
     .padding({ left: 48, top: 2, bottom: 6 })
@@ -2869,13 +2889,6 @@ export struct VideoPage {
             Text(this.composerTarget.length > 0 ? `回复 @${this.composerTarget}` : '发一条评论')
               .fontSize(13)
               .fontColor($r('app.color.text_secondary'))
-            Blank()
-            SymbolGlyph($r('sys.symbol.xmark_circle_fill'))
-              .fontSize(18)
-              .fontColor([$r('app.color.text_tertiary')])
-              .onClick(() => {
-                this.closeComposer();
-              })
           }
           .width('100%')
           .alignItems(VerticalAlign.Center)
