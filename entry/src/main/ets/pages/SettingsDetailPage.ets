@@ -429,7 +429,7 @@ export struct SettingsDetailPage {
             this.appearanceGroup()
           }
 
-          Text('沐哩 MuLi  V2.0.6')
+          Text('沐哩 MuLi  V2.0.7')
             .width('100%')
             .fontSize(11)
             .fontColor($r('app.color.text_tertiary'))
