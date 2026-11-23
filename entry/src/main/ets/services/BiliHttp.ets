@@ -502,6 +502,40 @@ export class BiliHttp {
     }
   }
 
+  /**
+   * 取原始文本（XML / 纯文本接口用）。
+   * 弹幕列表 /x/v1/dm/list.so 返回的是 XML，不能走 JSON 解析；
+   * 服务端会 gzip，鸿蒙 http 栈会自动解压，这里拿到的已经是明文。
+   */
+  static async getText(host: string, path: string, query: Record<string, string>,
+    referer: string = 'https://www.bilibili.com/'): Promise<string> {
+    const keys: Array<string> = Object.keys(query);
+    let queryText: string = '';
+    for (let i = 0; i < keys.length; i++) {
+      if (i > 0) {
+        queryText += '&';
+      }
+      queryText += `${encodeURIComponent(keys[i])}=${encodeURIComponent(query[keys[i]])}`;
+    }
+    const url: string = queryText.length > 0
+      ? `https://${host}${path}?${queryText}`
+      : `https://${host}${path}`;
+    const request: http.HttpRequest = http.createHttp();
+    try {
+      const response: http.HttpResponse = await request.request(url, {
+        method: http.RequestMethod.GET,
+        header: BiliHttp.headers(referer, true),
+        connectTimeout: 10000,
+        readTimeout: 15000,
+        expectDataType: http.HttpDataType.STRING
+      });
+      BiliCookie.mergeSetCookie(response.cookies);
+      return typeof response.result === 'string' ? response.result as string : '';
+    } finally {
+      request.destroy();
+    }
+  }
+
   static async postForm(host: string, path: string, form: Record<string, string>,
     referer: string = 'https://www.bilibili.com/'): Promise<Record<string, Object>> {
     const keys: Array<string> = Object.keys(form);

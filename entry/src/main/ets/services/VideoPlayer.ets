@@ -33,6 +33,9 @@ export class VideoPlayer {
   /** 播放自然结束（单集循环 / 随机连播 / 停止推荐 由页面据此决策） */
   onCompleted: () => void = () => {
   };
+  /** 视频真实分辨率（px）：画面容器按这个比例摆，竖屏才不会上下留大片黑边 */
+  onVideoSize: (width: number, height: number) => void = () => {
+  };
 
   /** 当前倍速（0.5 / 0.75 / 1 / 1.25 / 1.5 / 2） */
   private speed: number = 1;
@@ -127,6 +130,7 @@ export class VideoPlayer {
         this.prepared = true;
         this.preparing = false;
         this.applyScaleType(player);
+        this.reportVideoSize(player);
         this.onProgress(player.currentTime, player.duration);
         this.onStateChange(state);
         // 新建的 player 默认是 1.0x，若页面此前设过倍速需重新应用（切清晰度/挂画布会重建 player）
@@ -200,6 +204,19 @@ export class VideoPlayer {
       } catch (nested) {
         console.warn(`${TAG} scale type ignored: ${String(nested)}`);
       }
+    }
+  }
+
+  /** 把视频真实宽高报给页面：竖屏连播要按它算画面容器高度（AVPlayer 只在 prepared 之后才有值） */
+  private reportVideoSize(player: media.AVPlayer): void {
+    try {
+      const width: number = player.width;
+      const height: number = player.height;
+      if (width > 0 && height > 0) {
+        this.onVideoSize(width, height);
+      }
+    } catch (err) {
+      console.warn(`${TAG} read video size failed: ${String(err)}`);
     }
   }
 

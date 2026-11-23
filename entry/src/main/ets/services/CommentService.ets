@@ -3,6 +3,14 @@ import { pubTimeText } from '../common/Format';
 
 const TAG = 'MuLiComment';
 
+/** 评论正文里的表情：b 站正文用 `[doge]` 这样的文字标记，emote 给它对应的图片地址 */
+export class CommentEmote {
+  /** 正文里的原始标记，例如 `[doge]` */
+  text: string = '';
+  /** 表情图片地址（https） */
+  url: string = '';
+}
+
 /** 一条视频评论（扁平化：接口原始结构层次太深，组件层只看这些字段） */
 export class VideoComment {
   rpid: string = '';
@@ -25,6 +33,8 @@ export class VideoComment {
   replyToName: string = '';
   /** reply/main 自带的楼中楼预览（最多 2~3 条），用于展开时先展示，省一次请求 */
   preview: Array<VideoComment> = [];
+  /** 正文里出现的表情（`[doge]` → 图片地址），渲染时内联成图片 */
+  emotes: Array<CommentEmote> = [];
 
   /** 展示用：发布时间文案 */
   timeText(): string {
@@ -66,6 +76,14 @@ export class CommentService {
   static readonly MODE_HOT: number = 3;
   private static readonly PAGE_SIZE: string = '20';
   private static readonly SUB_PAGE_SIZE: string = '10';
+  /**
+   * 表情登记表：`[doge]` → 图片地址。
+   *
+   * 来源有两条：① 评论正文的 content.emote（哪个表情被用过就登记哪个，未登录也能拿到图）；
+   * ② 输入面板接口 /x/emote/user/panel/web（登录后返回完整表情包）。
+   * 两者合并后供输入面板渲染，接口拿不到时至少能显示评论里见过的那些。
+   */
+  private static emoteCache: Map<string, string> = new Map<string, string>();
 
   static async list(aid: number, mode: number, cursor: string): Promise<CommentFeed> {
     const feed: CommentFeed = new CommentFeed();
@@ -143,6 +161,67 @@ export class CommentService {
     return feed;
   }
 
+  /**
+   * 输入面板的表情列表：`/x/emote/user/panel/web` 返回当前登录用户的表情包（未登录时为空）。
+   * 接口空/失败就退回「评论里见过的表情」——未登录也能有图，不会只剩一屏 `[文字]`。
+   */
+  static async emotePanel(): Promise<Array<CommentEmote>> {
+    const out: Array<CommentEmote> = [];
+    const seen: Map<string, boolean> = new Map<string, boolean>();
+    try {
+      const query: Record<string, string> = {};
+      query['business'] = 'reply';
+      const body: Record<string, Object> = await BiliHttp.getJson(
+        BiliHttp.API_HOST, '/x/emote/user/panel/web', query, 'https://www.bilibili.com/');
+      if (J.num(body, 'code') === 0) {
+        const data: Record<string, Object> = J.obj(body, 'data');
+        const packages: Array<Object> = J.arr(data, 'packages');
+        for (let i = 0; i < packages.length; i++) {
+          const pkg: Record<string, Object> = packages[i] as Record<string, Object>;
+          const emotes: Array<Object> = J.arr(pkg, 'emotes');
+          for (let k = 0; k < emotes.length; k++) {
+            const raw: Record<string, Object> = emotes[k] as Record<string, Object>;
+            const text: string = J.str(raw, 'text');
+            let url: string = J.str(raw, 'url');
+            if (url.length === 0) {
+              url = J.str(raw, 'gif_url');
+            }
+            url = CommentService.normalizeEmoteUrl(url);
+            if (text.length > 0 && url.length > 0 && !seen.has(text)) {
+              seen.set(text, true);
+              const emote: CommentEmote = new CommentEmote();
+              emote.text = text;
+              emote.url = url;
+              out.push(emote);
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.warn(`${TAG} emote panel failed: ${String(err)}`);
+    }
+    // 补上评论里见过、但面板接口没返回的表情
+    CommentService.emoteCache.forEach((url: string, text: string) => {
+      if (!seen.has(text)) {
+        seen.set(text, true);
+        const emote: CommentEmote = new CommentEmote();
+        emote.text = text;
+        emote.url = url;
+        out.push(emote);
+      }
+    });
+    console.info(`${TAG} emote panel size=${out.length}`);
+    return out;
+  }
+
+  private static normalizeEmoteUrl(url: string): string {
+    let out: string = url;
+    if (out.startsWith('//')) {
+      out = `https:${out}`;
+    }
+    return out.replace(/^http:/, 'https:');
+  }
+
   private static toComment(raw: Record<string, Object>): VideoComment {
     const item: VideoComment = new VideoComment();
     const member: Record<string, Object> = J.obj(raw, 'member');
@@ -157,6 +236,34 @@ export class CommentService {
     item.face = J.str(member, 'avatar').replace(/^http:/, 'https:');
     item.level = J.num(levelInfo, 'current_level');
     item.message = J.str(content, 'message');
+    // 表情：content.emote 是 { '[doge]': { url, gif_url } } 的映射，
+    // 取出来交给渲染层按标记内联成图片，避免正文里露出 `[doge]` 这样的文字。
+    const emoteObj: Record<string, Object> = J.obj(content, 'emote');
+    const emoteKeys: Array<string> = Object.keys(emoteObj);
+    if (emoteKeys.length > 0) {
+      const emotes: Array<CommentEmote> = [];
+      for (let i = 0; i < emoteKeys.length; i++) {
+        const key: string = emoteKeys[i];
+        const emoteRaw: Record<string, Object> = emoteObj[key] as Record<string, Object>;
+        let url: string = J.str(emoteRaw, 'url');
+        if (url.length === 0) {
+          url = J.str(emoteRaw, 'gif_url');
+        }
+        url = url.replace(/^http:/, 'https:');
+        if (url.startsWith('//')) {
+          url = `https:${url}`;
+        }
+        if (url.length > 0) {
+          const emote: CommentEmote = new CommentEmote();
+          emote.text = key;
+          emote.url = url;
+          emotes.push(emote);
+          // 顺手登记：输入面板也就知道这个表情长什么样了
+          CommentService.emoteCache.set(key, url);
+        }
+      }
+      item.emotes = emotes;
+    }
     item.like = J.num(raw, 'like');
     item.ctime = J.num(raw, 'ctime');
     item.rcount = J.num(raw, 'rcount');
@@ -259,9 +366,9 @@ export class CommentService {
     form['csrf'] = csrf;
     if (rootRpid.length > 0) {
       form['root'] = rootRpid;
-    }
-    if (parentRpid.length > 0) {
-      form['parent'] = parentRpid;
+      // 楼中楼里直接回楼主也必须带 parent（= root）：
+      // 只给 root 不带 parent 时，服务端会把这条当成顶层评论，于是「回复楼主」会跳到楼外去。
+      form['parent'] = parentRpid.length > 0 ? parentRpid : rootRpid;
     }
     const body: Record<string, Object> = await BiliHttp.postForm(
       BiliHttp.API_HOST, '/x/v2/reply/add', form, `https://www.bilibili.com/video/av${aid}/`);
@@ -271,5 +378,32 @@ export class CommentService {
       throw new Error(msg.length > 0 ? msg : `发布失败（${code}）`);
     }
     console.info(`${TAG} posted aid=${aid} root=${rootRpid} parent=${parentRpid} len=${text.length}`);
+  }
+
+  /**
+   * 删除自己发的评论 / 回复：`/x/v2/reply/del`。
+   * 服务端只允许删本人发的，删别人会返回权限类错误码，由调用方提示。
+   */
+  static async remove(aid: number, rpid: string): Promise<void> {
+    if (aid <= 0 || rpid.length === 0) {
+      throw new Error('评论信息不完整');
+    }
+    const csrf: string = BiliCookie.csrf();
+    if (!BiliCookie.isLogin() || csrf.length === 0) {
+      throw new Error('请先登录后再删除');
+    }
+    const form: Record<string, string> = {};
+    form['oid'] = `${aid}`;
+    form['type'] = '1';
+    form['rpid'] = rpid;
+    form['csrf'] = csrf;
+    const body: Record<string, Object> = await BiliHttp.postForm(
+      BiliHttp.API_HOST, '/x/v2/reply/del', form, `https://www.bilibili.com/video/av${aid}/`);
+    const code: number = J.num(body, 'code');
+    if (code !== 0) {
+      const msg: string = J.str(body, 'message');
+      throw new Error(msg.length > 0 ? msg : `删除失败（${code}）`);
+    }
+    console.info(`${TAG} deleted aid=${aid} rpid=${rpid}`);
   }
 }

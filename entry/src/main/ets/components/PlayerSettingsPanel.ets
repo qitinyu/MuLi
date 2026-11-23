@@ -12,7 +12,7 @@ const ROW_HEIGHT: number = 50;
  *   与旧版播放器的下拉菜单逻辑一致，但方向朝下、不再浮空。
  *
  * 分组：基础（清晰度 / 续播 / 迷你进度条 / 手势）、播放行为（长按倍速 / 播放模式 / 偏好）、
- * 弹幕设置（占位：显示区域 / 不透明度 / 字号 / 滚动速度）。
+ * 弹幕设置（总开关 / 显示区域 / 不透明度 / 字号 / 滚动速度，改动由播放页即时应用）。
  */
 @Component
 export struct PlayerSettingsPanel {
@@ -134,6 +134,9 @@ export struct PlayerSettingsPanel {
             case 'quickGestures':
               this.prefs.quickGestures = value;
               break;
+            case 'danmakuOn':
+              this.prefs.danmakuOn = value;
+              break;
             default:
               break;
           }
@@ -225,19 +228,20 @@ export struct PlayerSettingsPanel {
       this.menuRow('偏好设置', 'preference', '更多操作',
         ['分享视频', '减推视频', '举报视频', '进小黑屋'], '互动接口待接入')
 
-      this.sectionTitle('弹幕设置 · 占位')
+      this.sectionTitle('弹幕设置')
+      this.toggleRow('显示弹幕', '关闭后不再拉取与绘制弹幕，只播放画面', 'danmakuOn', this.prefs.danmakuOn)
       this.menuRow('显示区域', 'danmakuArea',
         PlayerPrefs.RATIO_LABELS[this.indexOfValue(PlayerPrefs.DANMAKU_RATIOS, this.prefs.danmakuArea)],
-        PlayerPrefs.RATIO_LABELS, '弹幕轨道未接入')
+        PlayerPrefs.RATIO_LABELS, '弹幕占画面高度的比例，越小越不挡画面')
       this.menuRow('不透明度', 'danmakuOpacity',
         PlayerPrefs.RATIO_LABELS[this.indexOfValue(PlayerPrefs.DANMAKU_RATIOS, this.prefs.danmakuOpacity)],
-        PlayerPrefs.RATIO_LABELS, '')
+        PlayerPrefs.RATIO_LABELS, '调低后弹幕变淡，画面更清楚')
       this.menuRow('弹幕字号', 'danmakuSize',
         PlayerPrefs.SIZE_LABELS[this.indexOfValue(PlayerPrefs.DANMAKU_SIZES, this.prefs.danmakuSize)],
-        PlayerPrefs.SIZE_LABELS, '')
+        PlayerPrefs.SIZE_LABELS, '同时影响同屏轨道数量')
       this.menuRow('滚动速度', 'danmakuSpeed',
         PlayerPrefs.SPEED_LABELS[this.indexOfValue(PlayerPrefs.DANMAKU_SPEEDS, this.prefs.danmakuSpeed)],
-        PlayerPrefs.SPEED_LABELS, '')
+        PlayerPrefs.SPEED_LABELS, '调快后同一时间屏幕上的弹幕更少')
 
       Row().height(16)
     }
