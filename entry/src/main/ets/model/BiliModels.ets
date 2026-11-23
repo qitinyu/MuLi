@@ -118,6 +118,8 @@ export class VideoDetail {
   viewText: string = '';
   danmuText: string = '';
   likeText: string = '';
+  /** 点赞数原值：本地点赞 / 取消后要在这个数上 ±1 再格式化，不能拿「1.2万」这种文案反算 */
+  likeCount: number = 0;
   coinText: string = '';
   favText: string = '';
   shareText: string = '';
@@ -143,6 +145,7 @@ export class VideoDetail {
     copy.viewText = this.viewText;
     copy.danmuText = this.danmuText;
     copy.likeText = this.likeText;
+    copy.likeCount = this.likeCount;
     copy.coinText = this.coinText;
     copy.favText = this.favText;
     copy.shareText = this.shareText;

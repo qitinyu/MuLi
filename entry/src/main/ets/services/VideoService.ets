@@ -43,6 +43,7 @@ export class VideoService {
     item.viewText = `${shortCount(J.num(stat, 'view'))}播放`;
     item.danmuText = shortCount(J.num(stat, 'danmaku'));
     item.likeText = shortCount(J.num(stat, 'like'));
+    item.likeCount = J.num(stat, 'like');
     item.coinText = shortCount(J.num(stat, 'coin'));
     item.favText = shortCount(J.num(stat, 'favorite'));
     item.shareText = shortCount(J.num(stat, 'share'));
