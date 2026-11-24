@@ -68,6 +68,16 @@ const DANMAKU_FIXED_MS: number = 4200;
 const DANMAKU_MAX_ACTIVE: number = 90;
 /** 弹幕输入框 id：打开浮层后按 id 申请焦点 */
 const DANMAKU_INPUT_ID: string = 'muli_danmaku_input';
+/**
+ * 视频区顶栏图标是否带半透明圆底。
+ * V2.1.0 按要求「去除图标阴影」：圆底本质是一块 scrim 色块，在亮画面上很像一圈阴影，
+ * 置 false 后只保留图标本体。若在亮背景下看不清，改回 true 即可恢复。
+ */
+const TOP_ICON_CHIP_BG: boolean = false;
+/** 竖屏化视频（9:16）在横屏区可拉伸到的最大高度：占整屏比例，留一截给下方推荐 */
+const VERTICAL_MAX_STAGE_RATIO: number = 0.80;
+/** 拉伸到该比例（含）即松手进入竖屏模式 */
+const VERTICAL_ENTER_RATIO: number = 0.76;
 
 /** 评论正文的富文本片段：url 非空 = 表情图片，mention = 命中 @某人（上品牌色） */
 class CommentSegment {
@@ -269,6 +279,10 @@ export struct VideoPage {
   /** 播完「停止推荐」时悬浮的推荐视频 */
   @State recommendCard: VideoCard = emptyVideoCard();
   @State showRecommendCard: boolean = false;
+  /** 播放结束态（停止推荐）：视频区黑屏只留推荐内容 + 重播入口 */
+  @State playEnded: boolean = false;
+  /** 竖屏化视频在横屏区被用户拉高的额外高度（vp，0 = 按 16:9 原尺寸） */
+  @State displayExtra: number = 0;
   /** 播放区顶部是否沉浸到系统状态栏（设置页可关；关了就用增量色块补那一条） */
   @StorageLink(AppPrefs.KEY_TOP_IMMERSIVE) @Watch('onTopStyleChanged') topImmersive: boolean = true;
   /** 关闭沉浸时增量条颜色：0 = 黑色，1 = 白色 */
@@ -332,6 +346,14 @@ export struct VideoPage {
   private portraitPrefetching: boolean = false;
   /** 预取目标 bvid：避免同一条被重复预取 */
   private portraitPrefetchBvid: string = '';
+  /** 打开弹幕输入框前是否在播：发送 / 关闭后自动续播 */
+  private danmakuResume: boolean = false;
+  /** 因为「压栈打开下一个视频」而临时暂停：返回本页时自动接上 */
+  private pausedForPush: boolean = false;
+  /** 竖屏化视频拖动时的起始额外高度 */
+  private displayDragBase: number = 0;
+  /** 工具行那颗箭头这次按下是否已经变成「拖动」（true 时松手走拉伸收尾，不再当点击） */
+  private arrowDragging: boolean = false;
 
   // 弹幕
   /** 弹幕画布上下文（全局只有一块，画在画面盒里，跟着画面一起平移） */
@@ -729,6 +751,8 @@ export struct VideoPage {
     this.loading = true;
     this.errorText = '';
     this.showRecommendCard = false;
+    this.playEnded = false;
+    this.displayExtra = 0;
     this.started = false;
     this.positionMs = 0;
     this.playError = '';
@@ -823,14 +847,16 @@ export struct VideoPage {
     }
   }
 
-  /** 播放页下方推荐列表：过滤当前视频，最多 8 条 */
+  /** 播放页下方推荐列表：过滤当前视频与命中推荐过滤词的条目，最多 8 条 */
   private async loadRecommendList(bvid: string): Promise<void> {
     this.recommendLoading = true;
     try {
       const cards: Array<VideoCard> = await RecommendService.load(Math.floor(Math.random() * 50) + 2);
+      const blocked: Array<string> = PlayerPrefs.keywords(this.prefs.filterRecommend);
       const list: Array<VideoCard> = [];
       for (let i = 0; i < cards.length; i++) {
-        if (cards[i].bvid.length > 0 && cards[i].bvid !== bvid) {
+        if (cards[i].bvid.length > 0 && cards[i].bvid !== bvid &&
+          !PlayerPrefs.hitKeyword(cards[i].title, blocked)) {
           list.push(cards[i]);
         }
         if (list.length >= 8) {
@@ -1074,6 +1100,10 @@ export struct VideoPage {
     if (this.danmakuWidth <= 1 || this.danmakuHeight <= 1) {
       return;
     }
+    // 弹幕过滤词：命中任一词的弹幕直接不上屏
+    if (PlayerPrefs.hitKeyword(item.text, PlayerPrefs.keywords(this.prefs.filterDanmaku))) {
+      return;
+    }
     const size: number = this.prefs.danmakuSize > 0 ? this.prefs.danmakuSize : 18;
     const laneHeight: number = Math.max(18, Math.round(size * 1.6));
     const ratio: number = this.prefs.danmakuArea > 0 ? this.prefs.danmakuArea : 1;
@@ -1230,6 +1260,11 @@ export struct VideoPage {
       return;
     }
     this.danmakuDraft = '';
+    // 发弹幕时自动暂停：输入 / 选表情期间画面不动，方便对时间点；发送或关闭后自动续播
+    this.danmakuResume = this.playing;
+    if (this.danmakuResume) {
+      this.player.pause();
+    }
     this.danmakuComposerVisible = true;
     setTimeout(() => {
       try {
@@ -1243,6 +1278,16 @@ export struct VideoPage {
   private closeDanmakuComposer(): void {
     this.danmakuComposerVisible = false;
     this.danmakuDraft = '';
+    this.resumeAfterDanmaku();
+  }
+
+  /** 关掉弹幕浮层后接着播（原本就是暂停态的不动） */
+  private resumeAfterDanmaku(): void {
+    if (!this.danmakuResume) {
+      return;
+    }
+    this.danmakuResume = false;
+    this.player.play();
   }
 
   private async sendDanmaku(): Promise<void> {
@@ -2273,30 +2318,51 @@ export struct VideoPage {
   // ---------------- 播放模式：循环 / 随机连播 / 停止推荐 ----------------
 
   private onPlayCompleted(): void {
-    // 竖屏连播模式：播完自动滑到下一条（走同一套滑出/滑入动画，不是硬切）
-    if (this.portraitMode) {
-      this.runPortraitSwitch(-1);
-      return;
-    }
+    // 三种播放模式在竖屏 / 横屏下行为一致（V2.1.0）：
+    // 0 单集循环 → 从头再放；1 随机连播 → 横屏压栈下一条 / 竖屏滑下一条；2 停止推荐 → 黑屏只留推荐。
     const mode: number = this.prefs.playMode;
     if (mode === 0) {
-      this.player.seek(0);
-      this.player.play();
+      this.playEnded = false;
+      // 用串行的「从头重播」而不是 seek(0)+play()：completed 终态下两者会抢时序，进度回不到 0
+      this.player.replay();
       this.showHud('单集循环');
-    } else if (mode === 1) {
-      this.playRandomNext();
-    } else {
-      this.showRecommendCard = true;
-      this.loadRecommendCard();
+      return;
     }
+    if (mode === 1) {
+      this.playEnded = false;
+      if (this.portraitMode) {
+        this.runPortraitSwitch(-1);
+      } else {
+        this.playRandomNext();
+      }
+      return;
+    }
+    // 停止推荐：视频区黑屏，只展示推荐内容与「重播视频」
+    this.playEnded = true;
+    this.showRecommendCard = true;
+    this.controlsVisible = true;
+    this.loadRecommendCard();
+    this.loadRecommendList(this.videoParam.bvid);
+  }
+
+  /** 重播刚刚播完的这条：清掉结束态，从头开始 */
+  private replayVideo(): void {
+    this.playEnded = false;
+    this.showRecommendCard = false;
+    this.positionMs = 0;
+    this.danmakuSetClock(0);
+    this.player.replay();
+    this.showControls();
   }
 
   private async loadRecommendCard(): Promise<void> {
     try {
       const cards: Array<VideoCard> = await RecommendService.load(Math.floor(Math.random() * 50) + 2);
+      const blocked: Array<string> = PlayerPrefs.keywords(this.prefs.filterRecommend);
       let picked: VideoCard | null = null;
       for (let i = 0; i < cards.length; i++) {
-        if (cards[i].bvid.length > 0 && cards[i].bvid !== this.videoParam.bvid) {
+        if (cards[i].bvid.length > 0 && cards[i].bvid !== this.videoParam.bvid &&
+          !PlayerPrefs.hitKeyword(cards[i].title, blocked)) {
           picked = cards[i];
           break;
         }
@@ -2312,9 +2378,21 @@ export struct VideoPage {
   private async playRandomNext(): Promise<void> {
     try {
       const cards: Array<VideoCard> = await RecommendService.load(Math.floor(Math.random() * 50) + 2);
+      const blocked: Array<string> = PlayerPrefs.keywords(this.prefs.filterRecommend);
       const picked: VideoCard | null = cards.length > 0 ? cards[Math.floor(Math.random() * cards.length)] : null;
       if (picked === null || picked.bvid.length === 0) {
         this.toast('暂无可连播的推荐视频');
+        return;
+      }
+      if (PlayerPrefs.hitKeyword(picked.title, blocked)) {
+        this.toast('随机到的视频命中了推荐过滤词，已跳过');
+        return;
+      }
+      // 竖屏连播：先在盒子里滑出再换源，无法压栈（要保持跟手连续），仍走原地换源
+      if (!this.portraitMode && this.pathStack !== undefined) {
+        // 横屏：压一个新播放页，覆盖在当前视频上——返回就能回到上一条，不会直接退到首页
+        this.holdSpeedActive = false;
+        this.pathStack.pushPathByName('video', new VideoOpenParam(picked.bvid, picked.aid, picked.cid));
         return;
       }
       // 竖屏连播：先把目标封面挂到切换垫层上，即使取流慢也不会是一屏纯黑
@@ -2329,20 +2407,24 @@ export struct VideoPage {
     }
   }
 
-  /** 点击推荐卡：换源重载并回到内容顶部 */
+  /** 点击推荐卡：横屏压栈打开新视频（返回回到当前这条），竖屏连播内原地换源 */
   private openCard(card: VideoCard): void {
     if (card.bvid.length === 0) {
       return;
     }
+    this.holdSpeedActive = false;
+    if (!this.portraitMode && this.pathStack !== undefined) {
+      this.pathStack.pushPathByName('video', new VideoOpenParam(card.bvid, card.aid, card.cid));
+      return;
+    }
     this.briefExpanded = false;
     this.resetTab();
-    this.holdSpeedActive = false;
     this.videoParam = new VideoOpenParam(card.bvid, card.aid, card.cid);
     this.loadDetail();
     this.scroller.scrollTo({ xOffset: 0, yOffset: 0 });
   }
 
-  private async onSettingsChanged(key: string, value: number | boolean): Promise<void> {
+  private async onSettingsChanged(key: string, value: number | boolean | string): Promise<void> {
     if (key === 'quality') {
       this.showHud('清晰度已切换，正在重载');
       await this.loadPlayUrl();
@@ -2353,6 +2435,17 @@ export struct VideoPage {
       if (value === true && this.danmakuList.length === 0 && this.videoParam.cid > 0) {
         this.loadDanmaku();
       }
+    } else if (key === 'filterRecommend') {
+      // 过滤词改了：下方推荐与结束态推荐卡都按新词重拉
+      this.loadRecommendList(this.videoParam.bvid);
+      if (this.showRecommendCard) {
+        this.loadRecommendCard();
+      }
+      this.showHud('推荐过滤已更新');
+    } else if (key === 'filterDanmaku') {
+      // 弹幕过滤词是逐帧读取的，清一下屏上已存在的即可立即见效
+      this.danmakuActive = [];
+      this.showHud('弹幕过滤已更新');
     }
     this.showControls();
   }
@@ -2370,10 +2463,25 @@ export struct VideoPage {
       .width(34)
       .height(34)
       .justifyContent(FlexAlign.Center)
-      .backgroundColor($r('app.color.scrim'))
+      .backgroundColor(TOP_ICON_CHIP_BG ? $r('app.color.scrim') : Color.Transparent)
       .borderRadius(17)
       .onClick(() => {
         this.onBack();
+      })
+
+      // 一键回首页：推荐视频层层压栈后，不必一层层返回
+      Row() {
+        SymbolGlyph($r('sys.symbol.house'))
+          .fontSize(17)
+          .fontColor([$r('app.color.text_on_media')])
+      }
+      .width(34)
+      .height(34)
+      .justifyContent(FlexAlign.Center)
+      .backgroundColor(TOP_ICON_CHIP_BG ? $r('app.color.scrim') : Color.Transparent)
+      .borderRadius(17)
+      .onClick(() => {
+        this.goHome();
       })
 
       Blank()
@@ -2387,7 +2495,7 @@ export struct VideoPage {
       .width(34)
       .height(34)
       .justifyContent(FlexAlign.Center)
-      .backgroundColor($r('app.color.scrim'))
+      .backgroundColor(TOP_ICON_CHIP_BG ? $r('app.color.scrim') : Color.Transparent)
       .borderRadius(17)
       .onClick(() => {
         this.shareVideo();
@@ -2404,7 +2512,7 @@ export struct VideoPage {
       .width(34)
       .height(34)
       .justifyContent(FlexAlign.Center)
-      .backgroundColor($r('app.color.scrim'))
+      .backgroundColor(TOP_ICON_CHIP_BG ? $r('app.color.scrim') : Color.Transparent)
       .borderRadius(17)
       .onClick(() => {
         this.toast('悬浮窗播放待接入');
@@ -2473,6 +2581,19 @@ export struct VideoPage {
       Text(this.formatMs(this.durationMs))
         .fontSize(11)
         .fontColor($r('app.color.text_on_media'))
+      // 播完后（停止推荐模式）控制条右侧出现「重播视频」，不必回到顶部再点一次播放
+      if (this.playEnded) {
+        Text('重播视频')
+          .fontSize(11)
+          .fontColor($r('app.color.text_on_media'))
+          .padding({ left: 10, right: 10, top: 4, bottom: 4 })
+          .backgroundColor($r('app.color.scrim'))
+          .borderRadius(12)
+          .margin({ right: 4 })
+          .onClick(() => {
+            this.replayVideo();
+          })
+      }
       SymbolGlyph(this.fullscreen || this.portraitMode
         ? $r('sys.symbol.arrow_down_right_and_arrow_up_left')
         : $r('sys.symbol.arrow_up_left_and_arrow_down_right'))
@@ -2498,20 +2619,27 @@ export struct VideoPage {
   /**
    * 竖屏连播的画面盒几何。
    *
-   * - 顶部下限：状态栏 + 顶栏 + 呼吸空间，画面不会顶到返回图标；
-   * - 底部下限：给 UP 信息 / 进度条 / 操作行预留，画面压不到它们；
-   * - 高度按视频真实比例算，再把「顶栏下方 ~ 信息区上方」这段剩余空间平分到上下，
-   *   横屏视频不会全贴在顶部晾一大片黑（用户反馈的「太高了」），竖屏视频则自然占满。
+   * - 竖屏视频（高 > 宽）：宽度直接铺满屏幕，高度按真实比例算（`width * aspect`），从顶栏下方起排。
+   *   不再按「顶栏下方 ~ 信息区上方」那段空间去压缩 —— 一压缩，9:16 的画面只剩约七成宽，
+   *   两侧留出黑边，看起来像视频被缩小了；超出底部的那截由底部浮层（渐变转黑）盖住，与常见竖屏流的观感一致。
+   * - 横屏视频：仍按 16:9 自然高度算，再把「顶栏下方 ~ 信息区上方」的剩余空间上下平分，避免贴在顶部晾一大片黑。
    */
   private portraitFrame(): PortraitFrame {
     const stage: number = this.stageH > 0 ? this.stageH : 780;
     const width: number = this.surfaceWidth > 0 ? this.surfaceWidth : 360;
     const aspect: number = this.videoAspect > 0 ? this.videoAspect : 9 / 16;
     const topLimit: number = this.topInset + PLAYER_BAR_HEIGHT + PORTRAIT_TOP_GAP;
-    const room: number = Math.max(160, stage - PORTRAIT_BOTTOM_RESERVE - topLimit);
     const natural: number = Math.round(width * aspect);
+
+    if (aspect > 1.02) {
+      // 屏宽定宽、等比定高：9:16 的片子高度会接近整屏，底部那一截自然落到浮层（渐变转黑）下面，
+      // 顶部仍从顶栏下方起算，状态栏 / 返回图标不会压在亮画面上。
+      const height: number = Math.min(natural, Math.round(stage));
+      return new PortraitFrame(topLimit, height);
+    }
+
+    const room: number = Math.max(160, stage - PORTRAIT_BOTTOM_RESERVE - topLimit);
     const height: number = Math.min(Math.max(natural, 120), room);
-    // 多出来的空间上下平分：横屏视频居中，竖屏视频几乎顶满（差值很小）
     const top: number = topLimit + Math.max(0, Math.round((room - height) / 2));
     return new PortraitFrame(top, height);
   }
@@ -2710,45 +2838,10 @@ export struct VideoPage {
         }
         .backgroundColor($r('app.color.scrim'))
         .borderRadius(16)
+        // 竖屏连播里 Stack 是顶对齐，HUD 原本会顶到状态栏；下移到画面盒上沿附近
+        .margin({ top: this.portraitMode && !this.fullscreen ? this.portraitFrame().top + 12 : 0 })
       }
 
-      // 播完「停止推荐」悬浮卡
-      if (this.showRecommendCard && this.recommendCard.bvid.length > 0) {
-        Column({ space: 10 }) {
-          Text('为你推荐')
-            .fontSize(12)
-            .fontColor($r('app.color.text_on_media'))
-          Row({ space: 10 }) {
-            Image(this.recommendCard.cover)
-              .width(104)
-              .height(60)
-              .objectFit(ImageFit.Cover)
-              .borderRadius(6)
-              .alt($r('app.color.bg_field'))
-            Text(this.recommendCard.title)
-              .fontSize(13)
-              .fontColor($r('app.color.text_on_media'))
-              .maxLines(3)
-              .layoutWeight(1)
-          }
-          .width('100%')
-          Text('点击播放')
-            .fontSize(12)
-            .fontColor($r('app.color.text_on_media'))
-            .padding({ left: 14, right: 14, top: 6, bottom: 6 })
-            .backgroundColor($r('app.color.brand_primary'))
-            .borderRadius(14)
-            .onClick(() => {
-              this.videoParam = new VideoOpenParam(
-                this.recommendCard.bvid, this.recommendCard.aid, this.recommendCard.cid);
-              this.playRandomNext();
-            })
-        }
-        .width('72%')
-        .padding(14)
-        .backgroundColor($r('app.color.scrim'))
-        .borderRadius(12)
-      }
     }
     .width('100%')
     .height('100%')
@@ -2813,6 +2906,69 @@ export struct VideoPage {
     return this.stageH > 0 ? this.stageH : (this.pageH > 0 ? this.pageH : 1000);
   }
 
+  // ---------------- 竖屏化视频（9:16）在横屏区的展示 ----------------
+
+  /** 当前这条是不是竖屏视频（高 > 宽） */
+  private isVerticalVideo(): boolean {
+    return this.videoAspect > 1.02;
+  }
+
+  /**
+   * 是否允许把画面往下拉、撑高后进竖屏。
+   *
+   * V2.1.0 修正：这里不再看「竖屏视频展示」开关。那个开关只负责推荐流里要不要混排竖屏视频，
+   * 和「这条视频能不能拉进竖屏」无关；之前挂在开关上，关着开关时任何竖屏视频都拖不动
+   * 工具行那颗箭头，从搜索进来看竖屏视频就永远进不了竖屏模式。
+   */
+  private canExpandVertical(): boolean {
+    return !this.fullscreen && !this.portraitMode && this.isVerticalVideo();
+  }
+
+  /** 拉伸上限：整屏的 80%，把下方推荐压下去但不吃掉 */
+  private displayMax(): number {
+    const stage: number = this.stageH > 0 ? this.stageH : 780;
+    return Math.max(this.canvasHeight, Math.round(stage * VERTICAL_MAX_STAGE_RATIO));
+  }
+
+  /** 横屏区画布高度：16:9 基准 + 用户拉高的量，夹在基准与上限之间 */
+  private normalCanvasHeight(): number {
+    if (!this.canExpandVertical()) {
+      return this.canvasHeight;
+    }
+    const target: number = this.canvasHeight + Math.max(0, this.displayExtra);
+    return Math.min(Math.max(target, this.canvasHeight), this.displayMax());
+  }
+
+  private onDisplayDragUpdate(dy: number): void {
+    const max: number = this.displayMax();
+    this.displayExtra = Math.min(Math.max(0, this.displayDragBase + dy), max - this.canvasHeight);
+  }
+
+  /** 松手：拉到底直接进竖屏模式，否则停手位置就地保留（最小回落到 16:9） */
+  private onDisplayDragEnd(): void {
+    const height: number = this.normalCanvasHeight();
+    const stage: number = this.stageH > 0 ? this.stageH : 780;
+    if (height >= stage * VERTICAL_ENTER_RATIO) {
+      this.displayExtra = 0;
+      this.toast('已进入竖屏模式');
+      this.togglePortraitMode();
+      return;
+    }
+    if (height < this.canvasHeight + 24) {
+      this.displayExtra = 0;
+      return;
+    }
+    this.showHud(`画面已放大到 ${Math.round(height)}`);
+  }
+
+  /** 一键回首页：整条播放栈清掉（连点多个推荐视频后不用一层层返回） */
+  private goHome(): void {
+    if (this.pathStack !== undefined) {
+      this.pathStack.clear();
+    }
+  }
+
+
   /**
    * 竖屏连播浮层：盖在视频区上方的独立图层（视频在下、浮层在上）。
    * - 顶栏固定显示，不随点击隐藏；
@@ -2824,15 +2980,19 @@ export struct VideoPage {
     Column() {
       this.portraitTopBar()
 
-      Column() {
-        if (this.portraitInfoVisible) {
-          this.portraitInfoOverlay()
+      // 播完（停止推荐）：画面里已经是「结束态推荐卡」，底部这几块（up 信息 / 进度条 / 操作行）
+      // 一起让位，否则两套按钮会叠在一起；顶栏保留，返回与回首页仍然可点。
+      if (!this.playEnded) {
+        Column() {
+          if (this.portraitInfoVisible) {
+            this.portraitInfoOverlay()
+          }
+          // 进度条固定显示，位于简介区与操作行之间（与普通播放区同款可拖动 Slider）
+          this.portraitProgressBar()
+          this.portraitActionBar()
         }
-        // 进度条固定显示，位于简介区与操作行之间（与普通播放区同款可拖动 Slider）
-        this.portraitProgressBar()
-        this.portraitActionBar()
+        .width('100%')
       }
-      .width('100%')
     }
     .width('100%')
     .height('100%')
@@ -2872,10 +3032,25 @@ export struct VideoPage {
       .width(36)
       .height(36)
       .justifyContent(FlexAlign.Center)
-      .backgroundColor($r('app.color.scrim'))
+      .backgroundColor(TOP_ICON_CHIP_BG ? $r('app.color.scrim') : Color.Transparent)
       .borderRadius(18)
       .onClick(() => {
         this.onBack();
+      })
+
+      // 一键回首页：连播一路滑下来以后直接清栈回去
+      Row() {
+        SymbolGlyph($r('sys.symbol.house'))
+          .fontSize(18)
+          .fontColor([$r('app.color.text_on_media')])
+      }
+      .width(36)
+      .height(36)
+      .justifyContent(FlexAlign.Center)
+      .backgroundColor(TOP_ICON_CHIP_BG ? $r('app.color.scrim') : Color.Transparent)
+      .borderRadius(18)
+      .onClick(() => {
+        this.goHome();
       })
 
       Blank()
@@ -2889,7 +3064,7 @@ export struct VideoPage {
       .width(36)
       .height(36)
       .justifyContent(FlexAlign.Center)
-      .backgroundColor($r('app.color.scrim'))
+      .backgroundColor(TOP_ICON_CHIP_BG ? $r('app.color.scrim') : Color.Transparent)
       .borderRadius(18)
       .onClick(() => {
         this.enterFullscreenFromPortrait();
@@ -2906,7 +3081,7 @@ export struct VideoPage {
       .width(36)
       .height(36)
       .justifyContent(FlexAlign.Center)
-      .backgroundColor($r('app.color.scrim'))
+      .backgroundColor(TOP_ICON_CHIP_BG ? $r('app.color.scrim') : Color.Transparent)
       .borderRadius(18)
       .onClick(() => {
         this.toast('悬浮窗播放待接入');
@@ -2921,7 +3096,7 @@ export struct VideoPage {
       .width(36)
       .height(36)
       .justifyContent(FlexAlign.Center)
-      .backgroundColor($r('app.color.scrim'))
+      .backgroundColor(TOP_ICON_CHIP_BG ? $r('app.color.scrim') : Color.Transparent)
       .borderRadius(18)
       .onClick(() => {
         this.shareVideo();
@@ -2936,7 +3111,7 @@ export struct VideoPage {
       .width(36)
       .height(36)
       .justifyContent(FlexAlign.Center)
-      .backgroundColor($r('app.color.scrim'))
+      .backgroundColor(TOP_ICON_CHIP_BG ? $r('app.color.scrim') : Color.Transparent)
       .borderRadius(18)
       .onClick(() => {
         this.portraitSettingsVisible = true;
@@ -2982,7 +3157,7 @@ export struct VideoPage {
           Scroll() {
             PlayerSettingsPanel({
               prefs: $prefs,
-              onChanged: (key: string, value: number | boolean): void => {
+              onChanged: (key: string, value: number | boolean | string): void => {
                 this.onSettingsChanged(key, value);
               },
               onShare: (): void => {
@@ -3164,8 +3339,13 @@ export struct VideoPage {
       }
     }
     .width('100%')
-    .padding({ left: 16, right: 16, top: 14, bottom: 10 })
-    .backgroundColor(Color.Black)
+    // 竖屏画面现在铺满屏宽、会一直伸到信息区后面：这里改用「透明 → 黑」的渐变收口，
+    // 视频边缘不会被一块纯黑硬切出一条横线，文字也仍然压得住。
+    .padding({ left: 16, right: 16, top: 30, bottom: 10 })
+    .linearGradient({
+      angle: 180,
+      colors: [['#00000000', 0.0], ['#99000000', 0.28], ['#CC000000', 0.58], ['#E6000000', 1.0]]
+    })
   }
 
   /**
@@ -3358,21 +3538,60 @@ export struct VideoPage {
       .width('100%')
       .alignItems(VerticalAlign.Center)
 
-      // 这一行的正中间：竖屏连播入口（下箭头 = 画面向下铺满，进入后变上箭头收起）
+      // 这一行的正中间：竖屏连播入口（下箭头 = 画面向下铺满，进入后变上箭头收起）。
+      // V2.1.0：原「画面下方那条横线把手」已并入这颗箭头 ——
+      //   轻点：立刻进出竖屏；按住往下拖：像拉把手一样把画面逐步撑高，拖到 76% 屏高松手即进竖屏。
+      // 用互斥手势组（不是同时挂 onClick + PanGesture）：Tap 与 Pan 谁先成立谁生效，不会一下点两次。
       Row() {
         SymbolGlyph(this.portraitMode
           ? $r('sys.symbol.chevron_up') : $r('sys.symbol.chevron_down'))
           .fontSize(16)
-          .fontColor([$r('app.color.text_secondary')])
+          // 画面已被拖高时箭头跟着变品牌色：既是「正在拉」的反馈，也提示还能继续拖
+          .fontColor([!this.portraitMode && this.displayExtra > 0
+            ? $r('app.color.brand_primary') : $r('app.color.text_secondary')])
       }
       .width(30)
       .height(30)
       .justifyContent(FlexAlign.Center)
       .backgroundColor($r('app.color.bg_field'))
       .borderRadius(15)
-      .onClick(() => {
-        this.togglePortraitMode();
-      })
+      .gesture(GestureGroup(GestureMode.Exclusive,
+        TapGesture({ count: 1 })
+          .onAction(() => {
+            this.togglePortraitMode();
+          }),
+        PanGesture({ fingers: 1, direction: PanDirection.Vertical, distance: 6 })
+          .onActionStart(() => {
+            this.arrowDragging = false;
+            this.displayDragBase = this.displayExtra;
+          })
+          .onActionUpdate((event: GestureEvent) => {
+            // 只有竖屏化视频、且不在全屏 / 连播里，往下拖才有撑高画面的含义；其余情况只当点击
+            if (!this.canExpandVertical() || this.playEnded) {
+              return;
+            }
+            if (!this.arrowDragging && Math.abs(event.offsetY) >= 6) {
+              this.arrowDragging = true;
+            }
+            if (this.arrowDragging) {
+              this.onDisplayDragUpdate(event.offsetY);
+            }
+          })
+          .onActionEnd(() => {
+            if (!this.arrowDragging) {
+              return;
+            }
+            this.arrowDragging = false;
+            this.onDisplayDragEnd();
+          })
+          .onActionCancel(() => {
+            if (this.arrowDragging) {
+              this.arrowDragging = false;
+              this.onDisplayDragEnd();
+            }
+          })))
+      .accessibilityText(this.portraitMode
+        ? '轻点退出竖屏模式' : '轻点进入竖屏模式，按住向下拖可逐步放大画面')
     }
     .width('100%')
     .height(ACTION_BAR_HEIGHT)
@@ -3636,7 +3855,7 @@ export struct VideoPage {
         .padding({ top: 14 })
       PlayerSettingsPanel({
         prefs: $prefs,
-        onChanged: (key: string, value: number | boolean): void => {
+        onChanged: (key: string, value: number | boolean | string): void => {
           this.onSettingsChanged(key, value);
         },
         onShare: (): void => {
@@ -4574,6 +4793,130 @@ export struct VideoPage {
     }
   }
 
+  /**
+   * 播放结束（「停止推荐」模式）：视频区黑屏，居中一块推荐卡（上下两部分，横竖屏通用）。
+   */
+  @Builder
+  endedOverlay() {
+    Column() {
+      Column() {
+        // 上部分：左侧推荐封面 + 右侧两行（视频名称 / UP 主 · 播放量 · 弹幕数）
+        Row({ space: 10 }) {
+          Stack() {
+            if (this.recommendCard.cover.length > 0) {
+              Image(this.recommendCard.cover)
+                .width('100%')
+                .height('100%')
+                .objectFit(ImageFit.Cover)
+                .alt($r('app.color.bg_field'))
+                .draggable(false)
+            } else {
+              SymbolGlyph($r('sys.symbol.play_square'))
+                .fontSize(22)
+                .fontColor([$r('app.color.text_on_media')])
+                .opacity(0.45)
+            }
+          }
+          .width(104)
+          .height(59)
+          .borderRadius(7)
+          .backgroundColor($r('app.color.overlay'))
+          .clip(true)
+
+          Column({ space: 6 }) {
+            Text(this.recommendCard.title.length > 0 ? this.recommendCard.title : '正在为你挑选推荐视频')
+              .width('100%')
+              .fontSize(14)
+              .fontWeight(FontWeight.Medium)
+              .fontColor($r('app.color.text_on_media'))
+              .maxLines(2)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+            Row({ space: 8 }) {
+              if (this.recommendCard.author.length > 0) {
+                Text(this.recommendCard.author)
+                  .fontSize(11)
+                  .fontColor($r('app.color.text_on_media'))
+                  .opacity(0.7)
+                  .maxLines(1)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+                  .constraintSize({ maxWidth: '46%' })
+              }
+              if (this.recommendCard.viewText.length > 0) {
+                Text(this.recommendCard.viewText)
+                  .fontSize(11)
+                  .fontColor($r('app.color.text_on_media'))
+                  .opacity(0.7)
+                  .maxLines(1)
+              }
+              if (this.recommendCard.danmuText.length > 0) {
+                Text(this.recommendCard.danmuText)
+                  .fontSize(11)
+                  .fontColor($r('app.color.text_on_media'))
+                  .opacity(0.7)
+                  .maxLines(1)
+              }
+            }
+            .width('100%')
+            .alignItems(VerticalAlign.Center)
+          }
+          .layoutWeight(1)
+          .alignItems(HorizontalAlign.Start)
+        }
+        .width('100%')
+        .alignItems(VerticalAlign.Center)
+        .onClick(() => {
+          this.openCard(this.recommendCard);
+        })
+
+        // 下部分：两个按钮平分整块宽度（合起来正好占满上部分）
+        Row({ space: 10 }) {
+          Row({ space: 5 }) {
+            SymbolGlyph($r('sys.symbol.arrow_clockwise'))
+              .fontSize(14)
+              .fontColor([$r('app.color.text_on_media')])
+            Text('视频重播')
+              .fontSize(13)
+              .fontColor($r('app.color.text_on_media'))
+          }
+          .layoutWeight(1)
+          .height(38)
+          .justifyContent(FlexAlign.Center)
+          .border({ width: 1, color: $r('app.color.media_line') })
+          .borderRadius(19)
+          .onClick(() => {
+            this.replayVideo();
+          })
+
+          Row() {
+            Text('立即播放')
+              .fontSize(13)
+              .fontColor($r('app.color.text_on_brand'))
+          }
+          .layoutWeight(1)
+          .height(38)
+          .justifyContent(FlexAlign.Center)
+          .backgroundColor($r('app.color.brand_primary'))
+          .borderRadius(19)
+          .opacity(this.recommendCard.bvid.length > 0 ? 1 : 0.45)
+          .onClick(() => {
+            this.openCard(this.recommendCard);
+          })
+        }
+        .width('100%')
+        .margin({ top: 14 })
+      }
+      .width('100%')
+      .padding(12)
+      .backgroundColor($r('app.color.media_card'))
+      .borderRadius(14)
+    }
+    .width('100%')
+    .height('100%')
+    .padding({ left: 18, right: 18 })
+    .justifyContent(FlexAlign.Center)
+    .backgroundColor(Color.Black)
+  }
+
   /** 简介版块：作者 → 标题 → 元信息 → （展开的简介）→ 六项互动 → 推荐 */
   @Builder
   briefTab() {
@@ -4690,11 +5033,15 @@ export struct VideoPage {
         Column() {
           Stack({ alignContent: Alignment.Center }) {
             this.playerLayer()
+            // 播放结束态：黑屏 + 重播 + 推荐（只盖住视频区）
+            if (this.playEnded) {
+              this.endedOverlay()
+            }
           }
           .width('100%')
           // 竖屏连播：画布铺满整屏（底部四块改由独立浮层盖在视频之上，不再挤压画布）；
-          // 常规 / 全屏：16:9 或铺满。始终只改这一个画布容器高度，绝不切 if 分支重建 XComponent。
-          .height(this.fullscreen || this.portraitMode ? '100%' : this.canvasHeight)
+          // 常规 / 全屏：16:9 或铺满；竖屏化视频在开启展示后可按用户拖动的高度撑开。
+          .height(this.fullscreen || this.portraitMode ? '100%' : this.normalCanvasHeight())
           .backgroundColor(Color.Black)
           .clip(true)
           .onAreaChange((oldValue: Area, newValue: Area) => {
@@ -4759,6 +5106,19 @@ export struct VideoPage {
     }
     .hideTitleBar(true)
     .hideBackButton(true)
+    // 推荐视频 / 随机连播是「压栈」打开的：本页被盖住时先暂停，返回时再接着播
+    .onHidden(() => {
+      if (this.playing) {
+        this.player.pause();
+        this.pausedForPush = true;
+      }
+    })
+    .onShown(() => {
+      if (this.pausedForPush) {
+        this.pausedForPush = false;
+        this.player.play();
+      }
+    })
     // 整页铺到屏幕上下沿：NavDestination 默认把状态栏和手势条两条让出来，
     // 露出的是窗口底色（#F5F6F7），上下各一条「白边」。这里让布局忽略安全区，
     // 画布压到状态栏下面（顶部留黑），评论列表铺到屏幕最下沿。

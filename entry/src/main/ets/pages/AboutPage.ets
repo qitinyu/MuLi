@@ -1,8 +1,8 @@
 import { HdsNavDestination, HdsNavDestinationTitleMode, ScrollEffectType, hdsMaterial } from '@kit.UIDesignKit';
 import { LengthMetrics } from '@kit.ArkUI';
-import { bundleManager } from '@kit.AbilityKit';
 import { MaterialScope } from '../common/Materials';
 import { CARD_RADIUS, PAGE_PADDING } from '../common/DesignSpec';
+import { AppVersion } from '../common/AppVersion';
 import { AuthService, AuthDiagLine } from '../services/AuthService';
 
 /**
@@ -16,7 +16,7 @@ import { AuthService, AuthDiagLine } from '../services/AuthService';
 export struct AboutPage {
   pathStack: NavPathStack | undefined = undefined;
   @State materialLevel: hdsMaterial.MaterialLevel = hdsMaterial.MaterialLevel.SMOOTH;
-  @State version: string = '2.0.9';
+  @State version: string = AppVersion.value();
   @State running: boolean = false;
   @State diagnosed: boolean = false;
   @State lines: Array<AuthDiagLine> = [];
@@ -24,15 +24,8 @@ export struct AboutPage {
 
   aboutToAppear(): void {
     this.materialLevel = MaterialScope.detectLevel();
-    try {
-      const info: bundleManager.BundleInfo = bundleManager.getBundleInfoForSelfSync(
-        bundleManager.BundleFlag.GET_BUNDLE_INFO_DEFAULT);
-      if (info.versionName.length > 0) {
-        this.version = info.versionName;
-      }
-    } catch (err) {
-      // 取不到就用内置版本号
-    }
+    // 版本号统一从 AppVersion 取（读 app.json5 的 versionName），不再各页各写一遍
+    this.version = AppVersion.value();
   }
 
   private async runDiagnose(): Promise<void> {

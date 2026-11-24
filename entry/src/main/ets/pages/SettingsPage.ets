@@ -2,6 +2,7 @@ import { HdsNavDestination, ScrollEffectType, hdsMaterial } from '@kit.UIDesignK
 import { LengthMetrics } from '@kit.ArkUI';
 import { MaterialScope } from '../common/Materials';
 import { CARD_RADIUS, PAGE_PADDING } from '../common/DesignSpec';
+import { AppVersion } from '../common/AppVersion';
 
 /** 一级总览卡片与二级页的路由名（三个细则页共用 SettingsDetailPage，按 section 区分） */
 const ROUTE_APPEARANCE: string = 'settings_appearance';
@@ -88,12 +89,12 @@ export struct SettingsPage {
             '底部隐藏、默认启动页、UP 主过长名称、播放区顶部沉浸与增量颜色', ROUTE_APPEARANCE)
 
           this.entryCard($r('sys.symbol.play_circle'), '播放器',
-            '默认清晰度、播放行为、过滤词、推荐与推荐页卡片布局', ROUTE_PLAYER)
+            '播放质量、播放行为、推荐视频与弹幕过滤词、推荐设置与卡片布局', ROUTE_PLAYER)
 
           this.entryCard($r('sys.symbol.list_bullet'), '播放页 · List 分区',
             '显示 List、跟随界面移动隐藏、首页分区勾选', ROUTE_PLAYPAGE)
 
-          Text('沐哩 MuLi  V2.0.9')
+          Text(`沐哩 MuLi  ${AppVersion.label()}`)
             .width('100%')
             .fontSize(11)
             .fontColor($r('app.color.text_tertiary'))
@@ -108,6 +109,8 @@ export struct SettingsPage {
       .height('100%')
       .scrollBar(BarState.Off)
       .edgeEffect(EdgeEffect.Spring)
+      // 取消垂直居中：卡片少于一屏时也从顶部开始排
+      .align(Alignment.Top)
     }
     .titleBar({
       content: {

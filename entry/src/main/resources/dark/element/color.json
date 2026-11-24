@@ -20,6 +20,8 @@
     { "name": "success", "value": "#79BE8C" },
     { "name": "scrim", "value": "#99000000" },
     { "name": "overlay", "value": "#66000000" },
+    { "name": "media_card", "value": "#1FFFFFFF" },
+    { "name": "media_line", "value": "#33FFFFFF" },
     { "name": "shadow_soft", "value": "#33000000" },
     { "name": "shadow_strong", "value": "#4D000000" },
     { "name": "menu_veil", "value": "#59000000" },

@@ -15,9 +15,14 @@ import { preferences } from '@kit.ArkData';
 export class PlayerPrefs {
   private static readonly STORE: string = 'muli_player_prefs';
 
-  /** 默认清晰度档位（对应 playUrl 的 qn；html5 单文件流实测最高约 64） */
-  static readonly QUALITIES: Array<number> = [0, 64, 80];
-  static readonly QUALITY_LABELS: Array<string> = ['自动', '高清 64', '高清 80'];
+  /**
+   * 默认清晰度档位（对应 playUrl 的 qn）。
+   * 参考 Pilihos 的档位口径：自动 / 1080P / 720P / 480P / 360P。
+   * 说明：html5 单文件流在未登录时通常只给到 720P，请求更高档位服务端会回落，
+   * 实际生效清晰度以 playUrl 返回的 data.quality 为准（不改写用户选择）。
+   */
+  static readonly QUALITIES: Array<number> = [0, 80, 64, 32, 16];
+  static readonly QUALITY_LABELS: Array<string> = ['自动', '1080P', '720P', '480P', '360P'];
   /** 长按默认倍速 */
   static readonly SPEEDS: Array<number> = [0.5, 0.75, 1, 1.25, 1.5, 2];
   /** 弹幕显示区域 / 不透明度（占画面高度比例） */
@@ -45,6 +50,10 @@ export class PlayerPrefs {
   danmakuOpacity: number = 1;
   danmakuSize: number = 18;
   danmakuSpeed: number = 1;
+  /** 推荐视频过滤词：中文逗号分隔，命中标题的推荐视频不再出现在播放页推荐里 */
+  filterRecommend: string = '';
+  /** 视频弹幕过滤词：中文逗号分隔，命中的弹幕不上屏 */
+  filterDanmaku: string = '';
 
   static async load(context: common.UIAbilityContext): Promise<PlayerPrefs> {
     const result: PlayerPrefs = new PlayerPrefs();
@@ -61,13 +70,15 @@ export class PlayerPrefs {
       result.danmakuOpacity = store.getSync('danmaku_opacity', 1) as number;
       result.danmakuSize = store.getSync('danmaku_size', 18) as number;
       result.danmakuSpeed = store.getSync('danmaku_speed', 1) as number;
+      result.filterRecommend = store.getSync('filter_recommend', '') as string;
+      result.filterDanmaku = store.getSync('filter_danmaku', '') as string;
     } catch (err) {
       console.warn(`MuLiPrefs load failed: ${String(err)}`);
     }
     return result;
   }
 
-  async save(context: common.UIAbilityContext, key: string, value: number | boolean): Promise<void> {
+  async save(context: common.UIAbilityContext, key: string, value: number | boolean | string): Promise<void> {
     try {
       const store: preferences.Preferences = await preferences.getPreferences(context, PlayerPrefs.STORE);
       // 调用方传的是内存字段名（驼峰，如 miniProgress），load() 读的是磁盘字段名（下划线），
@@ -104,9 +115,43 @@ export class PlayerPrefs {
         return 'danmaku_size';
       case 'danmakuSpeed':
         return 'danmaku_speed';
+      case 'filterRecommend':
+        return 'filter_recommend';
+      case 'filterDanmaku':
+        return 'filter_danmaku';
       default:
         return key;
     }
+  }
+
+  /**
+   * 过滤词解析：支持中文逗号 / 英文逗号 / 顿号 / 空格分隔，去空、去重。
+   * 设置页与播放页共用同一套口径，避免两边理解不一致。
+   */
+  static keywords(text: string): Array<string> {
+    const result: Array<string> = [];
+    const parts: Array<string> = text.split(/[，,、\s]+/);
+    for (let i = 0; i < parts.length; i++) {
+      const word: string = parts[i].trim();
+      if (word.length > 0 && result.indexOf(word) < 0) {
+        result.push(word);
+      }
+    }
+    return result;
+  }
+
+  /** text 是否命中任一关键词（包含即命中） */
+  static hitKeyword(text: string, words: Array<string>): boolean {
+    if (text.length === 0 || words.length === 0) {
+      return false;
+    }
+    const lower: string = text.toLowerCase();
+    for (let i = 0; i < words.length; i++) {
+      if (lower.indexOf(words[i].toLowerCase()) >= 0) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /** 进度按 bvid 存储：key 形如 progress_BV1xx，仅断点续播开启时读写 */
