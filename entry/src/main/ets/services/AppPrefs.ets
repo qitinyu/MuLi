@@ -34,6 +34,14 @@ export class AppPrefs {
   static readonly KEY_TOP_IMMERSIVE: string = 'muli_playerTopImmersive';
   /** 关闭沉浸时顶部增量条颜色：0 = 黑色，1 = 白色 */
   static readonly KEY_TOP_INSET_COLOR: string = 'muli_playerTopInsetColor';
+  /** 下拉刷新是否保存前置内容（默认开；关闭后下拉刷新会先清空当前列表） */
+  static readonly KEY_REC_SAVE: string = 'muli_recSaveOnRefresh';
+  /** 下拉刷新一次拉多少条：下标对应 REC_COUNT_VALUES */
+  static readonly KEY_REC_COUNT: string = 'muli_recRefreshCount';
+  /** 竖屏化视频是否在推荐流里混排展示（默认关；开启后卡片在播放量前标「竖屏」） */
+  static readonly KEY_SHOW_VERTICAL: string = 'muli_showVertical';
+  /** 播放页顶部分区 List 点击是否全量刷新（默认关，实验性） */
+  static readonly KEY_LIST_TAP_REFRESH: string = 'muli_listTapRefresh';
 
   /** 默认启动页候选：与底部栏版块一一对应，番剧暂未建版块 */
   static readonly START_TAB_LABELS: Array<string> = ['首页', '动态', '番剧', '热门', '直播'];
@@ -41,6 +49,9 @@ export class AppPrefs {
   private static readonly START_TAB_TO_MAIN: Array<number> = [0, 1, -1, 3, 4];
 
   static readonly CARD_LAYOUT_LABELS: Array<string> = ['1×N 单列', '2×N 双列', '自适应'];
+  /** 下拉刷新数目候选（与 KEY_REC_COUNT 下标一一对应） */
+  static readonly REC_COUNT_VALUES: Array<number> = [10, 20];
+  static readonly REC_COUNT_LABELS: Array<string> = ['10 条', '20 条'];
 
   /** UP 主名过长策略：下标即存储值 */
   static readonly AUTHOR_NAME_LABELS: Array<string> = ['过长隐藏', '循环滚动'];
@@ -63,6 +74,10 @@ export class AppPrefs {
       AppStorage.setOrCreate(AppPrefs.KEY_AUTHOR_NAME_MODE, store.getSync('author_name_mode', 0) as number);
       AppStorage.setOrCreate(AppPrefs.KEY_TOP_IMMERSIVE, store.getSync('player_top_immersive', true) as boolean);
       AppStorage.setOrCreate(AppPrefs.KEY_TOP_INSET_COLOR, store.getSync('player_top_inset_color', 0) as number);
+      AppStorage.setOrCreate(AppPrefs.KEY_REC_SAVE, store.getSync('rec_save_on_refresh', true) as boolean);
+      AppStorage.setOrCreate(AppPrefs.KEY_REC_COUNT, store.getSync('rec_refresh_count', 0) as number);
+      AppStorage.setOrCreate(AppPrefs.KEY_SHOW_VERTICAL, store.getSync('show_vertical', false) as boolean);
+      AppStorage.setOrCreate(AppPrefs.KEY_LIST_TAP_REFRESH, store.getSync('list_tap_refresh', false) as boolean);
     } catch (err) {
       console.warn(`MuLiAppPrefs load failed: ${String(err)}`);
     }
@@ -81,6 +96,10 @@ export class AppPrefs {
     AppStorage.setOrCreate(AppPrefs.KEY_AUTHOR_NAME_MODE, 0);
     AppStorage.setOrCreate(AppPrefs.KEY_TOP_IMMERSIVE, true);
     AppStorage.setOrCreate(AppPrefs.KEY_TOP_INSET_COLOR, 0);
+    AppStorage.setOrCreate(AppPrefs.KEY_REC_SAVE, true);
+    AppStorage.setOrCreate(AppPrefs.KEY_REC_COUNT, 0);
+    AppStorage.setOrCreate(AppPrefs.KEY_SHOW_VERTICAL, false);
+    AppStorage.setOrCreate(AppPrefs.KEY_LIST_TAP_REFRESH, false);
   }
 
   static async save(context: common.UIAbilityContext, key: string, value: number | boolean | string): Promise<void> {
@@ -116,6 +135,14 @@ export class AppPrefs {
         return 'player_top_immersive';
       case AppPrefs.KEY_TOP_INSET_COLOR:
         return 'player_top_inset_color';
+      case AppPrefs.KEY_REC_SAVE:
+        return 'rec_save_on_refresh';
+      case AppPrefs.KEY_REC_COUNT:
+        return 'rec_refresh_count';
+      case AppPrefs.KEY_SHOW_VERTICAL:
+        return 'show_vertical';
+      case AppPrefs.KEY_LIST_TAP_REFRESH:
+        return 'list_tap_refresh';
       default:
         return key;
     }
@@ -164,5 +191,20 @@ export class AppPrefs {
       return AppPrefs.TOP_INSET_LABELS[0];
     }
     return AppPrefs.TOP_INSET_LABELS[index];
+  }
+
+  /** 下拉刷新数目：下标 → 条数（越界按 10 条） */
+  static recCount(index: number): number {
+    if (index < 0 || index >= AppPrefs.REC_COUNT_VALUES.length) {
+      return AppPrefs.REC_COUNT_VALUES[0];
+    }
+    return AppPrefs.REC_COUNT_VALUES[index];
+  }
+
+  static recCountLabel(index: number): string {
+    if (index < 0 || index >= AppPrefs.REC_COUNT_LABELS.length) {
+      return AppPrefs.REC_COUNT_LABELS[0];
+    }
+    return AppPrefs.REC_COUNT_LABELS[index];
   }
 }

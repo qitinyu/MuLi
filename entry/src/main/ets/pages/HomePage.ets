@@ -2,6 +2,7 @@ import { BOTTOM_PAD_LG, BOTTOM_PAD_PHONE, CHANNEL_STRIP_HEIGHT, PAGE_PADDING } f
 import { Channel, ChannelRegistry } from '../model/ChannelRegistry';
 import { VideoCard, VideoOpenParam } from '../model/BiliModels';
 import { RecommendService } from '../services/RecommendService';
+import { AppPrefs } from '../services/AppPrefs';
 import { VideoCardView } from '../components/VideoCardView';
 import { ListFooter, StateView } from '../components/StateView';
 import { PlaceholderPanel } from '../components/PlaceholderPanel';
@@ -12,6 +13,8 @@ import { uiMaterial } from '@kit.ArkUI';
 const CHANNEL_RECOMMEND: string = 'recommend';
 /** 双列时的列间距 */
 const CARD_GAP: number = 10;
+/** 竖屏混排密度：每 N 条推荐插 1 条竖屏视频 */
+const VERTICAL_MIX_STEP: number = 4;
 
 /**
  * 首页（推荐页）＝启动默认页。
@@ -34,6 +37,14 @@ export struct HomePage {
   @StorageLink('muli_listFollow') listFollow: boolean = true;
   @StorageLink('muli_partitions') @Watch('onPartitionsChanged') partitionKeys: string = '';
   @StorageLink('muli_cardLayout') cardLayout: number = 1;
+  /** 下拉刷新保存前置内容（默认开） */
+  @StorageLink('muli_recSaveOnRefresh') recSave: boolean = true;
+  /** 下拉刷新数目下标：0 = 10 条，1 = 20 条 */
+  @StorageLink('muli_recRefreshCount') @Watch('onFeedPrefChanged') recCountIndex: number = 0;
+  /** 竖屏化视频是否混排展示（默认关） */
+  @StorageLink('muli_showVertical') @Watch('onFeedPrefChanged') showVertical: boolean = false;
+  /** 点击顶部分区 List 是否全量刷新（默认关，实验性） */
+  @StorageLink('muli_listTapRefresh') listTapRefresh: boolean = false;
   @State channels: Array<Channel> = ChannelRegistry.selected(ChannelRegistry.defaultKeys());
   /** 当前通道 key（不用下标，分区集变化时下标会错位） */
   @State channelKey: string = CHANNEL_RECOMMEND;
@@ -49,6 +60,9 @@ export struct HomePage {
   private freshIdx: number = 0;
   private lastOffset: number = 0;
   private stripMaterial: uiMaterial.ImmersiveMaterial | undefined = undefined;
+  /** 竖屏混排池（来自热门接口，只放真正的竖屏视频）与它的取用游标 */
+  private verticalPool: Array<VideoCard> = [];
+  private verticalCursor: number = 0;
 
   aboutToAppear(): void {
     try {
@@ -66,6 +80,17 @@ export struct HomePage {
   /** 分区选择变化：重建通道列表，并把当前通道收敛到仍然存在的项 */
   private onPartitionsChanged(): void {
     this.refreshChannels();
+  }
+
+  /** 推荐流相关设置变化（条数 / 竖屏混排）：立刻按新设置重拉第一页 */
+  private onFeedPrefChanged(): void {
+    if (!this.isRecommend()) {
+      return;
+    }
+    this.verticalPool = [];
+    this.verticalCursor = 0;
+    this.freshIdx = 0;
+    this.loadFirstPage();
   }
 
   private refreshChannels(): void {
@@ -96,15 +121,38 @@ export struct HomePage {
   }
 
   /** 拉第一页（下拉刷新与首次进入共用） */
-  private async loadFirstPage(): Promise<void> {
+  private async loadFirstPage(keepPrevious: boolean = false): Promise<void> {
     if (this.loading) {
       return;
     }
     this.loading = true;
     this.errorText = '';
     try {
-      const cards: Array<VideoCard> = await RecommendService.load(1);
-      this.items = cards;
+      await this.ensureVerticalPool();
+      const cards: Array<VideoCard> = this.mixVertical(this.visible(await RecommendService.load(1,
+        AppPrefs.recCount(this.recCountIndex))));
+      if (keepPrevious && this.items.length > 0) {
+        // 「下拉刷新保存前置内容」：新内容插到前面，旧内容继续留在下面可翻
+        const merged: Array<VideoCard> = cards.slice();
+        for (let i = 0; i < this.items.length; i++) {
+          const old: VideoCard = this.items[i];
+          const key: string = old.bvid.length > 0 ? old.bvid : `${old.aid}`;
+          let existed: boolean = false;
+          for (let j = 0; j < merged.length; j++) {
+            const fresh: string = merged[j].bvid.length > 0 ? merged[j].bvid : `${merged[j].aid}`;
+            if (fresh === key) {
+              existed = true;
+              break;
+            }
+          }
+          if (!existed) {
+            merged.push(old);
+          }
+        }
+        this.items = merged;
+      } else {
+        this.items = cards;
+      }
       this.freshIdx = 1;
       this.hasMore = cards.length > 0;
     } catch (err) {
@@ -118,6 +166,81 @@ export struct HomePage {
     }
   }
 
+  /** 竖屏化视频展示开关：关闭时把竖屏视频从推荐流里滤掉 */
+  private visible(cards: Array<VideoCard>): Array<VideoCard> {
+    if (this.showVertical) {
+      return cards;
+    }
+    const result: Array<VideoCard> = [];
+    for (let i = 0; i < cards.length; i++) {
+      if (!cards[i].vertical) {
+        result.push(cards[i]);
+      }
+    }
+    return result;
+  }
+
+  /** 竖屏混排池：开关关着就当没有；池子用完了再补一批 */
+  private async ensureVerticalPool(): Promise<void> {
+    if (!this.showVertical) {
+      this.verticalPool = [];
+      this.verticalCursor = 0;
+      return;
+    }
+    if (this.verticalCursor < this.verticalPool.length) {
+      return;
+    }
+    try {
+      this.verticalPool = await RecommendService.loadVerticalPool();
+      this.verticalCursor = 0;
+    } catch (err) {
+      this.verticalPool = [];
+      this.verticalCursor = 0;
+    }
+  }
+
+  private sameCard(a: VideoCard, b: VideoCard): boolean {
+    if (a.bvid.length > 0 && b.bvid.length > 0) {
+      return a.bvid === b.bvid;
+    }
+    return a.aid > 0 && a.aid === b.aid;
+  }
+
+  private contains(cards: Array<VideoCard>, card: VideoCard): boolean {
+    for (let i = 0; i < cards.length; i++) {
+      if (this.sameCard(cards[i], card)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * 竖屏混排：每 VERTICAL_MIX_STEP 条正常推荐后面插 1 条竖屏视频（同页去重）。
+   * 池子取空就停手，不会为了凑数把同一条重复塞进来。
+   */
+  private mixVertical(cards: Array<VideoCard>): Array<VideoCard> {
+    if (!this.showVertical || this.verticalPool.length === 0) {
+      return cards;
+    }
+    const result: Array<VideoCard> = [];
+    for (let i = 0; i < cards.length; i++) {
+      result.push(cards[i]);
+      if ((i + 1) % VERTICAL_MIX_STEP !== 0) {
+        continue;
+      }
+      while (this.verticalCursor < this.verticalPool.length) {
+        const candidate: VideoCard = this.verticalPool[this.verticalCursor];
+        this.verticalCursor++;
+        if (!this.contains(result, candidate) && !this.contains(cards, candidate)) {
+          result.push(candidate);
+          break;
+        }
+      }
+    }
+    return result;
+  }
+
   /** 上拉加载下一批：fresh_idx 递增，按 bvid 去重后追加 */
   private async loadMore(): Promise<void> {
     if (this.loadingMore || this.loading || !this.hasMore) {
@@ -126,7 +249,9 @@ export struct HomePage {
     this.loadingMore = true;
     try {
       const next: number = this.freshIdx + 1;
-      const cards: Array<VideoCard> = await RecommendService.load(next);
+      await this.ensureVerticalPool();
+      const cards: Array<VideoCard> = this.mixVertical(this.visible(await RecommendService.load(next,
+        AppPrefs.recCount(this.recCountIndex))));
       if (cards.length === 0) {
         this.hasMore = false;
       } else {
@@ -157,6 +282,14 @@ export struct HomePage {
 
   private switchChannel(key: string): void {
     if (key === this.channelKey) {
+      // 「点击顶部分区 List 全量刷新」（实验性）：点当前分区即重拉第一页，
+      // 关闭时保持原行为（点当前分区不做事，避免误触清空滚动位置）。
+      if (this.listTapRefresh && key === CHANNEL_RECOMMEND) {
+        this.toast('正在刷新当前分区');
+        this.scroller.scrollTo({ xOffset: 0, yOffset: 0 });
+        this.lastOffset = 0;
+        this.loadFirstPage();
+      }
       return;
     }
     this.channelKey = key;
@@ -164,8 +297,11 @@ export struct HomePage {
     this.scroller.scrollTo({ xOffset: 0, yOffset: 0 });
     this.lastOffset = 0;
     this.fadeStrip(false);
-    if (key === CHANNEL_RECOMMEND && this.items.length === 0 && !this.loading) {
-      this.loadFirstPage();
+    if (key === CHANNEL_RECOMMEND && !this.loading) {
+      // 全量刷新开关关闭时，已有内容就复用（保持原来的「切回来不重拉」行为）
+      if (this.items.length === 0 || this.listTapRefresh) {
+        this.loadFirstPage();
+      }
     }
   }
 
@@ -410,11 +546,15 @@ export struct HomePage {
         .height('100%')
         .onRefreshing(() => {
           this.refreshing = true;
-          this.items = [];
+          const keep: boolean = this.recSave && this.items.length > 0;
           this.hasMore = true;
           this.freshIdx = 0;
           this.stripHidden = false;
-          this.loadFirstPage();
+          // 关闭「保存前置内容」时先清空，刷新期间列表回到空态（与原行为一致）
+          if (!keep) {
+            this.items = [];
+          }
+          this.loadFirstPage(keep);
         })
       } else {
         Scroll(this.scroller) {

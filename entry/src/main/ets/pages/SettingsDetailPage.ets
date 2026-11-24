@@ -3,8 +3,10 @@ import { LengthMetrics } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
 import { MaterialScope } from '../common/Materials';
 import { CARD_RADIUS, PAGE_PADDING } from '../common/DesignSpec';
+import { AppVersion } from '../common/AppVersion';
 import { Channel, ChannelRegistry } from '../model/ChannelRegistry';
 import { AppPrefs } from '../services/AppPrefs';
+import { PlayerPrefs } from '../services/PlayerPrefs';
 
 const ROW_HEIGHT: number = 52;
 /** 分区网格每行块数（n*4 块状显示） */
@@ -45,11 +47,62 @@ export struct SettingsDetailPage {
   @StorageLink(AppPrefs.KEY_AUTHOR_NAME_MODE) authorNameMode: number = 0;
   @StorageLink(AppPrefs.KEY_TOP_IMMERSIVE) topImmersive: boolean = true;
   @StorageLink(AppPrefs.KEY_TOP_INSET_COLOR) topInsetColor: number = 0;
+  @StorageLink(AppPrefs.KEY_REC_SAVE) recSave: boolean = true;
+  @StorageLink(AppPrefs.KEY_REC_COUNT) recCountIndex: number = 0;
+  @StorageLink(AppPrefs.KEY_SHOW_VERTICAL) showVertical: boolean = false;
+  @StorageLink(AppPrefs.KEY_LIST_TAP_REFRESH) listTapRefresh: boolean = false;
+  /** 播放器偏好（与播放页共用同一个 preferences store，两边改一处即同步） */
+  @State quality: number = 0;
+  @State filterRecommend: string = '';
+  @State filterDanmaku: string = '';
+  /** 过滤词编辑浮层：recommend / danmaku */
+  @State filterDialogVisible: boolean = false;
+  @State filterKey: string = '';
+  @State filterDraft: string = '';
   @State materialLevel: hdsMaterial.MaterialLevel = hdsMaterial.MaterialLevel.SMOOTH;
   private scroller: Scroller = new Scroller();
+  /** 播放器偏好实例：与播放页共用同一个 preferences store */
+  private prefs: PlayerPrefs = new PlayerPrefs();
 
   aboutToAppear(): void {
     this.materialLevel = MaterialScope.detectLevel();
+    PlayerPrefs.load(this.context()).then((prefs: PlayerPrefs) => {
+      this.prefs = prefs;
+      this.quality = prefs.quality;
+      this.filterRecommend = prefs.filterRecommend;
+      this.filterDanmaku = prefs.filterDanmaku;
+    }).catch(() => {
+      // 读取失败按默认档位渲染
+    });
+  }
+
+  /** 写播放器偏好：与播放页设置面板同一套字段与磁盘 key */
+  private savePlayer(key: string, value: number | string): void {
+    this.prefs.save(this.context(), key, value);
+  }
+
+  /** 打开过滤词编辑浮层 */
+  private openFilterEditor(key: string): void {
+    this.filterKey = key;
+    this.filterDraft = key === 'recommend' ? this.filterRecommend : this.filterDanmaku;
+    this.filterDialogVisible = true;
+  }
+
+  /** 保存过滤词（中文逗号分隔，原样存，解析交给 PlayerPrefs.keywords） */
+  private applyFilterEditor(): void {
+    const text: string = this.filterDraft.trim();
+    if (this.filterKey === 'recommend') {
+      this.filterRecommend = text;
+      this.prefs.filterRecommend = text;
+      this.savePlayer('filterRecommend', text);
+    } else {
+      this.filterDanmaku = text;
+      this.prefs.filterDanmaku = text;
+      this.savePlayer('filterDanmaku', text);
+    }
+    this.filterDialogVisible = false;
+    const count: number = PlayerPrefs.keywords(text).length;
+    this.toast(count > 0 ? `已保存 ${count} 个过滤词` : '过滤词已清空');
   }
 
   private context(): common.UIAbilityContext {
@@ -247,12 +300,142 @@ export struct SettingsDetailPage {
         .layoutWeight(1)
         .alignItems(HorizontalAlign.Start)
 
-        Text('待建设')
-          .fontSize(11)
-          .fontColor($r('app.color.text_tertiary'))
-          .padding({ left: 7, right: 7, top: 2, bottom: 2 })
-          .backgroundColor($r('app.color.bg_field'))
-          .borderRadius(8)
+        SymbolGlyph($r('sys.symbol.chevron_right'))
+          .fontSize(13)
+          .fontColor([$r('app.color.text_tertiary')])
+      }
+      .width('100%')
+      .constraintSize({ minHeight: ROW_HEIGHT })
+      .padding({ left: 14, right: 14, top: 10, bottom: 10 })
+      .alignItems(VerticalAlign.Center)
+      .onClick(() => {
+        this.toast(`${title}：详细设置在播放页「设置」中调整`);
+      })
+
+      this.rowDivider(isLast)
+    }
+    .width('100%')
+  }
+
+  /**
+   * 播放质量行。
+   *
+   * 必须写成专用 Builder、在内部直接读 @State quality：
+   * @Builder 的「值传参」不具备响应式，把档位文字当参数传进来，改完档位那一行不会刷新。
+   */
+  @Builder
+  qualityRow() {
+    Column() {
+      Row() {
+        Column({ space: 3 }) {
+          Text('播放质量')
+            .fontSize(15)
+            .fontColor($r('app.color.text_primary'))
+          Text('档位与播放页设置同步；未登录时服务端可能回落到 720P')
+            .fontSize(11)
+            .fontColor($r('app.color.text_tertiary'))
+            .maxLines(2)
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+
+        Text(PlayerPrefs.QUALITY_LABELS[this.qualityIndex()])
+          .fontSize(13)
+          .fontColor($r('app.color.text_secondary'))
+          .maxLines(1)
+
+        SymbolGlyph($r('sys.symbol.chevron_down'))
+          .fontSize(13)
+          .fontColor([$r('app.color.text_tertiary')])
+          .margin({ left: 4 })
+      }
+      .width('100%')
+      .constraintSize({ minHeight: ROW_HEIGHT })
+      .padding({ left: 14, right: 14, top: 10, bottom: 10 })
+      .alignItems(VerticalAlign.Center)
+      .bindMenu(this.optionMenu('quality', PlayerPrefs.QUALITY_LABELS,
+        PlayerPrefs.QUALITY_LABELS[this.qualityIndex()]), {
+        placement: Placement.BottomRight
+      })
+
+      this.rowDivider(false)
+    }
+    .width('100%')
+  }
+
+  /** 下拉刷新数目行：同上，内部读 @State，改完立刻刷新 */
+  @Builder
+  recCountRow() {
+    Column() {
+      Row() {
+        Column({ space: 3 }) {
+          Text('下拉刷新数目')
+            .fontSize(15)
+            .fontColor($r('app.color.text_primary'))
+          Text('每次下拉刷新拉取多少条')
+            .fontSize(11)
+            .fontColor($r('app.color.text_tertiary'))
+            .maxLines(2)
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+
+        Text(AppPrefs.recCountLabel(this.recCountIndex))
+          .fontSize(13)
+          .fontColor($r('app.color.text_secondary'))
+          .maxLines(1)
+
+        SymbolGlyph($r('sys.symbol.chevron_down'))
+          .fontSize(13)
+          .fontColor([$r('app.color.text_tertiary')])
+          .margin({ left: 4 })
+      }
+      .width('100%')
+      .constraintSize({ minHeight: ROW_HEIGHT })
+      .padding({ left: 14, right: 14, top: 10, bottom: 10 })
+      .alignItems(VerticalAlign.Center)
+      .bindMenu(this.optionMenu(AppPrefs.KEY_REC_COUNT, AppPrefs.REC_COUNT_LABELS,
+        AppPrefs.recCountLabel(this.recCountIndex)), {
+        placement: Placement.BottomRight
+      })
+
+      this.rowDivider(false)
+    }
+    .width('100%')
+  }
+
+  /** 过滤词当前值：Builder 内部读取，保证保存后立刻回显 */
+  private rowValue(key: string): string {
+    return key === 'recommend' ? this.filterSummary(this.filterRecommend)
+      : this.filterSummary(this.filterDanmaku);
+  }
+
+  /** 文本输入型设置行：右侧显示当前值摘要，点击打开编辑浮层 */
+  @Builder
+  textRow(title: string, hint: string, key: string, isLast: boolean) {
+    Column() {
+      Row({ space: 8 }) {
+        Column({ space: 3 }) {
+          Text(title)
+            .fontSize(15)
+            .fontColor($r('app.color.text_primary'))
+          if (hint.length > 0) {
+            Text(hint)
+              .fontSize(11)
+              .fontColor($r('app.color.text_tertiary'))
+              .maxLines(2)
+          }
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+
+        Text(this.rowValue(key).length > 0 ? this.rowValue(key) : '未设置')
+          .fontSize(12)
+          .fontColor(this.rowValue(key).length > 0
+            ? $r('app.color.text_secondary') : $r('app.color.text_tertiary'))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .constraintSize({ maxWidth: '42%' })
 
         SymbolGlyph($r('sys.symbol.chevron_right'))
           .fontSize(13)
@@ -263,7 +446,7 @@ export struct SettingsDetailPage {
       .padding({ left: 14, right: 14, top: 10, bottom: 10 })
       .alignItems(VerticalAlign.Center)
       .onClick(() => {
-        this.toast(`${title}：接口待接入`);
+        this.openFilterEditor(key);
       })
 
       this.rowDivider(isLast)
@@ -272,6 +455,17 @@ export struct SettingsDetailPage {
   }
 
   private onPick(key: string, index: number): void {
+    if (key === 'quality') {
+      this.quality = PlayerPrefs.QUALITIES[index];
+      this.prefs.quality = this.quality;
+      this.savePlayer('quality', this.quality);
+      return;
+    }
+    if (key === AppPrefs.KEY_REC_COUNT) {
+      this.recCountIndex = index;
+      this.pickNumber(AppPrefs.KEY_REC_COUNT, index);
+      return;
+    }
     if (key === AppPrefs.KEY_START_TAB) {
       this.startTab = index;
       this.pickNumber(AppPrefs.KEY_START_TAB, index);
@@ -321,19 +515,135 @@ export struct SettingsDetailPage {
     .borderRadius(CARD_RADIUS)
   }
 
+  /**
+   * 播放器分组（V2.1.0）。
+   *
+   * - 播放质量：档位与播放页设置面板共用 PlayerPrefs.QUALITIES，任一处修改两边同步；
+   * - 播放行为：只保留「后台播放 / 小窗」，自动连播由播放模式控制，不再重复一句小字；
+   * - 过滤词拆成两条：推荐视频过滤（标题命中即不推荐）、视频弹幕过滤（命中不上屏）；
+   * - 卡片布局保持原条目。
+   */
   @Builder
   playerGroup() {
     Column() {
-      this.navRow('播放质量', '清晰度候选与移动网络策略', false)
-      this.navRow('播放行为', '自动连播、后台播放、小窗', false)
-      this.navRow('过滤词', '标题与弹幕关键词屏蔽', false)
-      this.navRow('推荐', '个性化推荐开关（占位）', false)
+      this.qualityRow()
+      this.navRow('播放行为', '后台播放、小窗', false)
+      this.textRow('推荐视频过滤', '关键词以中文逗号「，」隔开，标题命中的视频不再推荐', 'recommend', false)
+      this.textRow('视频弹幕过滤', '关键词以中文逗号「，」隔开，命中的弹幕不会显示', 'danmaku', false)
       this.menuRow('卡片布局', '推荐页即时生效', AppPrefs.KEY_CARD_LAYOUT,
         AppPrefs.cardLayoutLabel(this.cardLayout), AppPrefs.CARD_LAYOUT_LABELS, true)
     }
     .width('100%')
     .backgroundColor($r('app.color.bg_card'))
     .borderRadius(CARD_RADIUS)
+  }
+
+  /** 推荐分组：下拉刷新保存 / 刷新数目 / 视频展示（竖屏化视频混排） */
+  @Builder
+  recommendGroup() {
+    Column() {
+      this.toggleRow('下拉刷新内容保存', '关闭后，下拉刷新不再保存前置内容',
+        AppPrefs.KEY_REC_SAVE, this.recSave, false)
+      this.recCountRow()
+      this.toggleRow('竖屏视频展示', '开启后竖屏化视频也会在推荐页其他视频混乱展示，并在播放量数前标注「竖屏」',
+        AppPrefs.KEY_SHOW_VERTICAL, this.showVertical, true)
+    }
+    .width('100%')
+    .backgroundColor($r('app.color.bg_card'))
+    .borderRadius(CARD_RADIUS)
+  }
+
+  /** 过滤词摘要：超过一行时截断并且数出条数 */
+  private filterSummary(text: string): string {
+    const words: Array<string> = PlayerPrefs.keywords(text);
+    if (words.length === 0) {
+      return '';
+    }
+    return words.length > 2 ? `${words[0]}、${words[1]} 等 ${words.length} 个` : words.join('、');
+  }
+
+  private qualityIndex(): number {
+    const index: number = PlayerPrefs.QUALITIES.indexOf(this.quality);
+    return index < 0 ? 0 : index;
+  }
+
+  /** 过滤词编辑浮层：文本输入式，中文逗号分隔 */
+  @Builder
+  filterEditor() {
+    if (this.filterDialogVisible) {
+      Stack({ alignContent: Alignment.Center }) {
+        Column()
+          .width('100%')
+          .height('100%')
+          .backgroundColor($r('app.color.scrim'))
+          .onClick(() => {
+            this.filterDialogVisible = false;
+          })
+
+        Column({ space: 12 }) {
+          Text(this.filterKey === 'recommend' ? '推荐视频过滤' : '视频弹幕过滤')
+            .fontSize(16)
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('app.color.text_primary'))
+            .width('100%')
+
+          Text(this.filterKey === 'recommend'
+            ? '标题包含任一关键词的视频将不再出现在播放页推荐中'
+            : '正文包含任一关键词的弹幕将不再上屏')
+            .fontSize(11)
+            .fontColor($r('app.color.text_tertiary'))
+            .width('100%')
+
+          TextInput({ text: this.filterDraft, placeholder: '例如：广告，剧透，标题党' })
+            .width('100%')
+            .height(44)
+            .fontSize(14)
+            .padding({ left: 12, right: 12 })
+            .backgroundColor($r('app.color.bg_field'))
+            .borderRadius(10)
+            .onChange((value: string) => {
+              this.filterDraft = value;
+            })
+
+          Text(`已识别 ${PlayerPrefs.keywords(this.filterDraft).length} 个关键词（用中文逗号隔开）`)
+            .fontSize(11)
+            .fontColor($r('app.color.text_tertiary'))
+            .width('100%')
+
+          Row({ space: 10 }) {
+            Text('清空')
+              .fontSize(14)
+              .fontColor($r('app.color.text_secondary'))
+              .layoutWeight(1)
+              .textAlign(TextAlign.Center)
+              .padding({ top: 9, bottom: 9 })
+              .backgroundColor($r('app.color.bg_field'))
+              .borderRadius(18)
+              .onClick(() => {
+                this.filterDraft = '';
+              })
+            Text('保存')
+              .fontSize(14)
+              .fontColor($r('app.color.text_on_brand'))
+              .layoutWeight(1)
+              .textAlign(TextAlign.Center)
+              .padding({ top: 9, bottom: 9 })
+              .backgroundColor($r('app.color.brand_primary'))
+              .borderRadius(18)
+              .onClick(() => {
+                this.applyFilterEditor();
+              })
+          }
+          .width('100%')
+        }
+        .width('86%')
+        .padding(16)
+        .backgroundColor($r('app.color.bg_card'))
+        .borderRadius(16)
+      }
+      .width('100%')
+      .height('100%')
+    }
   }
 
   @Builder
@@ -389,6 +699,8 @@ export struct SettingsDetailPage {
         this.listVisible, false)
       this.toggleRow('跟随界面移动隐藏', '关闭后上滑界面 List 将保持显示', AppPrefs.KEY_LIST_FOLLOW,
         this.listFollow, false)
+      this.toggleRow('点击分区 List 全量刷新', '实验性：开启后点击顶部的分区 List，实现单个分区全量刷新（刷新前内容可能不保存）',
+        AppPrefs.KEY_LIST_TAP_REFRESH, this.listTapRefresh, false)
 
       Row() {
         Text('显示分区')
@@ -412,38 +724,49 @@ export struct SettingsDetailPage {
 
   build() {
     HdsNavDestination() {
-      Scroll(this.scroller) {
-        Column() {
-          Row()
-            .width('100%')
-            .height(64)
+      Stack({ alignContent: Alignment.Top }) {
+        Scroll(this.scroller) {
+          Column() {
+            Row()
+              .width('100%')
+              .height(64)
 
-          if (this.section === SECTION_PLAYER) {
-            this.sectionLabel('播放器')
-            this.playerGroup()
-          } else if (this.section === SECTION_PLAYPAGE) {
-            this.sectionLabel('播放页 · List 分区')
-            this.playPageGroup()
-          } else {
-            this.sectionLabel('外观 · 通用设置')
-            this.appearanceGroup()
+            if (this.section === SECTION_PLAYER) {
+              this.sectionLabel('播放器')
+              this.playerGroup()
+              this.sectionLabel('推荐')
+              this.recommendGroup()
+            } else if (this.section === SECTION_PLAYPAGE) {
+              this.sectionLabel('播放页 · List 分区')
+              this.playPageGroup()
+            } else {
+              this.sectionLabel('外观 · 通用设置')
+              this.appearanceGroup()
+            }
+
+            Text(`沐哩 MuLi  ${AppVersion.label()}`)
+              .width('100%')
+              .fontSize(11)
+              .fontColor($r('app.color.text_tertiary'))
+              .textAlign(TextAlign.Center)
+              .margin({ top: 24, bottom: 40 })
           }
-
-          Text('沐哩 MuLi  V2.0.9')
-            .width('100%')
-            .fontSize(11)
-            .fontColor($r('app.color.text_tertiary'))
-            .textAlign(TextAlign.Center)
-            .margin({ top: 24, bottom: 40 })
+          .width('100%')
+          .padding({ left: PAGE_PADDING, right: PAGE_PADDING })
+          .alignItems(HorizontalAlign.Start)
+          .justifyContent(FlexAlign.Start)
         }
         .width('100%')
-        .padding({ left: PAGE_PADDING, right: PAGE_PADDING })
-        .alignItems(HorizontalAlign.Start)
+        .height('100%')
+        .scrollBar(BarState.Off)
+        .edgeEffect(EdgeEffect.Spring)
+        // 取消垂直居中：内容不足一屏时也从顶部开始排，不再被 Scroll 居中
+        .align(Alignment.Top)
+
+        this.filterEditor()
       }
       .width('100%')
       .height('100%')
-      .scrollBar(BarState.Off)
-      .edgeEffect(EdgeEffect.Spring)
     }
     .titleBar({
       content: {

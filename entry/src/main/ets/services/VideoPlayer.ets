@@ -287,11 +287,46 @@ export class VideoPlayer {
       await this.pause();
       return;
     }
-    // 播完后再点播放键：先回到起点，否则部分机型直接 play 无效
+    // 播完后再点播放键：走「从头重播」的串行实现，否则部分机型直接 play 无效
     if (this.player !== undefined && this.player.state === 'completed') {
-      this.seek(0);
+      await this.replay();
+      return;
     }
     await this.play();
+  }
+
+  /**
+   * 从头重播（播完再播 / 单集循环 / 点「重播视频」）。
+   *
+   * 踩坑记录：completed 是「终态」，此时 seek() 与紧跟的 play() 会互相抢时序——
+   * seek 的 Promise 还没落地，play() 已经发出，播放器把这次 seek 丢掉，
+   * 表现就是「点重播后画面在播、进度却仍停在接近结尾的位置」（实测停在 3:37/3:53）。
+   * 因此这里改成串行：先把播放器拉出终态 → await seek(0) → 确认回到开头再 play()。
+   */
+  async replay(): Promise<void> {
+    const player: media.AVPlayer | undefined = this.player;
+    if (player === undefined || !this.prepared) {
+      return;
+    }
+    console.info(`${TAG} replay begin state=${player.state} pos=${player.currentTime} dur=${player.duration}`);
+    try {
+      if (player.state === 'completed' || player.state === 'stopped') {
+        // 先离开终态：部分机型在 completed 下直接 seek 会被忽略
+        await player.play();
+      }
+      await player.seek(0);
+      console.info(`${TAG} replay seeked state=${player.state} pos=${player.currentTime}`);
+      if (player.state !== 'playing') {
+        await player.play();
+      }
+      console.info(`${TAG} replay end state=${player.state} pos=${player.currentTime}`);
+    } catch (err) {
+      // 兜底：实在回不去就重建播放源从头放（宁可重新缓冲，也不要停在结尾）
+      console.error(`${TAG} replay failed: ${String(err)}`);
+      if (this.pendingUrl.length > 0) {
+        await this.prepare(this.pendingUrl);
+      }
+    }
   }
 
   seek(positionMs: number): void {
