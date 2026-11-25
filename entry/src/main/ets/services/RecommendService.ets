@@ -80,6 +80,112 @@ export class RecommendService {
     return pool;
   }
 
+  /**
+   * 相关推荐：播放页用，按当前视频取「相似稿件」。
+   *
+   * 之前播放页下方那列借的是首页信息流（`/x/web-interface/index/top/feed/rcmd`），
+   * 那个接口是按账号口味随机出的，跟正在看的视频毫无关系，所以出现「看装机视频、推美妆」这种跳脱。
+   * 这里换成播放页右侧同款 `/x/web-interface/archive/related`：服务端按分区 / 标签 / 共同观众算关联，
+   * 顺序本身就是相关度排序，原样保留即可。
+   */
+  static async related(bvid: string, pageSize: number = 20): Promise<Array<VideoCard>> {
+    const cards: Array<VideoCard> = [];
+    if (bvid.length === 0) {
+      return cards;
+    }
+    const query: Record<string, string> = {};
+    query['bvid'] = bvid;
+    const body: Record<string, Object> = await BiliHttp.getJson(
+      BiliHttp.API_HOST, '/x/web-interface/archive/related', query, `https://www.bilibili.com/video/${bvid}/`);
+    const code: number = J.num(body, 'code');
+    if (code !== 0) {
+      throw new Error(J.str(body, 'message').length > 0 ? J.str(body, 'message') : `相关推荐返回 ${code}`);
+    }
+    // data 直接是数组（不是 {list: []}），番剧 / 课程条目 goto 不是 av，bvid 为空自然被过滤掉
+    const list: Array<Object> = J.arr(body, 'data');
+    for (let i = 0; i < list.length; i++) {
+      const card: VideoCard | null = RecommendService.mapRelatedItem(list[i] as Record<string, Object>);
+      if (card !== null) {
+        cards.push(card);
+      }
+      if (cards.length >= pageSize) {
+        break;
+      }
+    }
+    console.info(`${TAG} related bvid=${bvid} got ${cards.length}/${list.length}`);
+    return cards;
+  }
+
+  /**
+   * 首页信息流（「混乱」推荐池）：竖屏连播的上滑下一条与随机连播用这个。
+   *
+   * 竖屏是刷视频的场景，跟着当前这条找相似会越刷越窄（看装机就一直装机），
+   * 所以这里故意回到首页信息流——按账号口味混着出，什么分区都可能出现。
+   * fresh_idx 随机给一个，避免每次刷新都拿到同一批。
+   */
+  static async feedPool(pageSize: number = 20): Promise<Array<VideoCard>> {
+    return RecommendService.load(Math.floor(Math.random() * 60) + 2, pageSize);
+  }
+
+  /**
+   * 相关推荐，失败时退回首页信息流。
+   *
+   * 老视频 / 极冷门稿件偶尔返回空数组，这时候宁可给一批「不相关但能看」的，
+   * 也不要让播放页的推荐区空着——调用方只关心「拿到一批卡片」。
+   */
+  static async relatedOrFeed(bvid: string, pageSize: number = 20): Promise<Array<VideoCard>> {
+    try {
+      const list: Array<VideoCard> = await RecommendService.related(bvid, pageSize);
+      if (list.length > 0) {
+        return list;
+      }
+    } catch (err) {
+      console.warn(`${TAG} related failed, fallback to feed: ${String(err)}`);
+    }
+    try {
+      return await RecommendService.load(Math.floor(Math.random() * 50) + 2, pageSize);
+    } catch (err) {
+      console.warn(`${TAG} feed fallback failed: ${String(err)}`);
+      return [];
+    }
+  }
+
+  /** 相关推荐单条 → 卡片（字段与热门接口基本一致，多一个 tname 分区名） */
+  private static mapRelatedItem(item: Record<string, Object>): VideoCard | null {
+    const bvid: string = J.str(item, 'bvid');
+    const title: string = J.str(item, 'title');
+    if (bvid.length === 0 || title.length === 0) {
+      return null;
+    }
+    const owner: Record<string, Object> = J.obj(item, 'owner');
+    const stat: Record<string, Object> = J.obj(item, 'stat');
+    const dimension: Record<string, Object> = J.obj(item, 'dimension');
+    const width: number = J.num(dimension, 'width');
+    const height: number = J.num(dimension, 'height');
+    const view: number = J.num(stat, 'view');
+    const card: VideoCard = {
+      aid: J.num(item, 'aid'),
+      bvid: bvid,
+      cid: J.num(item, 'cid'),
+      title: title,
+      cover: J.str(item, 'pic').replace(/^http:/, 'https:'),
+      author: J.str(owner, 'name'),
+      authorFace: J.str(owner, 'face').replace(/^http:/, 'https:'),
+      authorMid: J.num(owner, 'mid'),
+      duration: J.num(item, 'duration'),
+      pubTs: J.num(item, 'pubdate'),
+      viewText: view > 0 ? `${shortCount(view)}播放` : '',
+      danmuText: J.num(stat, 'danmaku') > 0 ? `${shortCount(J.num(stat, 'danmaku'))}弹幕` : '',
+      likeText: J.num(stat, 'like') > 0 ? shortCount(J.num(stat, 'like')) : '',
+      replyText: J.num(stat, 'reply') > 0 ? shortCount(J.num(stat, 'reply')) : '',
+      cornerText: '',
+      followed: false,
+      vertical: width > 0 && height > width,
+      tname: J.str(item, 'tname')
+    };
+    return card;
+  }
+
   /** 热门 / 排行榜这类「带 dimension」的条目 → 卡片（竖屏判定只在有 dimension 时才成立） */
   private static mapRankItem(item: Record<string, Object>): VideoCard | null {
     const owner: Record<string, Object> = J.obj(item, 'owner');

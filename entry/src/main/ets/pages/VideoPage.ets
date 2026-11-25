@@ -7,7 +7,7 @@ import { pasteboard } from '@kit.BasicServicesKit';
 import { common } from '@kit.AbilityKit';
 import { BOTTOM_PAD_PHONE, PAGE_PADDING } from '../common/DesignSpec';
 import { durationText, plainCount, pubTimeText, shortCount } from '../common/Format';
-import { AuthorStat, VideoCard, VideoDetail, VideoOpenParam, emptyVideoCard } from '../model/BiliModels';
+import { AuthorStat, FavFolder, VideoCard, VideoDetail, VideoOpenParam, emptyVideoCard } from '../model/BiliModels';
 import { VideoService } from '../services/VideoService';
 import { VideoPlayer } from '../services/VideoPlayer';
 import { RecommendService } from '../services/RecommendService';
@@ -16,6 +16,8 @@ import { CommentEmote, CommentFeed, CommentService, SubReplyFeed, VideoComment }
 import { DanmakuItem, DanmakuService } from '../services/DanmakuService';
 import { InteractiveService, VideoRelation } from '../services/InteractiveService';
 import { HiddenCommentStore } from '../services/HiddenCommentStore';
+import { LibraryService } from '../services/LibraryService';
+import { HistoryStore } from '../services/HistoryStore';
 import { BiliCookie } from '../services/BiliHttp';
 import { ListFooter, StateView } from '../components/StateView';
 import { LevelBadge } from '../components/LevelBadge';
@@ -41,6 +43,12 @@ const PORTRAIT_SIDE_ZONE_RATIO: number = 0.20;
 const TAB_KEYS: Array<string> = ['brief', 'comments', 'settings'];
 /** 评论输入框的组件 id：打开浮层后按 id 申请焦点，弹出键盘 */
 const COMPOSER_INPUT_ID: string = 'muli_composer_input';
+/** 收藏面板里夹封面色块的高度（vp）：两列宽度约 165，16:9 左右最耐看 */
+const FOLDER_COVER_H: number = 84;
+/** 系统半模态承载的三个面板：收藏夹选择 / 播放设置 / 评论长按操作 */
+const SHEET_FAV: string = 'fav';
+const SHEET_SETTINGS: string = 'settings';
+const SHEET_COMMENT: string = 'comment';
 /** 评论输入的表情面板：b 站是纯文本表情，插入后按 [名称] 显示 */
 const COMPOSER_EMOJIS: Array<string> = [
   'doge', '妙啊', '支持', '微笑', '笑哭', '鼓掌', '点赞', '吃瓜',
@@ -199,8 +207,6 @@ export struct VideoPage {
   @State portraitMode: boolean = false;
   /** 竖屏模式下底部信息浮层是否展开（展开简介时浮层拉高） */
   @State portraitDescExpanded: boolean = false;
-  /** 竖屏顶部「设置」唤起的底部弹窗（内容与播放区设置面板一致） */
-  @State portraitSettingsVisible: boolean = false;
   /** 竖屏连播：底部 up 信息 + 视频名称是否显示（点击屏幕切换，进度条与操作行固定显示） */
   @State portraitInfoVisible: boolean = true;
   /** 竖屏连播：上下拖拽切换时，视频与浮层跟随手指的实时位移（vp，负值=向上滑出） */
@@ -217,8 +223,7 @@ export struct VideoPage {
   @State portraitPrevCover: string = '';
   /** 从竖屏连播进的全屏：退出全屏要回到连播而不是普通播放页 */
   @State fullscreenFromPortrait: boolean = false;
-  /** 评论长按弹窗 */
-  @State sheetCommentVisible: boolean = false;
+  /** 评论长按弹窗（内容由系统半模态承载，这里只存「长按的是哪条」） */
   @State sheetComment: VideoComment = new VideoComment();
   @State sheetCommentIsSub: boolean = false;
   /** 控制条（返回 / 中央播放键 / 进度条）是否可见 */
@@ -295,6 +300,24 @@ export struct VideoPage {
   private likeCount: number = 0;
   /** 点赞请求进行中，避免连点重复提交 */
   private likeBusy: boolean = false;
+  /** 本条视频是否已收藏（relation 的 favorite 字段） */
+  @State favored: boolean = false;
+  /**
+   * 底部弹层统一走系统半模态（bindSheet）。
+   *
+   * 一个组件节点上只能挂一个 bindSheet，所以用「开关 + 面板类型」两个状态分发，
+   * 和「我的」页换背景 / 等级经验的做法一致。系统弹层自带：拖拽下移关闭、
+   * 蒙层点击关闭、返回键关闭、圆角与阴影、避让手势条——这些以前都要手写。
+   */
+  @State sheetVisible: boolean = false;
+  @State sheetKind: string = '';
+  /** 收藏夹选择面板：列表 / 加载中 / 本机勾选的夹 id（点「确定」才提交） */
+  @State favFolders: Array<FavFolder> = [];
+  @State favChecked: Array<number> = [];
+  @State favLoading: boolean = false;
+  private favBusy: boolean = false;
+  /** 本机观看记录的节流时间戳（毫秒） */
+  private historySavedAt: number = 0;
   /** 弹幕输入浮层 */
   @State danmakuComposerVisible: boolean = false;
   @State danmakuDraft: string = '';
@@ -430,6 +453,12 @@ export struct VideoPage {
       // 以播放器上报的进度为准重新锚定，弹幕不会随时间漂走
       this.danmakuClockPos = positionMs;
       this.danmakuClockAt = Date.now();
+      // 本机观看记录：每 5 秒落一次，避免每秒写盘；退出时再补最后一次
+      const now: number = Date.now();
+      if (now - this.historySavedAt > 5000) {
+        this.historySavedAt = now;
+        this.recordHistory(Math.floor(positionMs / 1000));
+      }
     };
     this.player.onError = (message: string) => {
       this.playError = message;
@@ -722,6 +751,8 @@ export struct VideoPage {
     if (this.prefs.continuePlay && this.videoParam.bvid.length > 0 && this.positionMs > 0) {
       PlayerPrefs.saveProgress(this.context(), this.videoParam.bvid, this.positionMs);
     }
+    // 关页前补一条本机观看记录（5 秒节流的那次可能刚过没多久）
+    this.recordHistory(Math.floor(this.positionMs / 1000));
     this.restoreBrightness();
     this.setKeepScreenOn(false);
     this.unbindAppLifecycle();
@@ -748,6 +779,8 @@ export struct VideoPage {
    * 只做一次 setSource —— 竖屏连播上滑能立刻出画，靠的就是这条路径。
    */
   private async loadDetail(prefetched?: PortraitPrefetch | null): Promise<void> {
+    // 换视频（竖屏连播上滑 / 点推荐）：先把上一条的最终进度写进本机历史再重置
+    this.recordHistory(Math.floor(this.positionMs / 1000));
     this.loading = true;
     this.errorText = '';
     this.showRecommendCard = false;
@@ -763,6 +796,7 @@ export struct VideoPage {
     this.liked = false;
     this.likeCount = 0;
     this.likeTextUi = '';
+    this.favored = false;
     try {
       const warm: PortraitPrefetch | null = prefetched !== undefined ? prefetched : null;
       if (warm !== null && warm.param.bvid === this.videoParam.bvid && warm.url.length > 0) {
@@ -847,11 +881,17 @@ export struct VideoPage {
     }
   }
 
-  /** 播放页下方推荐列表：过滤当前视频与命中推荐过滤词的条目，最多 8 条 */
+  /**
+   * 播放页下方推荐列表。
+   *
+   * 走「相关推荐」而不是首页信息流：feed 是按账号口味随机出的，跟当前这条视频没关系，
+   * 看完一个装机视频下面推美妆，观感就是「跳脱」。related 由服务端按分区 / 标签 / 共同观众算，
+   * 顺序即相关度，这里只做去重、过滤当前视频与命中过滤词的条目，最多 8 条。
+   */
   private async loadRecommendList(bvid: string): Promise<void> {
     this.recommendLoading = true;
     try {
-      const cards: Array<VideoCard> = await RecommendService.load(Math.floor(Math.random() * 50) + 2);
+      const cards: Array<VideoCard> = await RecommendService.relatedOrFeed(bvid, 20);
       const blocked: Array<string> = PlayerPrefs.keywords(this.prefs.filterRecommend);
       const list: Array<VideoCard> = [];
       for (let i = 0; i < cards.length; i++) {
@@ -863,7 +903,10 @@ export struct VideoPage {
           break;
         }
       }
-      this.recommendList = list;
+      // 换视频后旧请求才回来：bvid 已经变了就别覆盖新的列表
+      if (this.videoParam.bvid === bvid) {
+        this.recommendList = list;
+      }
     } catch (err) {
       this.recommendList = [];
       console.warn(`MuLiVideo recommend list failed: ${String(err)}`);
@@ -887,6 +930,7 @@ export struct VideoPage {
       const relation: VideoRelation = await InteractiveService.relation(aid);
       if (this.detail.aid === aid) {
         this.liked = relation.liked;
+        this.favored = relation.favored;
       }
     } catch (err) {
       console.warn(`MuLiVideo like state failed: ${String(err)}`);
@@ -939,6 +983,229 @@ export struct VideoPage {
       return;
     }
     this.likeTextUi = this.detail.likeText.length > 0 ? this.detail.likeText : '';
+  }
+
+  // ---------------- 收藏 / 稍后再看 ----------------
+
+  /** 打开系统半模态：先定面板类型再点亮开关，bindSheet 才会拿到对应内容 */
+  private openSheet(kind: string): void {
+    this.sheetKind = kind;
+    this.sheetVisible = true;
+  }
+
+  private closeSheet(): void {
+    this.sheetVisible = false;
+  }
+
+  /** 系统半模态收起（下滑 / 点蒙层 / 返回键）后清掉面板类型 */
+  private onSheetDismiss(): void {
+    this.sheetKind = '';
+  }
+
+  /**
+   * 打开收藏夹面板（系统半模态）。
+   * 用带 rid 的 list-all：一次拿到「有哪些夹 + 这条在不在里面」，
+   * 就不用收藏状态与夹列表分两次查、也不会出现勾选状态与实际情况不一致。
+   * 勾选先落在本机（favChecked），点「确定」才一次性提交，方便一条视频同时收进多个夹。
+   */
+  private async openFavSheet(): Promise<void> {
+    if (!BiliCookie.isLogin()) {
+      this.toast('请先登录后再收藏');
+      return;
+    }
+    const aid: number = this.detail.aid;
+    if (aid <= 0) {
+      this.toast('视频信息还没就绪');
+      return;
+    }
+    this.favFolders = [];
+    this.favChecked = [];
+    this.favLoading = true;
+    this.openSheet(SHEET_FAV);
+    try {
+      const folders: Array<FavFolder> = await LibraryService.foldersOf(aid);
+      if (this.detail.aid === aid) {
+        this.favFolders = folders;
+        const checked: Array<number> = [];
+        for (let i = 0; i < folders.length; i++) {
+          if (folders[i].contains) {
+            checked.push(folders[i].id);
+          }
+        }
+        this.favChecked = checked;
+        // 夹封面后台补（接口不返回 cover）：不挡面板出现，取到一张换一张
+        this.fillFolderCovers(folders);
+      }
+      if (folders.length === 0) {
+        this.toast('还没有收藏夹，请先到网页端建一个');
+      }
+    } catch (err) {
+      this.toast(err instanceof Error ? err.message : '收藏夹加载失败');
+    } finally {
+      this.favLoading = false;
+    }
+  }
+
+  /**
+   * 收藏夹封面补齐。
+   *
+   * 列表接口不给 cover，只能逐夹取「最新一条视频」的封面当夹封面（b 站网页端同款做法）。
+   * 一次并发 4 个，回一批刷一次；面板关掉或换片就停手。
+   */
+  private async fillFolderCovers(folders: Array<FavFolder>): Promise<void> {
+    const pending: Array<FavFolder> = [];
+    for (let i = 0; i < folders.length; i++) {
+      if (folders[i].cover.length === 0 && folders[i].count > 0) {
+        pending.push(folders[i]);
+      }
+    }
+    const aid: number = this.detail.aid;
+    for (let i = 0; i < pending.length; i += 4) {
+      const slice: Array<FavFolder> = pending.slice(i, i + 4);
+      const tasks: Array<Promise<void>> = [];
+      for (let j = 0; j < slice.length; j++) {
+        tasks.push(this.loadFolderCover(slice[j]));
+      }
+      await Promise.all(tasks);
+      if (this.detail.aid !== aid || !this.sheetVisible || this.sheetKind !== SHEET_FAV) {
+        return;
+      }
+      // 夹是普通对象，改字段不会触发刷新：整体换一份数组，ForEach 才重画
+      this.favFolders = this.favFolders.slice();
+    }
+  }
+
+  private async loadFolderCover(folder: FavFolder): Promise<void> {
+    try {
+      folder.cover = await LibraryService.folderCover(folder.id, folder.count);
+    } catch (err) {
+      console.warn(`MuLiVideo folder cover failed: ${String(err)}`);
+    }
+  }
+
+  /** 本机切换某个夹的勾选（不请求，提交时统一处理） */
+  private toggleFolderCheck(folder: FavFolder): void {
+    const next: Array<number> = [];
+    let hit: boolean = false;
+    for (let i = 0; i < this.favChecked.length; i++) {
+      if (this.favChecked[i] === folder.id) {
+        hit = true;
+      } else {
+        next.push(this.favChecked[i]);
+      }
+    }
+    if (!hit) {
+      next.push(folder.id);
+    }
+    this.favChecked = next;
+  }
+
+  private isFolderChecked(folder: FavFolder): boolean {
+    for (let i = 0; i < this.favChecked.length; i++) {
+      if (this.favChecked[i] === folder.id) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * 提交勾选：新增的夹一次请求收进去，取消勾选的夹一次请求移出。
+   * 服务端成功后才改本地 contains —— 失败时面板保持原样，用户可以再点一次确定。
+   */
+  private async submitFavChecks(): Promise<void> {
+    if (this.favBusy) {
+      return;
+    }
+    const aid: number = this.detail.aid;
+    const addIds: Array<number> = [];
+    const delIds: Array<number> = [];
+    for (let i = 0; i < this.favFolders.length; i++) {
+      const folder: FavFolder = this.favFolders[i];
+      const want: boolean = this.isFolderChecked(folder);
+      if (want && !folder.contains) {
+        addIds.push(folder.id);
+      } else if (!want && folder.contains) {
+        delIds.push(folder.id);
+      }
+    }
+    if (addIds.length === 0 && delIds.length === 0) {
+      this.closeSheet();
+      return;
+    }
+    this.favBusy = true;
+    try {
+      await LibraryService.favDealMany(aid, addIds, delIds);
+      for (let i = 0; i < this.favFolders.length; i++) {
+        const folder: FavFolder = this.favFolders[i];
+        const want: boolean = this.isFolderChecked(folder);
+        if (want !== folder.contains) {
+          folder.contains = want;
+          folder.count = Math.max(0, folder.count + (want ? 1 : -1));
+        }
+      }
+      // 夹内对象是普通实例，改字段不会触发刷新：整体换一份数组
+      this.favFolders = this.favFolders.slice();
+      this.syncFavored();
+      this.closeSheet();
+      const added: number = addIds.length;
+      const removed: number = delIds.length;
+      if (added > 0 && removed > 0) {
+        this.toast(`已更新 ${added + removed} 个收藏夹`);
+      } else if (added > 0) {
+        this.toast(added === 1 ? '已收藏' : `已收藏到 ${added} 个收藏夹`);
+      } else {
+        this.toast(removed === 1 ? '已取消收藏' : `已从 ${removed} 个收藏夹移除`);
+      }
+    } catch (err) {
+      this.toast(err instanceof Error ? err.message : '收藏操作失败');
+    } finally {
+      this.favBusy = false;
+    }
+  }
+
+  /** 只要还在任一收藏夹里，星标就是亮的 */
+  private syncFavored(): void {
+    let any: boolean = false;
+    for (let i = 0; i < this.favFolders.length; i++) {
+      if (this.favFolders[i].contains) {
+        any = true;
+        break;
+      }
+    }
+    this.favored = any;
+  }
+
+  /** 加入稍后再看（在「我的 - 稍后再看」里查看） */
+  private async addToWatchLater(): Promise<void> {
+    if (!BiliCookie.isLogin()) {
+      this.toast('请先登录后再加入稍后再看');
+      return;
+    }
+    if (this.detail.aid <= 0) {
+      this.toast('视频信息还没就绪');
+      return;
+    }
+    try {
+      await LibraryService.addToView(this.detail.aid);
+      this.toast('已加入稍后再看');
+    } catch (err) {
+      this.toast(err instanceof Error ? err.message : '加入稍后再看失败');
+    }
+  }
+
+  /**
+   * 写一条本机观看记录。
+   * 本站播放不给 b 站发心跳，服务端历史里不会有本站的播放，
+   * 所以「我的 - 观看历史」里能立刻看到刚看的这条，靠的就是它。
+   */
+  private recordHistory(seconds: number): void {
+    if (this.detail.bvid.length === 0 || seconds <= 0) {
+      return;
+    }
+    HistoryStore.record(this.context(), this.detail, seconds).catch(() => {
+      // 本机记录失败不影响播放
+    });
   }
 
   // ---------------- 弹幕 ----------------
@@ -1334,7 +1601,7 @@ export struct VideoPage {
   private openCommentSheet(item: VideoComment, isSub: boolean): void {
     this.sheetComment = item;
     this.sheetCommentIsSub = isSub;
-    this.sheetCommentVisible = true;
+    this.openSheet(SHEET_COMMENT);
   }
 
   /** 自己的评论是「删除」，别人的是「删隐」（只对自己隐藏，本地记名单） */
@@ -1881,6 +2148,11 @@ export struct VideoPage {
       return;
     }
     if (this.portraitMode) {
+      // 设置面板开着时，返回键先收面板，再按一次才退连播
+      if (this.sheetVisible && this.sheetKind === SHEET_SETTINGS) {
+        this.closeSheet();
+        return;
+      }
       this.portraitMode = false;
       return;
     }
@@ -2197,14 +2469,18 @@ export struct VideoPage {
     }
     this.portraitPrefetching = true;
     try {
-      const cards: Array<VideoCard> = await RecommendService.load(Math.floor(Math.random() * 50) + 2);
-      let picked: VideoCard | null = null;
+      // 竖屏是刷视频的场景：下一条从首页信息流里随机挑（什么分区都可能），
+      // 不再跟着当前视频找相似——那样会越刷越窄，和「竖屏连播」的预期相反
+      const cards: Array<VideoCard> = await RecommendService.feedPool(20);
+      const blocked: Array<string> = PlayerPrefs.keywords(this.prefs.filterRecommend);
+      const pool: Array<VideoCard> = [];
       for (let i = 0; i < cards.length; i++) {
-        if (cards[i].bvid.length > 0 && cards[i].bvid !== this.videoParam.bvid) {
-          picked = cards[i];
-          break;
+        if (cards[i].bvid.length > 0 && cards[i].bvid !== this.videoParam.bvid &&
+          !PlayerPrefs.hitKeyword(cards[i].title, blocked)) {
+          pool.push(cards[i]);
         }
       }
+      const picked: VideoCard | null = pool.length > 0 ? pool[Math.floor(Math.random() * pool.length)] : null;
       if (picked === null) {
         return;
       }
@@ -2233,6 +2509,10 @@ export struct VideoPage {
 
   /** 退出连播 / 换片时把预热与切换相关的临时状态清干净 */
   private resetPortraitSwitchState(): void {
+    // 退出连播 / 换片：设置面板一并收起，避免下次进连播还挂着
+    if (this.sheetVisible && this.sheetKind === SHEET_SETTINGS) {
+      this.closeSheet();
+    }
     this.portraitDragY = 0;
     this.portraitPrefetch = null;
     this.portraitPrefetchBvid = '';
@@ -2355,9 +2635,10 @@ export struct VideoPage {
     this.showControls();
   }
 
+  /** 播完后的推荐卡：取相关推荐里第一条（相关度最高），不再从首页信息流随机抽 */
   private async loadRecommendCard(): Promise<void> {
     try {
-      const cards: Array<VideoCard> = await RecommendService.load(Math.floor(Math.random() * 50) + 2);
+      const cards: Array<VideoCard> = await RecommendService.relatedOrFeed(this.videoParam.bvid, 20);
       const blocked: Array<string> = PlayerPrefs.keywords(this.prefs.filterRecommend);
       let picked: VideoCard | null = null;
       for (let i = 0; i < cards.length; i++) {
@@ -2377,15 +2658,22 @@ export struct VideoPage {
 
   private async playRandomNext(): Promise<void> {
     try {
-      const cards: Array<VideoCard> = await RecommendService.load(Math.floor(Math.random() * 50) + 2);
+      // 竖屏的「随机」就是真随机：从首页信息流里抽（什么类型都可能）。
+      // 横屏播完的连播仍走相关推荐，避免压栈出来的下一条跟当前毫无关系。
+      const cards: Array<VideoCard> = this.portraitMode
+        ? await RecommendService.feedPool(24)
+        : await RecommendService.relatedOrFeed(this.videoParam.bvid, 20);
       const blocked: Array<string> = PlayerPrefs.keywords(this.prefs.filterRecommend);
-      const picked: VideoCard | null = cards.length > 0 ? cards[Math.floor(Math.random() * cards.length)] : null;
+      const pool: Array<VideoCard> = [];
+      for (let i = 0; i < cards.length; i++) {
+        if (cards[i].bvid.length > 0 && cards[i].bvid !== this.videoParam.bvid &&
+          !PlayerPrefs.hitKeyword(cards[i].title, blocked)) {
+          pool.push(cards[i]);
+        }
+      }
+      const picked: VideoCard | null = pool.length > 0 ? pool[Math.floor(Math.random() * pool.length)] : null;
       if (picked === null || picked.bvid.length === 0) {
         this.toast('暂无可连播的推荐视频');
-        return;
-      }
-      if (PlayerPrefs.hitKeyword(picked.title, blocked)) {
-        this.toast('随机到的视频命中了推荐过滤词，已跳过');
         return;
       }
       // 竖屏连播：先在盒子里滑出再换源，无法压栈（要保持跟手连续），仍走原地换源
@@ -3114,7 +3402,7 @@ export struct VideoPage {
       .backgroundColor(TOP_ICON_CHIP_BG ? $r('app.color.scrim') : Color.Transparent)
       .borderRadius(18)
       .onClick(() => {
-        this.portraitSettingsVisible = true;
+        this.openSheet(SHEET_SETTINGS);
       })
     }
     .width('100%')
@@ -3123,65 +3411,306 @@ export struct VideoPage {
     .alignItems(VerticalAlign.Center)
   }
 
-  /** 竖屏「设置」底部弹窗：复用播放区设置面板 PlayerSettingsPanel（内容与设置页签一致） */
+  /** 系统半模态的内容分发：一个 bindSheet 按 sheetKind 承载三个面板（收藏夹 / 播放设置 / 评论长按） */
   @Builder
-  portraitSettingsSheet() {
-    if (this.portraitSettingsVisible) {
-      Stack({ alignContent: Alignment.Bottom }) {
-        Column()
-          .width('100%')
-          .height('100%')
-          .backgroundColor($r('app.color.scrim'))
-          .onClick(() => {
-            this.portraitSettingsVisible = false;
-          })
+  sheetContent() {
+    if (this.sheetKind === SHEET_FAV) {
+      this.favoriteSheet()
+    } else if (this.sheetKind === SHEET_SETTINGS) {
+      this.portraitSettingsSheet()
+    } else if (this.sheetKind === SHEET_COMMENT) {
+      this.commentActionSheet()
+    }
+  }
 
-        Column() {
-          Row() {
-            Text('播放设置')
-              .fontSize(16)
-              .fontWeight(FontWeight.Medium)
-              .fontColor($r('app.color.text_primary'))
-            Blank()
-            SymbolGlyph($r('sys.symbol.xmark_circle_fill'))
-              .fontSize(20)
-              .fontColor([$r('app.color.text_tertiary')])
-              .onClick(() => {
-                this.portraitSettingsVisible = false;
-              })
-          }
-          .width('100%')
-          .alignItems(VerticalAlign.Center)
-          .margin({ bottom: 6 })
-
-          Scroll() {
-            PlayerSettingsPanel({
-              prefs: $prefs,
-              onChanged: (key: string, value: number | boolean | string): void => {
-                this.onSettingsChanged(key, value);
-              },
-              onShare: (): void => {
-                this.shareVideo();
-              }
-            })
-          }
-          .scrollBar(BarState.Off)
-          .width('100%')
-          .constraintSize({ maxHeight: '60%' })
+  /**
+   * 收藏夹选择面板（横竖屏共用，由系统半模态承载）。
+   *
+   * 参考 Pilihub / b 站 App 的收藏面板：两列封面墙 + 右上角勾选圈。
+   * 勾选先记在本机，点「确定」才一次提交——一条视频可以同时收进好几个夹，
+   * 取消某个夹的勾选就是把它移出，不像以前那样点一下立刻发一次请求。
+   */
+  @Builder
+  favoriteSheet() {
+    Column() {
+      Row() {
+        Column({ space: 2 }) {
+          Text('收藏到')
+            .fontSize(17)
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('app.color.text_primary'))
+          Text(this.favSummary())
+            .fontSize(11)
+            .fontColor($r('app.color.text_tertiary'))
         }
-        .width('100%')
-        .padding({
-          left: 16,
-          right: 16,
-          top: 14,
-          bottom: 14 + this.bottomInset
-        })
-        .backgroundColor($r('app.color.bg_card'))
-        .borderRadius({ topLeft: 18, topRight: 18 })
+        .alignItems(HorizontalAlign.Start)
+
+        Blank()
+
+        if (this.favFolders.length > 0 && !this.favLoading) {
+          Text(this.allFavChecked() ? '全不选' : '全选')
+            .fontSize(13)
+            .fontColor($r('app.color.brand_primary'))
+            .padding({ left: 10, right: 2, top: 6, bottom: 6 })
+            .onClick(() => {
+              this.toggleAllFav();
+            })
+        }
       }
       .width('100%')
-      .height('100%')
+      .height(46)
+      .alignItems(VerticalAlign.Center)
+
+      if (this.favLoading) {
+        Column({ space: 8 }) {
+          LoadingProgress()
+            .width(24)
+            .height(24)
+            .color($r('app.color.text_tertiary'))
+          Text('正在读取收藏夹')
+            .fontSize(13)
+            .fontColor($r('app.color.text_tertiary'))
+        }
+        .width('100%')
+        .layoutWeight(1)
+        .justifyContent(FlexAlign.Center)
+      } else if (this.favFolders.length === 0) {
+        Column({ space: 6 }) {
+          SymbolGlyph($r('sys.symbol.bookmark'))
+            .fontSize(30)
+            .fontColor([$r('app.color.text_tertiary')])
+          Text('还没有收藏夹')
+            .fontSize(14)
+            .fontColor($r('app.color.text_secondary'))
+          Text('先到网页端创建一个收藏夹，再回来收藏')
+            .fontSize(11)
+            .fontColor($r('app.color.text_tertiary'))
+        }
+        .width('100%')
+        .layoutWeight(1)
+        .justifyContent(FlexAlign.Center)
+      } else {
+        Grid() {
+          ForEach(this.favFolders, (folder: FavFolder) => {
+            GridItem() {
+              this.favFolderCard(folder)
+            }
+          }, (folder: FavFolder) => `fav_${folder.id}_${folder.cover.length > 0 ? 1 : 0}`)
+        }
+        .columnsTemplate('1fr 1fr')
+        .columnsGap(10)
+        .rowsGap(12)
+        .scrollBar(BarState.Off)
+        .edgeEffect(EdgeEffect.Spring)
+        .layoutWeight(1)
+        .width('100%')
+
+        Row({ space: 10 }) {
+          Text('取消')
+            .fontSize(15)
+            .fontColor($r('app.color.text_secondary'))
+            .textAlign(TextAlign.Center)
+            .height(44)
+            .layoutWeight(1)
+            .borderRadius(22)
+            .backgroundColor($r('app.color.bg_field'))
+            .onClick(() => {
+              this.closeSheet();
+            })
+
+          Text(this.favBusy ? '保存中…' : '确定')
+            .fontSize(15)
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('app.color.text_on_brand'))
+            .textAlign(TextAlign.Center)
+            .height(44)
+            .layoutWeight(1)
+            .borderRadius(22)
+            .backgroundColor(this.favBusy ? $r('app.color.text_tertiary') : $r('app.color.brand_primary'))
+            .onClick(() => {
+              this.submitFavChecks();
+            })
+        }
+        .width('100%')
+        .margin({ top: 12 })
+      }
     }
+    .width('100%')
+    .height('100%')
+    .padding({ left: 16, right: 16, top: 2, bottom: 16 })
+  }
+
+  /** 收藏面板里的一张夹卡片：封面 + 右上角勾选圈 + 名称 / 数量 */
+  @Builder
+  favFolderCard(folder: FavFolder) {
+    Column() {
+      Stack({ alignContent: Alignment.TopEnd }) {
+        if (folder.cover.length > 0) {
+          Image(folder.cover)
+            .width('100%')
+            .height(FOLDER_COVER_H)
+            .objectFit(ImageFit.Cover)
+            .alt($r('app.color.bg_field'))
+            .draggable(false)
+        } else {
+          // 没设过封面的夹：用夹名首字 + 按 id 取的渐变色块，比一块灰底好看，也一眼能分开
+          Column() {
+            Text(this.folderInitial(folder))
+              .fontSize(26)
+              .fontWeight(FontWeight.Medium)
+              .fontColor(Color.White)
+              .opacity(0.92)
+          }
+          .width('100%')
+          .height(FOLDER_COVER_H)
+          .justifyContent(FlexAlign.Center)
+          .linearGradient({
+            angle: 135,
+            colors: [[this.folderTint(folder.id, false), 0.0], [this.folderTint(folder.id, true), 1.0]]
+          })
+        }
+
+        Row() {
+          if (this.isFolderChecked(folder)) {
+            SymbolGlyph($r('sys.symbol.checkmark'))
+              .fontSize(12)
+              .fontColor([$r('app.color.text_on_brand')])
+          }
+        }
+        .width(20)
+        .height(20)
+        .justifyContent(FlexAlign.Center)
+        .borderRadius(10)
+        .backgroundColor(this.isFolderChecked(folder) ? $r('app.color.brand_primary') : '#66FFFFFF')
+        .border({
+          width: this.isFolderChecked(folder) ? 0 : 1.5,
+          color: Color.White
+        })
+        .margin({ top: 6, right: 6 })
+      }
+      .width('100%')
+      .height(FOLDER_COVER_H)
+      .borderRadius(10)
+      .clip(true)
+
+      Column({ space: 1 }) {
+        Text(folder.title)
+          .fontSize(12.5)
+          .fontWeight(this.isFolderChecked(folder) ? FontWeight.Medium : FontWeight.Normal)
+          .fontColor($r('app.color.text_primary'))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+        Text(`${folder.count} 个视频`)
+          .fontSize(10)
+          .fontColor($r('app.color.text_tertiary'))
+          .maxLines(1)
+      }
+      .width('100%')
+      .alignItems(HorizontalAlign.Start)
+      .padding({ left: 2, right: 2, top: 6 })
+    }
+    .width('100%')
+    .onClick(() => {
+      this.toggleFolderCheck(folder);
+    })
+  }
+
+  /**
+   * 空封面卡片的主色。
+   * 收藏夹接口（created/list-all）根本不返回封面字段，所以只能自绘：
+   * 按夹 id 散列到一组柔和色里，同一账号每次进来颜色固定。
+   * 注意不能直接 id % n——这些 id 末位高度相似，取模会全部落到同一个颜色上。
+   */
+  private folderTint(id: number, deep: boolean): string {
+    const light: Array<string> = ['#FF8FB0', '#9A88FF', '#6BA6FF', '#4FD2B4', '#FFB273'];
+    const dark: Array<string> = ['#F2547F', '#6B4FE0', '#2F72D8', '#1E9B84', '#E8802F'];
+    const pool: Array<string> = deep ? dark : light;
+    // 用「各位数字之和」散列：相邻收藏夹的 id 只差最后几位，取模容易撞色
+    let sum: number = 0;
+    let value: number = Math.abs(id);
+    while (value > 0) {
+      sum += value % 10;
+      value = Math.floor(value / 10);
+    }
+    return pool[sum % pool.length];
+  }
+
+  /** 空封面卡片上显示的首字（中文一个字、英文取前两个字符） */
+  private folderInitial(folder: FavFolder): string {
+    const title: string = folder.title.trim();
+    if (title.length === 0) {
+      return '收';
+    }
+    return title.substring(0, 1);
+  }
+
+  /** 收藏面板副标题：已选几个 */
+  private favSummary(): string {    const picked: number = this.favChecked.length;
+    return picked > 0 ? `已选 ${picked} 个收藏夹` : '选择要收进的收藏夹';
+  }
+
+  private allFavChecked(): boolean {
+    return this.favFolders.length > 0 && this.favChecked.length >= this.favFolders.length;
+  }
+
+  private toggleAllFav(): void {
+    if (this.allFavChecked()) {
+      this.favChecked = [];
+      return;
+    }
+    const ids: Array<number> = [];
+    for (let i = 0; i < this.favFolders.length; i++) {
+      ids.push(this.favFolders[i].id);
+    }
+    this.favChecked = ids;
+  }
+
+  /**
+   * 竖屏「设置」：系统半模态承载（内容与播放区设置面板一致）。
+   *
+   * module.json5 已声明 ohos.arkui.UIMaterial.state = enable，bindSheet 属于默认吃沉浸光感的组件：
+   * 面板由系统绘制（圆角、拖动条、蒙层、材质都在系统侧），所以这里既不铺背景色、也不加底部安全区。
+   */
+  @Builder
+  portraitSettingsSheet() {
+    Column() {
+      Row() {
+        Text('播放设置')
+          .fontSize(17)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.text_primary'))
+        Blank()
+        SymbolGlyph($r('sys.symbol.xmark_circle_fill'))
+          .fontSize(20)
+          .fontColor([$r('app.color.text_tertiary')])
+          .onClick(() => {
+            this.closeSheet();
+          })
+      }
+      .width('100%')
+      .height(40)
+      .alignItems(VerticalAlign.Center)
+
+      Scroll() {
+        PlayerSettingsPanel({
+          prefs: $prefs,
+          onChanged: (key: string, value: number | boolean | string): void => {
+            this.onSettingsChanged(key, value);
+          },
+          onShare: (): void => {
+            this.shareVideo();
+          }
+        })
+      }
+      .scrollBar(BarState.Off)
+      .width('100%')
+      // 用固定 vp 而不是百分比：面板按内容自适应高度时，百分比会解析成整屏，内容反而溢出面板
+      .constraintSize({ maxHeight: 470 })
+      .align(Alignment.Top)
+    }
+    .width('100%')
+    // 底部留出手势条：面板按内容自适应高度时，系统不会替内容让开安全区
+    .padding({ left: 16, right: 16, top: 2, bottom: 12 + this.bottomInset })
   }
 
   /**
@@ -3194,61 +3723,45 @@ export struct VideoPage {
    */
   @Builder
   commentActionSheet() {
-    if (this.sheetCommentVisible) {
-      Stack({ alignContent: Alignment.Bottom }) {
-        Column()
-          .width('100%')
-          .height('100%')
-          .backgroundColor($r('app.color.scrim'))
-          .onClick(() => {
-            this.sheetCommentVisible = false;
-          })
-
-        Column() {
-          // 评论预览：让人确认自己长按的是哪一条
-          Text(this.sheetComment.message.length > 0 ? this.sheetComment.message : '（无正文）')
-            .width('100%')
-            .fontSize(12)
-            .fontColor($r('app.color.text_tertiary'))
-            .maxLines(2)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-            .padding({ left: 16, right: 16, top: 14, bottom: 12 })
-
-          Divider()
-            .color($r('app.color.divider'))
-            .strokeWidth(0.5)
-
-          this.commentSheetAction('复制回复', false, () => {
-            this.copyComment();
-          })
-          this.commentSheetAction('分享回复', false, () => {
-            this.toast('分享回复待接入');
-          })
-          this.commentSheetAction('举报回复', false, () => {
-            this.toast('举报回复待接入');
-          })
-          this.commentSheetAction(this.sheetDeleteLabel(), true, () => {
-            this.deleteOrHideComment();
-          })
-
-          Divider()
-            .color($r('app.color.divider'))
-            .strokeWidth(0.5)
-            .margin({ top: 4 })
-
-          this.commentSheetAction('取消', false, () => {
-            // 只关面板
-          })
-        }
+    Column() {
+      // 评论预览：让人确认自己长按的是哪一条
+      Text(this.sheetComment.message.length > 0 ? this.sheetComment.message : '（无正文）')
         .width('100%')
-        .padding({ bottom: 6 + this.bottomInset })
-        .backgroundColor($r('app.color.bg_card'))
-        .borderRadius({ topLeft: 18, topRight: 18 })
-        .clip(true)
-      }
-      .width('100%')
-      .height('100%')
+        .fontSize(12)
+        .fontColor($r('app.color.text_tertiary'))
+        .maxLines(2)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .padding({ left: 16, right: 16, top: 12, bottom: 12 })
+
+      Divider()
+        .color($r('app.color.divider'))
+        .strokeWidth(0.5)
+
+      this.commentSheetAction('复制回复', false, () => {
+        this.copyComment();
+      })
+      this.commentSheetAction('分享回复', false, () => {
+        this.toast('分享回复待接入');
+      })
+      this.commentSheetAction('举报回复', false, () => {
+        this.toast('举报回复待接入');
+      })
+      this.commentSheetAction(this.sheetDeleteLabel(), true, () => {
+        this.deleteOrHideComment();
+      })
+
+      Divider()
+        .color($r('app.color.divider'))
+        .strokeWidth(0.5)
+        .margin({ top: 4 })
+
+      this.commentSheetAction('取消', false, () => {
+        // 只关面板
+      })
     }
+    .width('100%')
+    .padding({ bottom: 6 })
+    .clip(true)
   }
 
   /** 长按面板里的一行操作 */
@@ -3261,7 +3774,7 @@ export struct VideoPage {
       .fontColor(danger ? $r('app.color.danger') : $r('app.color.text_primary'))
       .padding({ top: 15, bottom: 15 })
       .onClick(() => {
-        this.sheetCommentVisible = false;
+        this.closeSheet();
         action();
       })
   }
@@ -3373,6 +3886,26 @@ export struct VideoPage {
     })
   }
 
+  /** 竖屏操作行里的收藏项：与横屏同源，已收藏时常亮 */
+  @Builder
+  favPortraitItem() {
+    Column({ space: 3 }) {
+      SymbolGlyph($r('sys.symbol.star'))
+        .fontSize(24)
+        .fontColor([this.favored ? $r('app.color.brand_primary') : $r('app.color.text_on_media')])
+      Text(this.detail.favText.length > 0 ? this.bareCount(this.detail.favText) : '藏')
+        .fontSize(9)
+        .fontColor(this.favored ? $r('app.color.brand_primary') : $r('app.color.text_on_media'))
+        .opacity(this.favored ? 1 : 0.85)
+        .maxLines(1)
+    }
+    .width(40)
+    .alignItems(HorizontalAlign.Center)
+    .onClick(() => {
+      this.openFavSheet();
+    })
+  }
+
   /** 竖屏底部操作行：弹幕输入 + 互动图标横排 + 底部细进度线（黑底，参考 Pilihos） */
   @Builder
   portraitActionBar() {
@@ -3409,8 +3942,7 @@ export struct VideoPage {
         this.likePortraitItem()
         this.portraitActionCount($r('sys.symbol.medal'),
           this.detail.coinText.length > 0 ? this.bareCount(this.detail.coinText) : '币', undefined, $r('app.media.toubi'))
-        this.portraitActionCount($r('sys.symbol.star'),
-          this.detail.favText.length > 0 ? this.bareCount(this.detail.favText) : '藏')
+        this.favPortraitItem()
         // 评论：退出竖屏连播，回到普通播放页并直接切到评论区
         this.portraitActionCount($r('sys.symbol.message'),
           this.detail.replyText.length > 0 ? this.bareCount(this.detail.replyText) : '评',
@@ -3802,6 +4334,25 @@ export struct VideoPage {
     })
   }
 
+  /** 互动行里的收藏项：已在收藏夹里就常亮，点开选择收藏夹 */
+  @Builder
+  favActionItem() {
+    Column({ space: 5 }) {
+      SymbolGlyph($r('sys.symbol.star'))
+        .fontSize(23)
+        .fontColor([this.favored ? $r('app.color.brand_primary') : $r('app.color.text_secondary')])
+      Text(this.detail.favText.length > 0 ? this.detail.favText : '收藏')
+        .fontSize(11)
+        .fontColor(this.favored ? $r('app.color.brand_primary') : $r('app.color.text_tertiary'))
+        .maxLines(1)
+    }
+    .layoutWeight(1)
+    .alignItems(HorizontalAlign.Center)
+    .onClick(() => {
+      this.openFavSheet();
+    })
+  }
+
   /** 六项互动：点赞 / 点踩 / toubi / 收藏 / 再看 / 分享（参考图） */
   @Builder
   actionRow() {
@@ -3810,9 +4361,10 @@ export struct VideoPage {
       this.actionItem($r('sys.symbol.hand_thumbsdown'), '点踩')
       this.actionItem($r('sys.symbol.medal'),
         this.detail.coinText.length > 0 ? this.detail.coinText : 'toubi', undefined, $r('app.media.toubi'))
-      this.actionItem($r('sys.symbol.star'),
-        this.detail.favText.length > 0 ? this.detail.favText : '收藏')
-      this.actionItem($r('sys.symbol.arrow_clockwise'), '再看')
+      this.favActionItem()
+      this.actionItem($r('sys.symbol.arrow_clockwise'), '再看', () => {
+        this.addToWatchLater();
+      })
       this.actionItem($r('sys.symbol.share'),
         this.detail.shareText.length > 0 ? this.detail.shareText : '分享', () => {
           this.shareVideo();
@@ -3898,15 +4450,16 @@ export struct VideoPage {
           .fontColor($r('app.color.text_primary'))
           .maxLines(2)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
-        Text(`${this.bareCount(card.viewText)} · ${card.danmuText} ${pubTimeText(card.pubTs)}`)
-          .fontSize(11)
-          .fontColor($r('app.color.text_tertiary'))
-          .maxLines(1)
-        Text(`@${card.author}`)
+        // UP 主后面带分区名：让人一眼看出「为什么推这条」（同一分区 / 同一 UP 的关联稿件）
+        Text(this.recommendSubtitle(card))
           .fontSize(11)
           .fontColor($r('app.color.text_tertiary'))
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
+        Text(this.recommendMeta(card))
+          .fontSize(11)
+          .fontColor($r('app.color.text_tertiary'))
+          .maxLines(1)
       }
       .layoutWeight(1)
       .alignItems(HorizontalAlign.Start)
@@ -3917,6 +4470,29 @@ export struct VideoPage {
     .onClick(() => {
       this.openCard(card);
     })
+  }
+
+  /** 推荐行的第二行：@UP 主 · 分区（分区只有相关推荐接口才给） */
+  private recommendSubtitle(card: VideoCard): string {
+    const author: string = card.author.length > 0 ? `@${card.author}` : '';
+    const tname: string = card.tname !== undefined ? card.tname : '';
+    if (author.length === 0) {
+      return tname;
+    }
+    return tname.length > 0 ? `${author} · ${tname}` : author;
+  }
+
+  /** 推荐行的第三行：播放量 · 发布时间（原先把「弹幕」和发布时间硬拼在一起，读起来是断的） */
+  private recommendMeta(card: VideoCard): string {
+    const parts: Array<string> = [];
+    if (card.viewText.length > 0) {
+      parts.push(card.viewText);
+    }
+    const when: string = pubTimeText(card.pubTs);
+    if (when.length > 0) {
+      parts.push(when);
+    }
+    return parts.join(' · ');
   }
 
   @Builder
@@ -5084,15 +5660,22 @@ export struct VideoPage {
 
         // 弹幕输入浮层（独立于评论区，竖屏连播里也能直接发）
         this.danmakuComposer()
-
-        // 评论长按操作面板（复制 / 分享 / 举报 / 删除或删隐）
-        this.commentActionSheet()
-
-        // 竖屏顶部「设置」唤起的底部弹窗（内容与播放区设置面板一致）
-        this.portraitSettingsSheet()
       }
       .width('100%')
       .height('100%')
+      // 底部弹层统一交给系统半模态（评论长按 / 收藏夹 / 播放设置）：
+      // 系统自带下滑关闭、点蒙层关闭、返回键关闭与圆角阴影，不需要自己铺遮罩。
+      .bindSheet($$this.sheetVisible, this.sheetContent(), {
+        // 收藏夹是两列封面墙，给固定高度内部滚动；
+        // 播放设置与评论操作按内容自适应——设置面板里的滚动区自己限了 470vp，撑不到整屏
+        height: this.sheetKind === SHEET_FAV ? '72%' : SheetSize.FIT_CONTENT,
+        dragBar: true,
+        showClose: false,
+        preferType: SheetType.BOTTOM,
+        onDisappear: () => {
+          this.onSheetDismiss();
+        }
+      })
       // 状态栏那一条铺黑：NavDestination 只放开了底部安全区（列表能铺到屏幕下沿），
       // 顶部仍是窗口底色（#F5F6F7），不铺黑就会留一条白边。用 expandSafeArea 把绘制区域顶到屏幕最上沿，
       // 布局仍从状态栏下方开始，所以底色只出现在状态栏这一条上。
@@ -5106,6 +5689,23 @@ export struct VideoPage {
     }
     .hideTitleBar(true)
     .hideBackButton(true)
+    // 系统返回键也按「设置面板 → 全屏 → 竖屏 → 退出播放页」的层次走，
+    // 否则竖屏里按返回会直接回首页（之前只把顶栏返回按钮接上了 onBack）
+    .onBackPressed(() => {
+      if (this.fullscreen) {
+        this.restorePortrait();
+        return true;
+      }
+      if (this.portraitMode) {
+        if (this.sheetVisible && this.sheetKind === SHEET_SETTINGS) {
+          this.closeSheet();
+          return true;
+        }
+        this.portraitMode = false;
+        return true;
+      }
+      return false;
+    })
     // 推荐视频 / 随机连播是「压栈」打开的：本页被盖住时先暂停，返回时再接着播
     .onHidden(() => {
       if (this.playing) {

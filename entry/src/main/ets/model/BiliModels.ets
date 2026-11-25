@@ -27,6 +27,8 @@ export interface VideoCard {
   followed: boolean;
   /** 竖屏视频（依据接口 dimension 的宽高判断，卡片第二行给「竖屏」提示） */
   vertical: boolean;
+  /** 分区名（如「单机游戏」）：只有相关推荐接口会带，播放页推荐行用来解释「为什么推这条」 */
+  tname?: string;
 }
 
 /** 直播卡片 */
@@ -246,4 +248,36 @@ export function emptyDynamicCard(): DynamicCard {
     forwardText: '',
     repostName: ''
   };
+}
+
+/** 收藏夹（我的收藏里的一个文件夹） */
+export class FavFolder {
+  id: number = 0;
+  title: string = '';
+  /** 夹内视频数 */
+  count: number = 0;
+  /** 当前视频是否已在这个夹里：只有带 rid 查询时接口才会给 */
+  contains: boolean = false;
+  /** 夹封面（夹内第一条视频的封面，空夹没有），收藏面板做成封面墙用 */
+  cover: string = '';
+}
+
+/**
+ * 收藏 / 观看历史 / 稍后再看 三个列表共用的一条记录。
+ *
+ * card 复用推荐流那套字段（标题 / 封面 / UP 主 / 时长），
+ * 额外两项是这三个列表才有的：进度（秒）与时间戳（收藏时间 / 观看时间 / 添加到稍后再看的时间）。
+ */
+export class LibraryItem {
+  card: VideoCard = emptyVideoCard();
+  /** 已观看时长（秒）：收藏列表恒为 0 */
+  progress: number = 0;
+  /** 秒级时间戳 */
+  timeTs: number = 0;
+  /** 本机观看记录（服务端历史里没有这条时用来提示「本机」） */
+  local: boolean = false;
+}
+
+export function emptyLibraryItem(): LibraryItem {
+  return new LibraryItem();
 }

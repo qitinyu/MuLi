@@ -199,11 +199,19 @@ export class AuthService {
     result.message = J.str(data, 'message');
     console.info(`${TAG} qr poll code=${result.code} msg=${result.message} cookieLen=${BiliCookie.value('SESSDATA').length}`);
     if (result.code === QR_SUCCESS) {
-      // 优先用返回 url 里的 cookie 补全登录态：真机实测 Set-Cookie 未必透传到 response.cookies
       const loginUrl: string = J.str(data, 'url');
-      const filled: boolean = BiliCookie.mergeFromLoginUrl(loginUrl);
+      // 凭证有两条来源，按可靠性依次试：
+      // 1) 本轮 poll 响应自身的 Set-Cookie —— BiliHttp.capture 已在请求里收过，这里只看结果；
+      // 2) data.url：老形态是 query 里直接带 SESSDATA，新形态只是 crossDomain?ticket=xxx，
+      //    凭证在跟随那条链接的 Set-Cookie 里，必须手动请求一次。
+      let filled: boolean = BiliCookie.mergeFromLoginUrl(loginUrl);
+      if (!BiliCookie.isLogin() && loginUrl.length > 0) {
+        filled = (await BiliCookie.captureFromUrl(loginUrl)) > 0 || filled;
+      }
       result.filled = filled || BiliCookie.isLogin();
-      console.info(`${TAG} qr login urlFilled=${filled} sessdataLen=${BiliCookie.value('SESSDATA').length}`);
+      console.info(`${TAG} qr login urlLen=${loginUrl.length} urlFilled=${filled} ` +
+        `sessLen=${BiliCookie.value('SESSDATA').length} refreshLen=${J.str(data, 'refresh_token').length} ` +
+        `keys=[${BiliCookie.authKeys()}]`);
     }
     if (J.num(body, 'code') !== 0 && result.code === 0) {
       result.code = -1;
@@ -276,6 +284,15 @@ export class AuthService {
     if (resultCode !== 0) {
       const message: string = J.str(body, 'message');
       throw new Error(message.length > 0 ? message : `登录失败（${resultCode}）`);
+    }
+    // 凭证正常走 Set-Cookie（BiliHttp.capture 已收）；个别网络栈拿不到时，
+    // 用返回体内的跳转链接再补一次，避免「验证码登录成功却提示取不到登录信息」。
+    if (!BiliCookie.isLogin()) {
+      const jumpUrl: string = J.str(J.obj(body, 'data'), 'url');
+      if (jumpUrl.length > 0) {
+        await BiliCookie.captureFromUrl(jumpUrl);
+      }
+      console.info(`${TAG} sms login ok then sessLen=${BiliCookie.value('SESSDATA').length} keys=[${BiliCookie.authKeys()}]`);
     }
   }
 
