@@ -15,6 +15,9 @@ const TAG = 'MuLiNet';
 class BiliCookie {
   static readonly BUVID_STORE: string = 'muli_device';
   static readonly AUTH_STORE: string = 'muli_auth';
+  /** 取跨域票据链接时用的浏览器 UA（与主 UA 保持一致） */
+  static readonly BROWSER_UA: string =
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
   static buvid3: string = '';
   static buvid4: string = '';
@@ -262,42 +265,166 @@ class BiliCookie {
     return '';
   }
 
-  /** 把服务端 Set-Cookie 合并进登录态：同名覆盖，其余保留 */
-  static mergeSetCookie(raw: string): void {
+  /**
+   * 把服务端 Set-Cookie 合并进登录态：同名覆盖，其余保留，返回收下多少条。
+   *
+   * 注意多个 Set-Cookie 在 HTTP 栈里常被合并成「逗号拼接」的一条字符串，
+   * 而 Expires 的日期本身就带逗号（Thu, 01 Jan 2026），
+   * 直接 split(',') 会把 cookie 切碎 —— 只能按「逗号 + 紧跟 name=」的位置切。
+   */
+  static mergeSetCookie(raw: string): number {
     if (raw === undefined || raw === null || raw.length === 0) {
-      return;
+      return 0;
     }
-    const incoming: Array<string> = raw.split(',');
-    const merged: Array<string> = [];
-    const existing: Array<string> = BiliCookie.authCookie.length > 0 ? BiliCookie.authCookie.split(';') : [];
-    for (let i = 0; i < existing.length; i++) {
-      const pair: string = existing[i].trim();
-      if (pair.length > 0) {
-        merged.push(pair);
+    const pairs: Array<string> = BiliCookie.splitSetCookie(raw);
+    for (let i = 0; i < pairs.length; i++) {
+      BiliCookie.upsert(pairs[i]);
+    }
+    return pairs.length;
+  }
+
+  /** Set-Cookie 原文 → ["k=v", ...]（丢掉 Path / Expires 这类属性） */
+  private static splitSetCookie(raw: string): Array<string> {
+    // 换行与「新 cookie 起始」都当分隔符：换行先统一成 ", "
+    const text: string = raw.split('\r\n').join(', ').split('\n').join(', ');
+    const pieces: Array<string> = [];
+    let start: number = 0;
+    let i: number = 0;
+    while (i < text.length) {
+      if (text.charAt(i) !== ',') {
+        i++;
+        continue;
       }
+      let j: number = i + 1;
+      while (j < text.length && text.charAt(j) === ' ') {
+        j++;
+      }
+      let k: number = j;
+      while (k < text.length && BiliCookie.isNameChar(text.charAt(k).charCodeAt(0))) {
+        k++;
+      }
+      if (k > j && text.charAt(k) === '=') {
+        pieces.push(text.substring(start, i));
+        start = j;
+        i = j;
+        continue;
+      }
+      i++;
     }
-    for (let i = 0; i < incoming.length; i++) {
-      const piece: string = incoming[i].trim();
-      const first: string = piece.split(';')[0].trim();
+    pieces.push(text.substring(start));
+    const pairs: Array<string> = [];
+    for (let n = 0; n < pieces.length; n++) {
+      const first: string = pieces[n].split(';')[0].trim();
       const eq: number = first.indexOf('=');
       if (eq <= 0) {
         continue;
       }
-      const key: string = first.substring(0, eq);
-      let replaced: boolean = false;
-      for (let j = 0; j < merged.length; j++) {
-        const eq2: number = merged[j].indexOf('=');
-        if (eq2 > 0 && merged[j].substring(0, eq2) === key) {
-          merged[j] = first;
-          replaced = true;
-          break;
+      if (BiliCookie.isAttribute(first.substring(0, eq))) {
+        continue;
+      }
+      pairs.push(first);
+    }
+    return pairs;
+  }
+
+  /** cookie 名允许的字符：字母 / 数字 / _ - . */
+  private static isNameChar(code: number): boolean {
+    const digit: boolean = code >= 48 && code <= 57;
+    const upper: boolean = code >= 65 && code <= 90;
+    const lower: boolean = code >= 97 && code <= 122;
+    return digit || upper || lower || code === 95 || code === 45 || code === 46;
+  }
+
+  /** Set-Cookie 里的属性名，不是 cookie 本身 */
+  private static isAttribute(key: string): boolean {
+    const lower: string = key.toLowerCase();
+    return lower === 'path' || lower === 'domain' || lower === 'expires' || lower === 'max-age' ||
+      lower === 'secure' || lower === 'httponly' || lower === 'samesite' || lower === 'version' ||
+      lower === 'comment' || lower === 'priority';
+  }
+
+  /**
+   * 从一次响应里捞 cookie：先看 http 栈解析好的 cookies，再读原始 set-cookie 头。
+   *
+   * 真机实测（API 26）：passport 登录成功的 Set-Cookie 常常**没有**被填进
+   * `HttpResponse.cookies`，但原始头里是有的 —— 只依赖前者就会「扫码成功却拿不到登录态」。
+   * 返回收下的条数，调用方可据此判断要不要再走跨域链接兜底。
+   */
+  static capture(response: http.HttpResponse): number {
+    let count: number = BiliCookie.mergeSetCookie(response.cookies);
+    const rawHeader: string = BiliCookie.responseHeader(response, 'set-cookie');
+    if (rawHeader.length > 0) {
+      const fromHeader: number = BiliCookie.mergeSetCookie(rawHeader);
+      if (fromHeader > 0) {
+        console.info(`${TAG} set-cookie from header count=${fromHeader} keys=${BiliCookie.authKeys()}`);
+      }
+      count = count + fromHeader;
+    }
+    return count;
+  }
+
+  /** 读原始响应头（大小写不敏感，值可能是 string 或 string[]） */
+  private static responseHeader(response: http.HttpResponse, name: string): string {
+    try {
+      const header: Object = response.header;
+      if (header === undefined || header === null) {
+        return '';
+      }
+      const map: Record<string, Object> = header as Record<string, Object>;
+      const keys: Array<string> = Object.keys(map);
+      const want: string = name.toLowerCase();
+      for (let i = 0; i < keys.length; i++) {
+        if (keys[i].toLowerCase() !== want) {
+          continue;
+        }
+        const value: Object = map[keys[i]];
+        if (typeof value === 'string') {
+          return value as string;
+        }
+        if (Array.isArray(value)) {
+          const list: Array<string> = value as Array<string>;
+          return list.join('\n');
         }
       }
-      if (!replaced) {
-        merged.push(first);
-      }
+    } catch (err) {
+      console.warn(`${TAG} read header ${name} failed: ${String(err)}`);
     }
-    BiliCookie.authCookie = merged.join('; ');
+    return '';
+  }
+
+  /**
+   * 取登录票据链接里的 cookie（扫码新形态的兜底）。
+   *
+   * 现在 poll 成功返回的 data.url 是 `https://passport.biligame.com/.../crossDomain?ticket=xxx`，
+   * query 里**没有** SESSDATA，真正的凭证只在这条链接响应的 Set-Cookie 里。
+   * 必须手动请求它并停在第一跳（自动跟随 302 之后就看不到 Set-Cookie 了）。
+   */
+  static async captureFromUrl(url: string): Promise<number> {
+    if (url === undefined || url === null || url.length === 0) {
+      return 0;
+    }
+    const request: http.HttpRequest = http.createHttp();
+    try {
+      const response: http.HttpResponse = await request.request(url, {
+        method: http.RequestMethod.GET,
+        header: {
+          'User-Agent': BiliCookie.BROWSER_UA,
+          'Referer': 'https://www.bilibili.com/',
+          'Accept': 'text/html,application/xhtml+xml,*/*'
+        },
+        connectTimeout: 10000,
+        readTimeout: 15000,
+        expectDataType: http.HttpDataType.STRING
+      });
+      const count: number = BiliCookie.capture(response);
+      console.info(`${TAG} crossDomain capture count=${count} sessLen=${BiliCookie.value('SESSDATA').length}`);
+      return count;
+    } catch (err) {
+      console.warn(`${TAG} crossDomain capture failed: ${String(err)}`);
+      return 0;
+    } finally {
+      request.destroy();
+    }
   }
 
   /**
@@ -495,7 +622,7 @@ export class BiliHttp {
         readTimeout: 15000,
         expectDataType: http.HttpDataType.STRING
       });
-      BiliCookie.mergeSetCookie(response.cookies);
+      BiliCookie.capture(response);
       return BiliHttp.parse(response.result);
     } finally {
       request.destroy();
@@ -529,7 +656,7 @@ export class BiliHttp {
         readTimeout: 15000,
         expectDataType: http.HttpDataType.STRING
       });
-      BiliCookie.mergeSetCookie(response.cookies);
+      BiliCookie.capture(response);
       return typeof response.result === 'string' ? response.result as string : '';
     } finally {
       request.destroy();
@@ -558,7 +685,7 @@ export class BiliHttp {
         readTimeout: 15000,
         expectDataType: http.HttpDataType.STRING
       });
-      BiliCookie.mergeSetCookie(response.cookies);
+      BiliCookie.capture(response);
       return BiliHttp.parse(response.result);
     } finally {
       request.destroy();

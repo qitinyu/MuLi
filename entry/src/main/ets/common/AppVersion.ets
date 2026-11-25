@@ -8,7 +8,7 @@ import { bundleManager } from '@kit.AbilityKit';
  * 各页面一律调 `AppVersion.label()`，不要再各自硬编码「V2.x.y」——
  * 之前设置页脚注、关于页、README 三处各写一遍，升版时容易漏。
  */
-const FALLBACK: string = '2.1.0';
+const FALLBACK: string = '2.1.1';
 
 let cached: string = '';
 

@@ -117,6 +117,13 @@ export struct MinePage {
     }
   }
 
+  /** 我的收藏 / 观看历史 / 稍后再看：同一页按 kind 区分 */
+  private openLibrary(kind: string): void {
+    if (this.pathStack !== undefined) {
+      this.pathStack.pushPathByName('library', kind);
+    }
+  }
+
   private openAbout(): void {
     if (this.pathStack !== undefined) {
       this.pathStack.pushPathByName('about', '');
@@ -518,7 +525,7 @@ export struct MinePage {
   // ---------- 数据卡 ----------
 
   @Builder
-  dataBlock(icon: Resource, label: string) {
+  dataBlock(icon: Resource, label: string, kind: string) {
     Column({ space: 8 }) {
       SymbolGlyph(icon)
         .fontSize(22)
@@ -531,17 +538,21 @@ export struct MinePage {
     .layoutWeight(1)
     .padding({ top: 14, bottom: 14 })
     .onClick(() => {
-      this.notify(`${label}：待建设`);
+      if (kind.length === 0) {
+        this.notify(`${label}：待建设`);
+        return;
+      }
+      this.openLibrary(kind);
     })
   }
 
   @Builder
   dataCard() {
     Row() {
-      this.dataBlock($r('sys.symbol.star'), '我的收藏')
-      this.dataBlock($r('sys.symbol.clock'), '观看历史')
-      this.dataBlock($r('sys.symbol.bookmark'), '稍后再看')
-      this.dataBlock($r('sys.symbol.arrow_clockwise'), '离线缓存')
+      this.dataBlock($r('sys.symbol.star'), '我的收藏', 'fav')
+      this.dataBlock($r('sys.symbol.clock'), '观看历史', 'history')
+      this.dataBlock($r('sys.symbol.bookmark'), '稍后再看', 'toview')
+      this.dataBlock($r('sys.symbol.arrow_clockwise'), '离线缓存', '')
     }
     .width('100%')
     .backgroundColor($r('app.color.bg_card'))

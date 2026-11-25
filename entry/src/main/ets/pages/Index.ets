@@ -13,6 +13,7 @@ import { MineRoutePage } from './MineRoutePage';
 import { LoginPage } from './LoginPage';
 import { WebLoginPage } from './WebLoginPage';
 import { ChangeLogPage } from './ChangeLogPage';
+import { LibraryPage } from './LibraryPage';
 import { AboutPage } from './AboutPage';
 import { SettingsPage } from './SettingsPage';
 import { SECTION_APPEARANCE, SECTION_PLAYER, SECTION_PLAYPAGE, SettingsDetailPage } from './SettingsDetailPage';
@@ -245,6 +246,17 @@ struct Index {
     return new VideoOpenParam('', 0, 0);
   }
 
+  /** 我的收藏 / 观看历史 / 稍后再看：参数是 kind 字符串，兜底给收藏 */
+  private libraryKindOf(param: Object): string {
+    if (param === 'history') {
+      return 'history';
+    }
+    if (param === 'toview') {
+      return 'toview';
+    }
+    return 'fav';
+  }
+
   @Builder
   titleIconButton(icon: Resource, label: string, action: () => void) {
     Row() {
@@ -285,7 +297,6 @@ struct Index {
     .backgroundBlurStyle(this.chipMaterialOn ? BlurStyle.NONE : BlurStyle.COMPONENT_ULTRA_THIN)
     .systemMaterial(this.chipMaterial)
     .layoutWeight(1)
-    .margin({ right: 6 })
     .onClick(() => {
       this.openSearch();
     })
@@ -332,7 +343,10 @@ struct Index {
 
   @Builder
   titleBarContent() {
-    Row({ space: 4 }) {
+    // 左右两侧留白与间距必须恒等，搜索条才会真的居中：
+    // 左 = padding 8 + 头像 40 + 间距 8，右 = 间距 8 + 消息 40 + padding 8。
+    // 曾经给搜索条单独加 margin 补距离，结果它被推偏了 3vp，这回把间距统一交给 space。
+    Row({ space: 8 }) {
       this.avatarEntry()
       if (this.currentTab === HOME_INDEX) {
         this.searchEntry()
@@ -425,6 +439,8 @@ struct Index {
       WebLoginPage({ pathStack: this.pathStack, mode: param === 'reset' ? 'reset' : '' })
     } else if (name === 'changelog') {
       ChangeLogPage({ pathStack: this.pathStack })
+    } else if (name === 'library') {
+      LibraryPage({ pathStack: this.pathStack, kind: this.libraryKindOf(param) })
     } else if (name === 'about') {
       AboutPage({ pathStack: this.pathStack })
     } else if (name === 'video') {
