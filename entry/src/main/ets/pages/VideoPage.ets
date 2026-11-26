@@ -1,13 +1,14 @@
 import { HdsNavDestination } from '@kit.UIDesignKit';
-import { display, window, KeyboardAvoidMode } from '@kit.ArkUI';
+import { display, window, KeyboardAvoidMode, uiMaterial } from '@kit.ArkUI';
 import { audio } from '@kit.AudioKit';
 import { systemShare } from '@kit.ShareKit';
 import { uniformTypeDescriptor } from '@kit.ArkData';
-import { pasteboard } from '@kit.BasicServicesKit';
-import { common } from '@kit.AbilityKit';
+import { pasteboard, BusinessError } from '@kit.BasicServicesKit';
+import { common, wantAgent, Want, WantAgent } from '@kit.AbilityKit';
+import { backgroundTaskManager } from '@kit.BackgroundTasksKit';
 import { BOTTOM_PAD_PHONE, PAGE_PADDING } from '../common/DesignSpec';
 import { durationText, plainCount, pubTimeText, shortCount } from '../common/Format';
-import { AuthorStat, FavFolder, VideoCard, VideoDetail, VideoOpenParam, emptyVideoCard } from '../model/BiliModels';
+import { AuthorStat, FavFolder, UserOpenParam, VideoCard, VideoDetail, VideoOpenParam, emptyVideoCard } from '../model/BiliModels';
 import { VideoService } from '../services/VideoService';
 import { VideoPlayer } from '../services/VideoPlayer';
 import { RecommendService } from '../services/RecommendService';
@@ -23,6 +24,8 @@ import { ListFooter, StateView } from '../components/StateView';
 import { LevelBadge } from '../components/LevelBadge';
 import { PlayerSettingsPanel } from '../components/PlayerSettingsPanel';
 import { AppPrefs } from '../services/AppPrefs';
+import { NAV_ID } from '../common/AppNav';
+import { PiPWindow } from '@kit.ArkUI';
 
 const PLAYER_BAR_HEIGHT: number = 44;
 const PLAYER_CTRL_HEIGHT: number = 46;
@@ -49,6 +52,8 @@ const FOLDER_COVER_H: number = 84;
 const SHEET_FAV: string = 'fav';
 const SHEET_SETTINGS: string = 'settings';
 const SHEET_COMMENT: string = 'comment';
+/** 画中画内容高度（px）：小窗宽高比由这个高度和视频比例共同决定，720 是系统推荐档位 */
+const PIP_CONTENT_HEIGHT: number = 720;
 /** 评论输入的表情面板：b 站是纯文本表情，插入后按 [名称] 显示 */
 const COMPOSER_EMOJIS: Array<string> = [
   'doge', '妙啊', '支持', '微笑', '笑哭', '鼓掌', '点赞', '吃瓜',
@@ -327,6 +332,29 @@ export struct VideoPage {
   private dragging: boolean = false;
   private player: VideoPlayer = new VideoPlayer();
   private xController: XComponentController = new XComponentController();
+  /**
+   * 画中画（PiP）：系统复用这颗 XComponent 的 surface 继续渲染画面，
+   * 所以进画中画时应用会切到后台——后台暂停逻辑要放行，否则小窗里会立刻停住。
+   */
+  private pipController: PiPWindow.PiPController | undefined = undefined;
+  private pipStarting: boolean = false;
+  private pipActive: boolean = false;
+  /** 进小窗前是否正在播：退出小窗后照原样恢复，别自己开播也别把本该播的停掉 */
+  private pipPlayingBefore: boolean = false;
+  /**
+   * 长时任务：进小窗时应用已经退到后台，系统会挂起进程，AVPlayer 跟着停住（小窗成静止画面）。
+   * 申请音频播放长时任务后进程继续跑，画面与声音才连续。
+   */
+  private backgroundRunning: boolean = false;
+  private backgroundAgent: WantAgent | undefined = undefined;
+  /**
+   * 小窗被关掉（还原 / 拖进垃圾桶）后先别急着自动再进：
+   * 否则「返回 → 进小窗 → 关小窗 → 返回」会一直循环，退不出播放页。
+   */
+  private pipSuppressed: boolean = false;
+  /** 底部弹层的系统级材质（与「我的」页换背景弹窗一致；能力不支持时为 undefined，退回普通半模态） */
+  private sheetMaterial: uiMaterial.ImmersiveMaterial | undefined = undefined;
+  @State sheetMaterialOn: boolean = false;
   private scroller: Scroller = new Scroller();
   private commentScroller: Scroller = new Scroller();
   private settingsScroller: Scroller = new Scroller();
@@ -483,6 +511,7 @@ export struct VideoPage {
     };
     this.bindKeyboard();
     this.bindAppLifecycle();
+    this.initSheetMaterial();
     this.startDanmakuLoop();
     this.bootstrap();
   }
@@ -525,6 +554,10 @@ export struct VideoPage {
   }
 
   private onAppBackground(): void {
+    // 画中画里画面还在播，退到后台不能停——停了小窗就是一张静止画面
+    if (this.pipActive) {
+      return;
+    }
     // 只有「正在播」才算中断：本来就是暂停状态，回来也不该自己动起来
     if (!this.player.isPlaying) {
       return;
@@ -535,6 +568,9 @@ export struct VideoPage {
   }
 
   private async onAppForeground(): Promise<void> {
+    if (this.pipActive) {
+      return;
+    }
     if (!this.interrupted) {
       return;
     }
@@ -549,6 +585,237 @@ export struct VideoPage {
     await this.player.play();
     this.showControls();
     this.showHud('已从中断处继续播放');
+  }
+
+  /**
+   * 底部弹层的系统级材质（与「我的 - 更换背景」弹窗同一套）。
+   *
+   * 系统材质只在部分机型/系统版本可用，isImmersiveMaterialSupported() 为假时保持 undefined，
+   * bindSheet 退回普通半模态底色，功能不受影响。
+   */
+  private initSheetMaterial(): void {
+    try {
+      this.sheetMaterialOn = uiMaterial.isImmersiveMaterialSupported();
+      if (this.sheetMaterialOn) {
+        this.sheetMaterial = new uiMaterial.ImmersiveMaterial({ style: uiMaterial.ImmersiveStyle.REGULAR });
+      } else {
+        this.sheetMaterial = undefined;
+      }
+    } catch (err) {
+      this.sheetMaterialOn = false;
+      this.sheetMaterial = undefined;
+    }
+  }
+
+  /**
+   * 进入画中画。
+   *
+   * 只有一版实现：直接复用页面里那颗 XComponent（id 'muli_video_canvas'）的 surface，
+   * 系统把这块画面搬到小窗里，播放器完全不用换源，所以画质、弹幕、进度都是连续的。
+   * 代价是画面所有权在小窗手上——此时原页面不可见，页面里的弹幕层也不会被看到（预期行为）。
+   */
+  private async enterPiP(): Promise<void> {
+    if (this.pipStarting || this.pipActive) {
+      return;
+    }
+    if (this.videoParam.bvid.length === 0) {
+      this.toast('视频还没加载好，稍后再试');
+      return;
+    }
+    if (!PiPWindow.isPiPEnabled()) {
+      this.toast('当前设备不支持画中画');
+      return;
+    }
+    this.pipStarting = true;
+    // 用户主动再开小窗，就取消「上次关窗后别自动再开」的抑制
+    this.pipSuppressed = false;
+    // 先乐观置位：startPiP 一返回系统就会把应用切到后台，
+    // 'muli_app_background' 可能比 stateChange(STARTED) 先到，等它到了才置位就会把播放暂停，小窗成静止画面
+    this.pipPlayingBefore = this.player.isPlaying;
+    this.pipActive = true;
+    try {
+      if (this.pipController === undefined) {
+        const config: PiPWindow.PiPConfiguration = {
+          context: this.context(),
+          componentController: this.xController,
+          navigationId: NAV_ID,
+          templateType: PiPWindow.PiPTemplateType.VIDEO_PLAY,
+          contentWidth: this.pipContentWidth(),
+          contentHeight: PIP_CONTENT_HEIGHT,
+          controlGroups: [],
+          defaultWindowSizeType: 1,
+          cornerAdsorptionEnabled: true
+        };
+        this.pipController = await PiPWindow.create(config);
+        this.pipController.on('stateChange', (state: PiPWindow.PiPState, reason: string) => {
+          this.onPipStateChanged(state, reason);
+        });
+        this.pipController.on('controlEvent', (event: PiPWindow.ControlEventParam) => {
+          this.onPipControlEvent(event);
+        });
+        this.pipController.on('controlPanelActionEvent', (event: PiPWindow.PiPActionEventType) => {
+          this.onPipAction(event);
+        });
+      }
+      await this.startBackgroundTask();
+      await this.pipController.startPiP();
+    } catch (err) {
+      this.pipActive = false;
+      this.restorePiPPlayState();
+      this.pipPlayingBefore = false;
+      this.stopBackgroundTask();
+      this.toast(this.pipErrorText(err));
+    } finally {
+      this.pipStarting = false;
+    }
+  }
+
+  /** 主动退出画中画（顶栏按钮在小窗里不可见，这里主要给「还原原页面」和页面销毁兜底） */
+  private async stopPiP(): Promise<void> {
+    if (this.pipController === undefined) {
+      return;
+    }
+    try {
+      await this.pipController.stopPiP();
+    } catch (err) {
+      console.warn(`MuLi PiP stop failed: ${String(err)}`);
+    }
+  }
+
+  private onPipStateChanged(state: PiPWindow.PiPState, reason: string): void {
+    if (state === PiPWindow.PiPState.STARTED) {
+      this.pipActive = true;
+      // 系统把应用切后台时会触发 'muli_app_background'，pipActive 为真时那边直接放行，不会暂停
+      this.syncPiPControlStatus();
+      return;
+    }
+    if (state === PiPWindow.PiPState.STOPPED || state === PiPWindow.PiPState.ERROR) {
+      this.pipActive = false;
+      this.stopBackgroundTask();
+      if (reason === 'panelActionRestore' || reason === 'dragDelete' || reason === 'panelActionDelete') {
+        // 拖进垃圾桶 / 点「关闭」：播放也该停，否则声音会留在后台；
+        // 同时标记一次「本次返回别再起小窗」，让用户可以真的退出播放页
+        this.pipSuppressed = true;
+        this.restorePiPPlayState();
+      }
+    }
+  }
+
+  private onPipControlEvent(event: PiPWindow.ControlEventParam): void {
+    if (event.controlType === PiPWindow.PiPControlType.VIDEO_PLAY_PAUSE) {
+      this.player.toggle();
+      this.syncPiPControlStatus();
+      return;
+    }
+    if (event.controlType === PiPWindow.PiPControlType.VIDEO_NEXT) {
+      this.playRandomNext();
+      this.syncPiPControlStatus();
+      return;
+    }
+    if (event.controlType === PiPWindow.PiPControlType.VIDEO_PREVIOUS) {
+      this.playRandomNext();
+      this.syncPiPControlStatus();
+    }
+  }
+
+  private onPipAction(event: PiPWindow.PiPActionEventType): void {
+    if (event === 'playbackStateChanged') {
+      this.syncPiPControlStatus();
+    } else if (event === 'nextVideo' || event === 'previousVideo') {
+      this.playRandomNext();
+      this.syncPiPControlStatus();
+    }
+  }
+
+  /** 把当前播放状态推给小窗的播放/暂停按钮，否则小窗按钮图标会和实际状态对不上 */
+  private syncPiPControlStatus(): void {
+    if (this.pipController === undefined) {
+      return;
+    }
+    try {
+      this.pipController.updatePiPControlStatus(PiPWindow.PiPControlType.VIDEO_PLAY_PAUSE,
+        this.player.isPlaying ? PiPWindow.PiPControlStatus.PLAY : PiPWindow.PiPControlStatus.PAUSE);
+    } catch (err) {
+      // 小窗还没起来时忽略
+    }
+  }
+
+  /** 退出画中画后按进入前的播停状态恢复（进小窗前暂停着，回来也不该自己开播） */
+  private restorePiPPlayState(): void {
+    if (!this.pipPlayingBefore) {
+      this.player.pause();
+      return;
+    }
+    this.player.play();
+  }
+
+  /**
+   * 申请「音频播放」长时任务。
+   *
+   * 进画中画后应用立刻退到后台，没有长时任务系统会挂起进程，AVPlayer 跟着停住 ——
+   * 表现就是小窗里画面冻在第一帧、声音也没了。带上长时任务进程才继续跑。
+   * 失败不阻塞：小窗照常起，只是退后台可能被挂起（部分机型还要在设置里允许后台活动）。
+   */
+  private async startBackgroundTask(): Promise<void> {
+    if (this.backgroundRunning) {
+      return;
+    }
+    try {
+      const ctx: common.UIAbilityContext = this.context();
+      const want: Want = {
+        bundleName: ctx.abilityInfo.bundleName,
+        abilityName: ctx.abilityInfo.name
+      };
+      const info: wantAgent.WantAgentInfo = {
+        wants: [want],
+        actionType: wantAgent.OperationType.START_ABILITY,
+        requestCode: 0,
+        actionFlags: [wantAgent.WantAgentFlags.UPDATE_PRESENT_FLAG]
+      };
+      this.backgroundAgent = await wantAgent.getWantAgent(info);
+      await backgroundTaskManager.startBackgroundRunning(ctx,
+        backgroundTaskManager.BackgroundMode.AUDIO_PLAYBACK, this.backgroundAgent);
+      this.backgroundRunning = true;
+    } catch (err) {
+      this.backgroundRunning = false;
+      console.warn(`MuLi background task failed: ${String(err)}`);
+    }
+  }
+
+  private async stopBackgroundTask(): Promise<void> {
+    if (!this.backgroundRunning) {
+      return;
+    }
+    this.backgroundRunning = false;
+    try {
+      await backgroundTaskManager.stopBackgroundRunning(this.context());
+    } catch (err) {
+      console.warn(`MuLi background task stop failed: ${String(err)}`);
+    }
+  }
+
+  private pipErrorText(err: Error): string {
+    const code: number = (err as BusinessError).code;
+    if (code === 801) {
+      return '当前设备不支持画中画';
+    }
+    if (code === 1300013) {
+      return '画中画创建失败，请重试';
+    }
+    if (code === 1300034) {
+      return '已有其他悬浮窗在运行，先关闭再试';
+    }
+    if (code === 401) {
+      return '画中画参数异常';
+    }
+    return '画中画打开失败';
+  }
+
+  /** 小窗宽高按视频比例算：高度固定 720px，宽度随比例走，避免小窗里出现黑边 */
+  private pipContentWidth(): number {
+    const aspect: number = this.videoAspect > 0 ? this.videoAspect : 16 / 9;
+    const width: number = Math.round(PIP_CONTENT_HEIGHT * aspect);
+    return width > 0 ? width : Math.round(PIP_CONTENT_HEIGHT * 16 / 9);
   }
 
   /**
@@ -679,6 +946,26 @@ export struct VideoPage {
     }
     await this.loadDetail();
     this.showControls();
+    this.applyFocusComment();
+  }
+
+  /**
+   * 动态页（V2.1.2）点「评论」进来：直接落到评论区并展开输入框。
+   *
+   * 这个标记只在本次进入时消费一次，避免离开再回来又把评论区顶上来；
+   * 延迟一点等布局落定，否则 requestFocus 会被随后的一次重建冲掉。
+   */
+  private applyFocusComment(): void {
+    if (!this.videoParam.focusComment) {
+      return;
+    }
+    this.videoParam.focusComment = false;
+    setTimeout(() => {
+      if (this.infoTabIndex !== 1) {
+        this.switchTab(1);
+      }
+      this.openComposer('', '', '');
+    }, 260);
   }
 
   private context(): common.UIAbilityContext {
@@ -748,6 +1035,24 @@ export struct VideoPage {
       clearTimeout(this.hudTimer);
       this.hudTimer = -1;
     }
+    // 页面都没了，小窗必须一起收掉，否则会留一个小窗对着已释放的 surface
+    const ctrl: PiPWindow.PiPController | undefined = this.pipController;
+    this.pipActive = false;
+    this.pipController = undefined;
+    if (ctrl !== undefined) {
+      try {
+        ctrl.off('stateChange');
+        ctrl.off('controlEvent');
+        ctrl.off('controlPanelActionEvent');
+      } catch (err) {
+        // 监听已被系统回收时忽略
+      }
+      ctrl.stopPiP().catch((err: Error) => {
+        console.warn(`MuLi PiP release failed: ${err.message}`);
+      });
+    }
+    // 长时任务与播放页同寿命：页面走了必须停，否则通知栏会留一条「后台播放中」
+    this.stopBackgroundTask();
     if (this.prefs.continuePlay && this.videoParam.bvid.length > 0 && this.positionMs > 0) {
       PlayerPrefs.saveProgress(this.context(), this.videoParam.bvid, this.positionMs);
     }
@@ -2142,9 +2447,31 @@ export struct VideoPage {
     }, 320);
   }
 
+  /**
+   * 横屏 / 竖屏连播里按返回：不退回普通播放页，直接把画面交给系统画中画小窗。
+   *
+   * 小窗刚被用户关掉时（pipSuppressed）这一次返回必须真的退出，
+   * 否则「返回 → 起小窗 → 关小窗 → 返回」会一直打转，退不出播放页。
+   */
+  private backToPiP(): void {
+    if (this.pipSuppressed) {
+      this.pipSuppressed = false;
+      if (this.fullscreen) {
+        this.restorePortrait();
+        return;
+      }
+      if (this.portraitMode) {
+        this.portraitMode = false;
+        this.syncCanvasSize();
+      }
+      return;
+    }
+    this.enterPiP();
+  }
+
   private onBack(): void {
     if (this.fullscreen) {
-      this.restorePortrait();
+      this.backToPiP();
       return;
     }
     if (this.portraitMode) {
@@ -2153,7 +2480,7 @@ export struct VideoPage {
         this.closeSheet();
         return;
       }
-      this.portraitMode = false;
+      this.backToPiP();
       return;
     }
     if (this.pathStack !== undefined) {
@@ -2803,7 +3130,7 @@ export struct VideoPage {
       .backgroundColor(TOP_ICON_CHIP_BG ? $r('app.color.scrim') : Color.Transparent)
       .borderRadius(17)
       .onClick(() => {
-        this.toast('悬浮窗播放待接入');
+        this.enterPiP();
       })
     }
     .width('100%')
@@ -3358,7 +3685,7 @@ export struct VideoPage {
         this.enterFullscreenFromPortrait();
       })
 
-      // 悬浮窗（占位，图标用素材 xfcb.svg，白色填充；与其他按钮同用半透明圆底，不再单独铺白底）
+      // 悬浮窗（进系统画中画；图标用素材 xfcb.svg，白色填充；与其他按钮同用半透明圆底，不再单独铺白底）
       Row() {
         Image($r('app.media.xfcb'))
           .width(20)
@@ -3372,7 +3699,7 @@ export struct VideoPage {
       .backgroundColor(TOP_ICON_CHIP_BG ? $r('app.color.scrim') : Color.Transparent)
       .borderRadius(18)
       .onClick(() => {
-        this.toast('悬浮窗播放待接入');
+        this.enterPiP();
       })
 
       // 分享（调起系统分享面板）
@@ -3792,6 +4119,9 @@ export struct VideoPage {
             .objectFit(ImageFit.Cover)
             .alt($r('app.color.bg_field'))
             .draggable(false)
+            .onClick(() => {
+              this.openAuthor();
+            })
         } else {
           Column() {
             SymbolGlyph($r('sys.symbol.person_crop_circle_fill_1'))
@@ -4168,6 +4498,17 @@ export struct VideoPage {
     return parts.join(' · ');
   }
 
+  /** 进作者的个人主页（头像 / 昵称可点，关注按钮单独响应） */
+  private openAuthor(): void {
+    if (this.detail.authorMid <= 0) {
+      this.toast('UP 主信息还没就绪');
+      return;
+    }
+    if (this.pathStack !== undefined) {
+      this.pathStack.pushPathByName('user', new UserOpenParam(this.detail.authorMid));
+    }
+  }
+
   /** 作者行：头像 + 昵称 + 粉丝/投稿 + 关注（参考图） */
   @Builder
   authorBlock() {
@@ -4180,6 +4521,9 @@ export struct VideoPage {
           .objectFit(ImageFit.Cover)
           .alt($r('app.color.bg_field'))
           .draggable(false)
+          .onClick(() => {
+            this.openAuthor();
+          })
       } else {
         Column() {
           SymbolGlyph($r('sys.symbol.person_crop_circle_fill_1'))
@@ -4205,6 +4549,9 @@ export struct VideoPage {
       }
       .layoutWeight(1)
       .alignItems(HorizontalAlign.Start)
+      .onClick(() => {
+        this.openAuthor();
+      })
 
       Row({ space: 3 }) {
         SymbolGlyph($r('sys.symbol.plus'))
@@ -5672,6 +6019,8 @@ export struct VideoPage {
         dragBar: true,
         showClose: false,
         preferType: SheetType.BOTTOM,
+        // 与「我的 - 更换背景」同一套系统级材质：能力不支持时是 undefined，退回普通半模态底色
+        systemMaterial: this.sheetMaterialOn ? this.sheetMaterial : undefined,
         onDisappear: () => {
           this.onSheetDismiss();
         }
@@ -5693,7 +6042,7 @@ export struct VideoPage {
     // 否则竖屏里按返回会直接回首页（之前只把顶栏返回按钮接上了 onBack）
     .onBackPressed(() => {
       if (this.fullscreen) {
-        this.restorePortrait();
+        this.backToPiP();
         return true;
       }
       if (this.portraitMode) {
@@ -5701,13 +6050,17 @@ export struct VideoPage {
           this.closeSheet();
           return true;
         }
-        this.portraitMode = false;
+        this.backToPiP();
         return true;
       }
       return false;
     })
     // 推荐视频 / 随机连播是「压栈」打开的：本页被盖住时先暂停，返回时再接着播
     .onHidden(() => {
+      // 进画中画时页面同样会 hidden：小窗里画面还得继续，不能在这儿暂停
+      if (this.pipActive) {
+        return;
+      }
       if (this.playing) {
         this.player.pause();
         this.pausedForPush = true;

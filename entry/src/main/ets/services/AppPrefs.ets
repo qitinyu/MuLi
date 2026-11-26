@@ -42,6 +42,10 @@ export class AppPrefs {
   static readonly KEY_SHOW_VERTICAL: string = 'muli_showVertical';
   /** 播放页顶部分区 List 点击是否全量刷新（默认关，实验性） */
   static readonly KEY_LIST_TAP_REFRESH: string = 'muli_listTapRefresh';
+  /** 全局显示 IP 属地（默认开；关闭后本人与其他用户主页都不再显示） */
+  static readonly KEY_SHOW_IP: string = 'muli_showIpLocation';
+  /** 动态页顶部快捷 UP 主入口行数：0 = 1 行，1 = 2 行 */
+  static readonly KEY_DYN_QUICK_ROWS: string = 'muli_dynQuickRows';
 
   /** 默认启动页候选：与底部栏版块一一对应，番剧暂未建版块 */
   static readonly START_TAB_LABELS: Array<string> = ['首页', '动态', '番剧', '热门', '直播'];
@@ -57,6 +61,10 @@ export class AppPrefs {
   static readonly AUTHOR_NAME_LABELS: Array<string> = ['过长隐藏', '循环滚动'];
   /** 关闭顶部沉浸时增量条颜色 */
   static readonly TOP_INSET_LABELS: Array<string> = ['黑色', '白色'];
+  /** 动态页快捷 UP 主入口行数候选（下标即存储值） */
+  static readonly DYN_QUICK_ROW_LABELS: Array<string> = ['1 行', '2 行'];
+  /** 每行快捷入口放几个头像（1 行 4 个 / 2 行 8 个） */
+  static readonly DYN_QUICK_PER_ROW: number = 4;
 
   /** 启动时把磁盘设置灌进 AppStorage（默认值先写，磁盘值覆盖） */
   static async load(context: common.UIAbilityContext): Promise<void> {
@@ -78,6 +86,8 @@ export class AppPrefs {
       AppStorage.setOrCreate(AppPrefs.KEY_REC_COUNT, store.getSync('rec_refresh_count', 0) as number);
       AppStorage.setOrCreate(AppPrefs.KEY_SHOW_VERTICAL, store.getSync('show_vertical', false) as boolean);
       AppStorage.setOrCreate(AppPrefs.KEY_LIST_TAP_REFRESH, store.getSync('list_tap_refresh', false) as boolean);
+      AppStorage.setOrCreate(AppPrefs.KEY_SHOW_IP, store.getSync('show_ip_location', true) as boolean);
+      AppStorage.setOrCreate(AppPrefs.KEY_DYN_QUICK_ROWS, store.getSync('dyn_quick_rows', 0) as number);
     } catch (err) {
       console.warn(`MuLiAppPrefs load failed: ${String(err)}`);
     }
@@ -100,6 +110,8 @@ export class AppPrefs {
     AppStorage.setOrCreate(AppPrefs.KEY_REC_COUNT, 0);
     AppStorage.setOrCreate(AppPrefs.KEY_SHOW_VERTICAL, false);
     AppStorage.setOrCreate(AppPrefs.KEY_LIST_TAP_REFRESH, false);
+    AppStorage.setOrCreate(AppPrefs.KEY_SHOW_IP, true);
+    AppStorage.setOrCreate(AppPrefs.KEY_DYN_QUICK_ROWS, 0);
   }
 
   static async save(context: common.UIAbilityContext, key: string, value: number | boolean | string): Promise<void> {
@@ -143,6 +155,10 @@ export class AppPrefs {
         return 'show_vertical';
       case AppPrefs.KEY_LIST_TAP_REFRESH:
         return 'list_tap_refresh';
+      case AppPrefs.KEY_SHOW_IP:
+        return 'show_ip_location';
+      case AppPrefs.KEY_DYN_QUICK_ROWS:
+        return 'dyn_quick_rows';
       default:
         return key;
     }
@@ -206,5 +222,19 @@ export class AppPrefs {
       return AppPrefs.REC_COUNT_LABELS[0];
     }
     return AppPrefs.REC_COUNT_LABELS[index];
+  }
+
+  /** 动态页快捷入口行数：0 = 1 行，1 = 2 行 */
+  static dynQuickRowLabel(index: number): string {
+    if (index < 0 || index >= AppPrefs.DYN_QUICK_ROW_LABELS.length) {
+      return AppPrefs.DYN_QUICK_ROW_LABELS[0];
+    }
+    return AppPrefs.DYN_QUICK_ROW_LABELS[index];
+  }
+
+  /** 快捷入口总容量 = 行数 × 每行个数 */
+  static dynQuickCapacity(index: number): number {
+    const rows: number = index === 1 ? 2 : 1;
+    return rows * AppPrefs.DYN_QUICK_PER_ROW;
   }
 }

@@ -54,6 +54,11 @@ export struct SearchPage {
   @Prop topInset: number = 95;
   /** 状态栏高度：HdsNavDestination 的内容原点已在状态栏下方，留白要扣掉这一段 */
   @Prop statusBarH: number = 39;
+  /**
+   * 预置关键词（V2.1.2）：他人主页右上角的搜索按钮用它直接出结果，
+   * 省掉「进搜索页 → 再输一遍昵称」这一步。非空时首屏直接进结果层。
+   */
+  @Prop initialKeyword: string = '';
   @State materialLevel: hdsMaterial.MaterialLevel = hdsMaterial.MaterialLevel.SMOOTH;
   @State chipMaterialOn: boolean = false;
   @State keyword: string = '';
@@ -117,6 +122,10 @@ export struct SearchPage {
     }).catch(() => {
       // 热搜失败就只展示历史
     });
+    if (this.initialKeyword.trim().length > 0) {
+      // 由他人主页跳进来：直接按预置关键词出结果
+      this.doSearch(this.initialKeyword);
+    }
   }
 
   aboutToDisappear(): void {
