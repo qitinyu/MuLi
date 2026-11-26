@@ -25,6 +25,10 @@
       },
       {
         "name": "ohos.permission.GET_NETWORK_INFO"
+      },
+      {
+        // 画中画 + 后台播放：进小窗后应用转后台，仍要把播放交给长时任务维持
+        "name": "ohos.permission.KEEP_BACKGROUND_RUNNING"
       }
     ],
     "abilities": [
@@ -40,6 +44,10 @@
         "launchType": "singleton",
         // 锁定竖屏：本应用列表/卡片均为竖排信息流，横屏会让沉浸标题栏与底部悬浮页签错位
         "orientation": "portrait",
+        // 画中画里的视频在应用退到后台后继续播放：申请音频播放长时任务
+        "backgroundModes": [
+          "audioPlayback"
+        ],
         "skills": [
           {
             "entities": [

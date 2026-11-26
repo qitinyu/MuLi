@@ -14,10 +14,14 @@ const PARTITION_COLUMNS: number = 4;
 const PARTITION_CELL_HEIGHT: number = 44;
 const PARTITION_GAP: number = 8;
 
-/** 二级页分区标识：与路由名一一对应（settings_appearance / settings_player / settings_playpage） */
+/** 二级页分区标识：与路由名一一对应（settings_appearance / settings_player / settings_playpage / settings_dynamic） */
 export const SECTION_APPEARANCE: string = 'appearance';
 export const SECTION_PLAYER: string = 'player';
 export const SECTION_PLAYPAGE: string = 'playpage';
+/** 播放 → 动态（V2.1.2）：动态页专用的展示项 */
+export const SECTION_DYNAMIC: string = 'dynamic';
+/** 设置二级页内部跳转的路由名（与 Index.pageMap 对齐） */
+export const ROUTE_SETTINGS_DYNAMIC: string = 'settings_dynamic';
 
 /**
  * 设置二级细则页（V2.0.5）。
@@ -51,6 +55,10 @@ export struct SettingsDetailPage {
   @StorageLink(AppPrefs.KEY_REC_COUNT) recCountIndex: number = 0;
   @StorageLink(AppPrefs.KEY_SHOW_VERTICAL) showVertical: boolean = false;
   @StorageLink(AppPrefs.KEY_LIST_TAP_REFRESH) listTapRefresh: boolean = false;
+  /** 全局显示 IP 属地（V2.1.2，默认开） */
+  @StorageLink(AppPrefs.KEY_SHOW_IP) showIpLocation: boolean = true;
+  /** 动态页快捷入口行数（V2.1.2）：0 = 1 行，1 = 2 行 */
+  @StorageLink(AppPrefs.KEY_DYN_QUICK_ROWS) dynQuickRows: number = 0;
   /** 播放器偏好（与播放页共用同一个 preferences store，两边改一处即同步） */
   @State quality: number = 0;
   @State filterRecommend: string = '';
@@ -163,6 +171,9 @@ export struct SettingsDetailPage {
     }
     if (this.section === SECTION_PLAYPAGE) {
       return '播放页 · List 分区';
+    }
+    if (this.section === SECTION_DYNAMIC) {
+      return '动态';
     }
     return '外观 · 通用设置';
   }
@@ -310,6 +321,52 @@ export struct SettingsDetailPage {
       .alignItems(VerticalAlign.Center)
       .onClick(() => {
         this.toast(`${title}：详细设置在播放页「设置」中调整`);
+      })
+
+      this.rowDivider(isLast)
+    }
+    .width('100%')
+  }
+
+  /**
+   * 可跳转行：右侧箭头 + 摘要，点击进入同体系的另一个二级分区（V2.1.2「播放 → 动态」）。
+   * 与 navRow 的区别是 navRow 只弹 toast 占位，这里真的会 push。
+   */
+  @Builder
+  linkRow(title: string, hint: string, summary: string, route: string, isLast: boolean) {
+    Column() {
+      Row({ space: 6 }) {
+        Column({ space: 3 }) {
+          Text(title)
+            .fontSize(15)
+            .fontColor($r('app.color.text_primary'))
+          if (hint.length > 0) {
+            Text(hint)
+              .fontSize(11)
+              .fontColor($r('app.color.text_tertiary'))
+              .maxLines(2)
+          }
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+
+        if (summary.length > 0) {
+          Text(summary)
+            .fontSize(13)
+            .fontColor($r('app.color.text_secondary'))
+            .maxLines(1)
+        }
+
+        SymbolGlyph($r('sys.symbol.chevron_right'))
+          .fontSize(13)
+          .fontColor([$r('app.color.text_tertiary')])
+      }
+      .width('100%')
+      .constraintSize({ minHeight: ROW_HEIGHT })
+      .padding({ left: 14, right: 14, top: 10, bottom: 10 })
+      .alignItems(VerticalAlign.Center)
+      .onClick(() => {
+        this.goSection(route);
       })
 
       this.rowDivider(isLast)
@@ -487,7 +544,20 @@ export struct SettingsDetailPage {
     if (key === AppPrefs.KEY_TOP_INSET_COLOR) {
       this.topInsetColor = index;
       this.pickNumber(AppPrefs.KEY_TOP_INSET_COLOR, index);
+      return;
     }
+    if (key === AppPrefs.KEY_DYN_QUICK_ROWS) {
+      this.dynQuickRows = index;
+      this.pickNumber(AppPrefs.KEY_DYN_QUICK_ROWS, index);
+    }
+  }
+
+  /** 跳转到本页的其它分区（如 播放 → 动态），保证返回栈仍在本设置体系内 */
+  private goSection(route: string): void {
+    if (this.pathStack === undefined) {
+      return;
+    }
+    this.pathStack.pushPathByName(route, '');
   }
 
   // ---------- 分组 ----------
@@ -504,11 +574,32 @@ export struct SettingsDetailPage {
       this.menuRow('UP 主过长名称', '视频卡里 UP 名超出可见宽度时的处理方式',
         AppPrefs.KEY_AUTHOR_NAME_MODE, AppPrefs.authorNameLabel(this.authorNameMode),
         AppPrefs.AUTHOR_NAME_LABELS, false)
+      this.toggleRow('全局显示 IP 属地',
+        '关闭后全局不再显示个人及其他用户 IP 属地。',
+        AppPrefs.KEY_SHOW_IP, this.showIpLocation, false)
       this.toggleRow('播放区顶部沉浸', '默认沉浸到系统状态栏，关闭后顶部状态栏会添加黑色条作为增量。',
         AppPrefs.KEY_TOP_IMMERSIVE, this.topImmersive, false)
       this.menuRow('增量颜色', '仅在关闭「播放区顶部沉浸」时生效',
         AppPrefs.KEY_TOP_INSET_COLOR, AppPrefs.topInsetLabel(this.topInsetColor),
         AppPrefs.TOP_INSET_LABELS, true)
+    }
+    .width('100%')
+    .backgroundColor($r('app.color.bg_card'))
+    .borderRadius(CARD_RADIUS)
+  }
+
+  /**
+   * 动态分组（V2.1.2）：从「播放器」二级进二级。
+   *
+   * 规格要求是「设置-播放增加 `动态` 二级条目，再在其内部添加 `快捷入口行数`」，
+   * 所以这里在播放器分组放一个可跳转的 linkRow，真正的开关在 SECTION_DYNAMIC 页里。
+   */
+  @Builder
+  dynamicGroup() {
+    Column() {
+      this.menuRow('快捷入口行数', '动态页顶部快捷 UP 主一屏显示几行，每行 4 个头像',
+        AppPrefs.KEY_DYN_QUICK_ROWS, AppPrefs.dynQuickRowLabel(this.dynQuickRows),
+        AppPrefs.DYN_QUICK_ROW_LABELS, true)
     }
     .width('100%')
     .backgroundColor($r('app.color.bg_card'))
@@ -528,6 +619,8 @@ export struct SettingsDetailPage {
     Column() {
       this.qualityRow()
       this.navRow('播放行为', '后台播放、小窗', false)
+      this.linkRow('动态', '动态页展示项：快捷入口行数', AppPrefs.dynQuickRowLabel(this.dynQuickRows),
+        ROUTE_SETTINGS_DYNAMIC, false)
       this.textRow('推荐视频过滤', '关键词以中文逗号「，」隔开，标题命中的视频不再推荐', 'recommend', false)
       this.textRow('视频弹幕过滤', '关键词以中文逗号「，」隔开，命中的弹幕不会显示', 'danmaku', false)
       this.menuRow('卡片布局', '推荐页即时生效', AppPrefs.KEY_CARD_LAYOUT,
@@ -739,6 +832,15 @@ export struct SettingsDetailPage {
             } else if (this.section === SECTION_PLAYPAGE) {
               this.sectionLabel('播放页 · List 分区')
               this.playPageGroup()
+            } else if (this.section === SECTION_DYNAMIC) {
+              this.sectionLabel('动态')
+              this.dynamicGroup()
+              this.sectionLabel('提示')
+              Text('快捷入口行数会同时影响手机与平板；每行固定 4 个头像，两行即 8 个。')
+                .width('100%')
+                .fontSize(11)
+                .fontColor($r('app.color.text_tertiary'))
+                .padding({ left: PAGE_PADDING + 4, right: PAGE_PADDING + 4, bottom: 8 })
             } else {
               this.sectionLabel('外观 · 通用设置')
               this.appearanceGroup()

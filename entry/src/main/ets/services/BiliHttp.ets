@@ -587,11 +587,27 @@ export class BiliHttp {
   static readonly PASSPORT_HOST: string = 'passport.bilibili.com';
   static readonly LIVE_HOST: string = 'api.live.bilibili.com';
 
-  private static headers(referer: string, withCookie: boolean): Record<string, string> {
+  /**
+   * 从 referer 推导 Origin。
+   *
+   * b 站的写接口（点赞 / 关注 / 动态点赞）会做跨域校验：Origin 与 Referer 不同源时
+   * 直接返回 -400「参数错误」。所以不能把 Origin 写死成 www.bilibili.com ——
+   * 打 t.bilibili.com（动态）或 space.bilibili.com（关系）时必须同源。
+   */
+  private static originOf(referer: string): string {
+    const match: RegExpMatchArray | null = referer.match(/^https?:\/\/[^\/]+/);
+    if (match === null) {
+      return 'https://www.bilibili.com';
+    }
+    return match[0];
+  }
+
+  private static headers(referer: string, withCookie: boolean,
+    origin: string = ''): Record<string, string> {
     const headers: Record<string, string> = {
       'User-Agent': BiliHttp.UA,
       'Referer': referer,
-      'Origin': 'https://www.bilibili.com',
+      'Origin': origin.length > 0 ? origin : BiliHttp.originOf(referer),
       'Accept': 'application/json, text/plain, */*'
     };
     if (withCookie) {
@@ -663,8 +679,15 @@ export class BiliHttp {
     }
   }
 
+  /**
+   * 表单 POST。
+   *
+   * query 里的键会拼到 URL 上（b 站部分写接口只认 query 里的 csrf，例如动态点赞
+   * /x/dynamic/feed/dyn/thumb）；form 走 body。
+   */
   static async postForm(host: string, path: string, form: Record<string, string>,
-    referer: string = 'https://www.bilibili.com/'): Promise<Record<string, Object>> {
+    referer: string = 'https://www.bilibili.com/',
+    query: Record<string, string> = {}): Promise<Record<string, Object>> {
     const keys: Array<string> = Object.keys(form);
     let body: string = '';
     for (let i = 0; i < keys.length; i++) {
@@ -673,11 +696,22 @@ export class BiliHttp {
       }
       body += `${encodeURIComponent(keys[i])}=${encodeURIComponent(form[keys[i]])}`;
     }
+    const queryKeys: Array<string> = Object.keys(query);
+    let queryText: string = '';
+    for (let i = 0; i < queryKeys.length; i++) {
+      if (i > 0) {
+        queryText += '&';
+      }
+      queryText += `${encodeURIComponent(queryKeys[i])}=${encodeURIComponent(query[queryKeys[i]])}`;
+    }
+    const url: string = queryText.length > 0
+      ? `https://${host}${path}?${queryText}`
+      : `https://${host}${path}`;
     const headers: Record<string, string> = BiliHttp.headers(referer, true);
     headers['Content-Type'] = 'application/x-www-form-urlencoded';
     const request: http.HttpRequest = http.createHttp();
     try {
-      const response: http.HttpResponse = await request.request(`https://${host}${path}`, {
+      const response: http.HttpResponse = await request.request(url, {
         method: http.RequestMethod.POST,
         header: headers,
         extraData: body,

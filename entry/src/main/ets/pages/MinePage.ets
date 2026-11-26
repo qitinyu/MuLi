@@ -42,6 +42,8 @@ export struct MinePage {
   @State picking: boolean = false;
   @State sheetMaterialOn: boolean = false;
   @StorageLink('loginTick') @Watch('onLoginTick') loginTick: number = 0;
+  /** 全局 IP 属地开关：关掉后本人资料里也不再显示属地 */
+  @StorageLink(AppPrefs.KEY_SHOW_IP) showIpLocation: boolean = true;
   /** 标题栏图标触发的动作（路由壳持有标题栏，通过自增 tick 通知本页） */
   @Link @Watch('onCoverTick') coverTick: number;
   @Link @Watch('onLogoutTick') logoutTick: number;
@@ -459,6 +461,9 @@ export struct MinePage {
     // 公开资料兜底：cookie 还在但登录态接口没通过，明确告知而不是假装正常
     if (this.profile.publicOnly) {
       return `UID: ${this.profile.mid} · 登录态未生效`;
+    }
+    if (!this.showIpLocation) {
+      return `UID: ${this.profile.mid}`;
     }
     const ip: string = this.profile.ipLocation.length > 0 ? this.profile.ipLocation : '未知';
     return `UID: ${this.profile.mid} · IP属地：${ip}`;

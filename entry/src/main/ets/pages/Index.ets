@@ -1,6 +1,7 @@
 import { BreakpointObserver } from '../common/BreakpointObserver';
 import { common } from '@kit.AbilityKit';
 import { MaterialScope } from '../common/Materials';
+import { NAV_ID } from '../common/AppNav';
 import { TAB_BAR_BOTTOM_MARGIN, TITLE_CTRL_TEXT_SIZE, TITLE_ICON_HIT, TITLE_ICON_SIZE, TITLE_TEXT_SIZE } from '../common/DesignSpec';
 import { HomePage } from './HomePage';
 import { DynamicPage } from './DynamicPage';
@@ -16,12 +17,15 @@ import { ChangeLogPage } from './ChangeLogPage';
 import { LibraryPage } from './LibraryPage';
 import { AboutPage } from './AboutPage';
 import { SettingsPage } from './SettingsPage';
-import { SECTION_APPEARANCE, SECTION_PLAYER, SECTION_PLAYPAGE, SettingsDetailPage } from './SettingsDetailPage';
+import {
+  SECTION_APPEARANCE, SECTION_DYNAMIC, SECTION_PLAYER, SECTION_PLAYPAGE, SettingsDetailPage
+} from './SettingsDetailPage';
+import { UserRoutePage } from './UserRoutePage';
 import { VideoPage } from './VideoPage';
 import { AuthService } from '../services/AuthService';
 import { AppPrefs } from '../services/AppPrefs';
 import { ScrollSignal } from '../common/ScrollSignal';
-import { UserProfile, VideoOpenParam } from '../model/BiliModels';
+import { UserOpenParam, UserProfile, VideoOpenParam } from '../model/BiliModels';
 import {
   HdsNavigation, HdsNavigationTitleMode, HdsTabs, HdsTabsController, ScrollEffectType, hdsMaterial
 } from '@kit.UIDesignKit';
@@ -426,7 +430,12 @@ struct Index {
   @Builder
   pageMap(name: string, param: Object) {
     if (name === 'search') {
-      SearchPage({ pathStack: this.pathStack, topInset: this.topInset, statusBarH: this.statusBarH })
+      SearchPage({
+        pathStack: this.pathStack,
+        topInset: this.topInset,
+        statusBarH: this.statusBarH,
+        initialKeyword: this.keywordOf(param)
+      })
     } else if (name === 'message') {
       MessagePage({ pathStack: this.pathStack })
     } else if (name === 'mine') {
@@ -453,7 +462,36 @@ struct Index {
       SettingsDetailPage({ pathStack: this.pathStack, section: SECTION_PLAYER })
     } else if (name === 'settings_playpage') {
       SettingsDetailPage({ pathStack: this.pathStack, section: SECTION_PLAYPAGE })
+    } else if (name === 'settings_dynamic') {
+      SettingsDetailPage({ pathStack: this.pathStack, section: SECTION_DYNAMIC })
+    } else if (name === 'user') {
+      UserRoutePage({
+        pathStack: this.pathStack, mid: this.midOf(param), topInset: this.topInset, statusBarH: this.statusBarH
+      })
     }
+  }
+
+  /** 路由参数 → 搜索预置关键词：字符串直传，其余忽略 */
+  private keywordOf(param: Object): string {
+    if (typeof param === 'string') {
+      return param as string;
+    }
+    return '';
+  }
+
+  /** 路由参数 → mid：UserOpenParam 直传，或 number/string 兜底 */
+  private midOf(param: Object): number {
+    if (param instanceof UserOpenParam) {
+      return param.mid;
+    }
+    if (typeof param === 'number') {
+      return param as number;
+    }
+    if (typeof param === 'string') {
+      const value: number = Number(param);
+      return Number.isFinite(value) ? value : 0;
+    }
+    return 0;
   }
 
   build() {
@@ -530,6 +568,7 @@ struct Index {
         enableComponentSafeArea: false
       })
       .bindToScrollable(this.scrollersBound)
+      .id(NAV_ID)
       .hideBackButton(true)
       .titleMode(HdsNavigationTitleMode.MINI)
       .mode(NavigationMode.Stack)
